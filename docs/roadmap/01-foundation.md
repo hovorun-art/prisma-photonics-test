@@ -1,7 +1,7 @@
 # Milestone 1: Foundation
 
-`docker compose up` starts every service (database, queue, API, worker, web UI) as a walking
-skeleton: the API answers a health check, the worker boots and connects, the UI loads, and the
+`docker compose up` starts every service (Postgres, Redis, job-service, job-execution-service, web UI) as a walking
+skeleton: job-service answers a health check, job-execution-service boots and connects, the UI loads, and the
 checks (typecheck, lint, tests) pass locally and in CI.
 
 ## Prerequisites (decisions, not changes)
@@ -21,14 +21,9 @@ Settled before the first change and recorded in `docs/concept.md`, `CLAUDE.md` a
 
 | Change | Intent | Depends on |
 |---|---|---|
-| `project-scaffold` | Docker Compose with all services and stub API, worker and UI, green checks and CI | - |
-
-Later milestones (core job flow, failure handling, UI, concurrency, aircraft transit map,
-submission docs) are planned in detail after the scaffold.
+| `project-scaffold` | Docker Compose with all services and stub job-service, job-execution-service and web UI, green checks and CI | - |
 
 ## Open questions
 
 - [x] Stack, layout, scope extras, data source, transcripts: settled, see `docs/concept.md`
   ("Decided during planning").
-- [ ] Queue integration details (BullMQ to Postgres sync, cancel/retry races): decided in the core
-  job flow change.
