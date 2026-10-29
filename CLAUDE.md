@@ -2,7 +2,7 @@
 
 Job Queue Service: an interview task (Senior AI-Integrated Full Stack Engineer). Clients submit
 background jobs (email, webhook, aircraft transit report, batch) through an API; workers pull them
-from a Redis queue (BullMQ) and execute them, with job state, results and logs in Postgres; a web UI lists,
+from a Redis queue (BullMQ) and execute them, with job state, results and logs in Postgres; a web UI (job-ui) lists,
 inspects, cancels and retries jobs and shows aircraft transits on a map. The reviewers assess
 concurrency, failure handling and state management (duplicate-free pickup, crash recovery, retry
 with backoff, priority, scheduled jobs, idempotency) and the honesty of `DECISIONS.md`. Spec-driven with OpenSpec; the flow's hooks, skills and verifier agent live in `.claude/`.
@@ -58,10 +58,10 @@ reviewers go into `DECISIONS.md` as they are made, not at the end.
   concurrency-critical queries need locking). Queue: BullMQ on Redis behind our own queue interface
   (enqueue, claim, complete, fail, cancel), so its internals can be replaced later; what BullMQ does
   and what we own is in `DECISIONS.md`.
-- Web: React + Vite, Tailwind + shadcn/ui, Leaflet + react-leaflet (OpenStreetMap tiles). Updates by
+- job-ui: React + Vite, Tailwind + shadcn/ui, Leaflet + react-leaflet (OpenStreetMap tiles). Updates by
   polling first; Server-Sent Events later if time allows.
 - Contracts: Zod schemas in `packages/contracts`, shared by the backend (validation pipe, OpenAPI
-  generation) and the web UI. REST + OpenAPI, not tRPC: other services must be able to call the API.
+  generation) and job-ui. REST + OpenAPI, not tRPC: other services must be able to call the API.
 - API docs: Swagger/OpenAPI generated from the Zod schemas.
 - Tests: Vitest in every workspace; integration tests run against real Postgres and Redis.
 - Aircraft data: generated from a bundled static airport list, no external API.
@@ -84,11 +84,11 @@ apps/job-execution-service  Job Execution context: takes jobs from the queue, ru
                             interface so it can become its own microservice later:
                               notifications (email), webhooks, flight-transit (aircraft transit
                               reports), batch-processing
-apps/web                    React + Vite UI: job list and details, logs, transit map
+apps/job-ui                 React + Vite UI: job list and details, logs, transit map
 packages/contracts          Zod schemas and inferred types: job types, payloads, results, API
                             requests/responses, error codes
 packages/<shared-kernel>    Only what is truly shared (e.g. clock and random ports); fixed in project-scaffold
-docker-compose.yml          postgres, redis, job-service, job-execution-service, web
+docker-compose.yml          postgres, redis, job-service, job-execution-service, job-ui
 ```
 - Postgres is the source of truth for job state; Redis only holds the queue. BullMQ is used only
   through our queue interface; how it maps to Postgres state is decided in the core job flow change.

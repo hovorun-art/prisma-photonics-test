@@ -135,3 +135,7 @@ A Git repository with:
 - Errors: our own error classes with stable codes, handled by type/code, never by message.
 - Frontend: feature folders + TanStack Query.
 - Conventions: strict TypeScript, ESLint + Prettier, pino structured logging, Conventional Commits.
+- Job state ownership (decided in `project-scaffold`): two services. job-service is the only one with
+  database access. job-execution-service changes job state only through job-service's internal
+  update method (`/internal`, service token, hidden from public Swagger). The external update may
+  only set status to cancelled (from pending or scheduled) or to pending (retry, from failed).

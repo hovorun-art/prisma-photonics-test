@@ -1,6 +1,6 @@
 # Milestone 1: Foundation
 
-`docker compose up` starts every service (Postgres, Redis, job-service, job-execution-service, web UI) as a walking
+`docker compose up` starts every service (Postgres, Redis, job-service, job-execution-service, job-ui) as a walking
 skeleton: job-service answers a health check, job-execution-service boots and connects, the UI loads, and the
 checks (typecheck, lint, tests) pass locally and in CI.
 
@@ -21,7 +21,7 @@ Settled before the first change and recorded in `docs/concept.md`, `CLAUDE.md` a
 
 | Change | Intent | Depends on |
 |---|---|---|
-| `project-scaffold` | Docker Compose with all services and stub job-service, job-execution-service and web UI, green checks and CI | - |
+| `project-scaffold` | Docker Compose with all services and stub job-service, job-execution-service and job-ui, green checks, e2e tests and CI | - |
 
 ## Open questions
 
