@@ -1,5 +1,7 @@
 import { DomainError } from '@job-queue/kernel';
 
+import { VALIDATION_FAILED_MESSAGE } from '../../http/validation-failed.js';
+
 export interface QueryLimitExceededErrorParams {
   /** The configured maximum page size. */
   maxLimit: number;
@@ -13,7 +15,7 @@ export class QueryLimitExceededError extends DomainError<'VALIDATION_FAILED'> {
   constructor(p: QueryLimitExceededErrorParams) {
     super({
       code: 'VALIDATION_FAILED',
-      message: 'Request validation failed',
+      message: VALIDATION_FAILED_MESSAGE,
       details: {
         issues: [
           {

@@ -45,6 +45,7 @@ describe('job-service public job routes (the real app over HTTP)', () => {
 
   const issuePaths = async (response: Response): Promise<unknown[]> => {
     const body = ErrorBody.parse(await response.json());
+    expect(body.code).toBe('VALIDATION_FAILED');
     const issues = body.details.issues as { path: unknown[] }[];
     return issues.map((issue) => issue.path);
   };

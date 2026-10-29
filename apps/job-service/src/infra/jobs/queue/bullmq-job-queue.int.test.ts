@@ -1,5 +1,5 @@
 import { JOB_QUEUE_NAME } from '@job-queue/contracts';
-import { CONTAINER_IMAGES } from '@job-queue/test-support';
+import { CONTAINER_IMAGES, UNREACHABLE_REDIS_URL } from '@job-queue/test-support';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { Queue } from 'bullmq';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -58,7 +58,7 @@ describe('BullMqJobQueue against Redis', () => {
   it('rejects within the configured timeout while Redis cannot be reached', async () => {
     const unreachable = new BullMqJobQueue(
       { logger: { warn: vi.fn() } },
-      { redisUrl: 'redis://127.0.0.1:1', enqueueTimeoutMs: ENQUEUE_TIMEOUT_MS },
+      { redisUrl: UNREACHABLE_REDIS_URL, enqueueTimeoutMs: ENQUEUE_TIMEOUT_MS },
     );
     const startedAt = performance.now();
 

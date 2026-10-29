@@ -44,3 +44,4 @@ export {
   PrismaMigrateDeploy,
   type PrismaMigrateDeployParams,
 } from './infra/prisma-migrate-deploy.js';
+export { UNREACHABLE_DATABASE_URL, UNREACHABLE_REDIS_URL } from './domain/unreachable-urls.js';
