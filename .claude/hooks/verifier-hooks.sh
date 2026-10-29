@@ -51,6 +51,11 @@ def last_text_from_transcript(path):
                 text = content
             elif isinstance(content, list):
                 parts = [c.get('text', '') for c in content if isinstance(c, dict) and c.get('type') == 'text']
+                # A background subagent hands its final report back through a SubagentHandback tool
+                # call instead of a text message; its `message` input is that report.
+                parts += [str((c.get('input') or {}).get('message', '')) for c in content
+                          if isinstance(c, dict) and c.get('type') == 'tool_use'
+                          and c.get('name') == 'SubagentHandback']
                 if any(parts):
                     text = '\n'.join(parts)
     except OSError:
