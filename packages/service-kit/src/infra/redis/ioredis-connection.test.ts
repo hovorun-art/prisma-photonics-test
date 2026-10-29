@@ -22,12 +22,10 @@ describe('IoRedisConnection', () => {
 
   beforeEach(() => {
     vi.resetAllMocks();
-    Redis.mockImplementation(function () {
+    Redis.mockImplementationOnce(function () {
       return client;
     });
     client.status = 'ready';
-    client.ping.mockResolvedValue('PONG');
-    client.quit.mockResolvedValue('OK');
   });
 
   it('names the connection and fails each command after one retry', () => {
@@ -52,6 +50,8 @@ describe('IoRedisConnection', () => {
   });
 
   it('waits for the first answer when asked to', async () => {
+    client.ping.mockResolvedValueOnce('PONG');
+
     await create(true).start();
 
     expect(client.ping).toHaveBeenCalledOnce();
@@ -64,13 +64,15 @@ describe('IoRedisConnection', () => {
   });
 
   it('stops reconnecting and rejects when Redis does not answer the first time', async () => {
-    client.ping.mockRejectedValue(new Error('unreachable'));
+    client.ping.mockRejectedValueOnce(new Error('unreachable'));
 
     await expect(create(true).start()).rejects.toThrow('unreachable');
     expect(client.disconnect).toHaveBeenCalledOnce();
   });
 
   it('sends QUIT when connected, so pending replies arrive first', async () => {
+    client.quit.mockResolvedValueOnce('OK');
+
     await create(false).close();
 
     expect(client.quit).toHaveBeenCalledOnce();

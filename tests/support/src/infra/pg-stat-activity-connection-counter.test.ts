@@ -7,7 +7,7 @@ import {
 
 describe('PgStatActivityConnectionCounter', () => {
   it('counts the connections under an application name through psql', async () => {
-    const exec = vi.fn<PostgresContainerShell['exec']>().mockResolvedValue({
+    const exec = vi.fn<PostgresContainerShell['exec']>().mockResolvedValueOnce({
       output: ' 3\n',
       exitCode: 0,
     });
@@ -27,7 +27,7 @@ describe('PgStatActivityConnectionCounter', () => {
 
   it('fails when psql fails', async () => {
     const postgres: PostgresContainerShell = {
-      exec: vi.fn<PostgresContainerShell['exec']>().mockResolvedValue({
+      exec: vi.fn<PostgresContainerShell['exec']>().mockResolvedValueOnce({
         output: 'boom',
         exitCode: 2,
       }),
