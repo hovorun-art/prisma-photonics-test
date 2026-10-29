@@ -39,7 +39,8 @@
     "prettier": "^3.9.10",
     "typescript": "~6.0.3",
     "typescript-eslint": "^8.72.1",
-    "vitest": "^5.0.5"
+    "vitest": "^5.0.5",
+    "vitest-mock-extended": "^5.1.1"
   },
   "allowScripts": {
     "@swc/core": true,
@@ -49,6 +50,7 @@
     "protobufjs": false,
     "ssh2": false,
     "cpu-features": false,
-    "unrs-resolver": true
+    "unrs-resolver": true,
+    "msgpackr-extract": false
   }
 }

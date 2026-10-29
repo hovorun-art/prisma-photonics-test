@@ -72,6 +72,14 @@ const CLASS_SHAPE = [
   },
 ];
 
+/** Persistent mock stubs; tests use their `...Once` forms instead. */
+const MOCK_ONCE_ONLY = [
+  'mockResolvedValue',
+  'mockRejectedValue',
+  'mockReturnValue',
+  'mockImplementation',
+];
+
 const THROW_RULE = {
   selector: 'ThrowStatement > Literal',
   message: 'Throw a DomainError subclass with a code, never a string.',
@@ -274,6 +282,14 @@ export default tseslint.config(
     rules: {
       '@typescript-eslint/no-non-null-assertion': 'off',
       '@typescript-eslint/unbound-method': 'off',
+      // A stub answers only the calls a test expects; an unexpected extra call gets nothing and fails.
+      'no-restricted-properties': [
+        'error',
+        ...MOCK_ONCE_ONLY.map((property) => ({
+          property,
+          message: `Use ${property}Once: stub each expected call, so an unexpected call fails.`,
+        })),
+      ],
     },
   },
   {

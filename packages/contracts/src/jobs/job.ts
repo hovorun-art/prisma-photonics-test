@@ -1,0 +1,155 @@
+import { z } from 'zod';
+
+import { INTERNAL_API_PREFIX } from '../internal.js';
+
+/** Public job routes of job-service. */
+export const JOBS_ROUTE = '/v1/jobs';
+
+/** Internal job routes of job-service, used only by job-execution-service. */
+export const INTERNAL_JOBS_ROUTE = `${INTERNAL_API_PREFIX}/jobs`;
+
+/** Lifecycle of a job: `scheduled` and `pending` wait, `processing` runs, the last three are final. */
+export const JobStatus = z.enum([
+  'scheduled',
+  'pending',
+  'processing',
+  'completed',
+  'failed',
+  'cancelled',
+]);
+export type JobStatus = z.infer<typeof JobStatus>;
+
+/** Statuses a job never leaves; only jobs in one of them can be deleted. */
+export const FINISHED_JOB_STATUSES = [
+  'completed',
+  'failed',
+  'cancelled',
+] as const satisfies readonly JobStatus[];
+
+/** Ranges and defaults of a job's priority (higher = more urgent) and max attempts. */
+export const JOB_LIMITS = {
+  priority: { min: 1, max: 10, default: 5 },
+  maxAttempts: { min: 1, max: 10, default: 3 },
+} as const;
+
+/** Length limits of an email job, shared by job-service validation and the job-ui form. */
+export const EMAIL_LIMITS = {
+  subjectMaxLength: 200,
+  bodyMaxLength: 10_000,
+} as const;
+
+export const JobPriority = z
+  .number()
+  .int()
+  .min(JOB_LIMITS.priority.min)
+  .max(JOB_LIMITS.priority.max);
+
+export const JobMaxAttempts = z
+  .number()
+  .int()
+  .min(JOB_LIMITS.maxAttempts.min)
+  .max(JOB_LIMITS.maxAttempts.max);
+
+/** Why a job attempt failed, as reported by job-execution-service. */
+export const JobError = z.object({
+  code: z.string().min(1),
+  message: z.string(),
+  details: z.record(z.string(), z.unknown()).optional(),
+});
+export type JobError = z.infer<typeof JobError>;
+
+/** What an email job sends. */
+export const EmailJobPayload = z.object({
+  to: z.email(),
+  subject: z.string().min(1).max(EMAIL_LIMITS.subjectMaxLength),
+  body: z.string().max(EMAIL_LIMITS.bodyMaxLength),
+});
+export type EmailJobPayload = z.infer<typeof EmailJobPayload>;
+
+/** What a completed email job returns: the (mock) id of the sent message. */
+export const EmailJobResult = z.object({ messageId: z.string().min(1) });
+export type EmailJobResult = z.infer<typeof EmailJobResult>;
+
+/** The closed list of job types; each later job type adds itself here. */
+export const JobType = z.enum(['email']);
+export type JobType = z.infer<typeof JobType>;
+
+/** The result schema of each job type, checked when job-execution-service reports a completion. */
+export const JOB_RESULT_SCHEMAS: Readonly<Record<JobType, z.ZodType>> = {
+  email: EmailJobResult,
+};
+
+const Timestamp = z.iso.datetime();
+
+/** Fields every job has, whatever its type. */
+const JobBase = z.object({
+  id: z.uuid(),
+  status: JobStatus,
+  priority: JobPriority,
+  attempts: z.number().int().min(0),
+  maxAttempts: JobMaxAttempts,
+  error: JobError.nullable(),
+  scheduledAt: Timestamp.nullable(),
+  startedAt: Timestamp.nullable(),
+  completedAt: Timestamp.nullable(),
+  createdAt: Timestamp,
+  updatedAt: Timestamp,
+});
+
+export const EmailJob = JobBase.extend({
+  type: z.literal('email'),
+  payload: EmailJobPayload,
+  result: EmailJobResult.nullable(),
+});
+export type EmailJob = z.infer<typeof EmailJob>;
+
+/** A job as every job route returns it; the type decides the payload and result shapes. */
+export const Job = z.discriminatedUnion('type', [EmailJob]);
+export type Job = z.infer<typeof Job>;
+
+/** Options every job type accepts on submit; omitted ones get the defaults of `JOB_LIMITS`. */
+const CreateJobOptions = z.object({
+  priority: JobPriority.default(JOB_LIMITS.priority.default),
+  maxAttempts: JobMaxAttempts.default(JOB_LIMITS.maxAttempts.default),
+});
+
+export const CreateEmailJobRequest = CreateJobOptions.extend({
+  type: z.literal('email'),
+  payload: EmailJobPayload,
+});
+
+/** Body of `POST /v1/jobs`: one branch per job type. */
+export const CreateJobRequest = z.discriminatedUnion('type', [CreateEmailJobRequest]);
+export type CreateJobRequest = z.infer<typeof CreateJobRequest>;
+
+/** Path parameters of the routes that address one job. */
+export const JobIdParams = z.object({ id: z.uuid() });
+export type JobIdParams = z.infer<typeof JobIdParams>;
+
+/**
+ * Query string of `GET /v1/jobs`. Without `limit` job-service uses its configured default page
+ * size; the configured maximum is checked by job-service, since it is runtime config.
+ */
+export const QueryJobsRequest = z.object({
+  limit: z.coerce.number().int().positive().optional(),
+  offset: z.coerce.number().int().min(0).default(0),
+});
+export type QueryJobsRequest = z.infer<typeof QueryJobsRequest>;
+
+/** One page of jobs, newest first, and the number of all jobs. */
+export const QueryJobsResponse = z.object({
+  items: z.array(Job),
+  total: z.number().int().min(0),
+});
+export type QueryJobsResponse = z.infer<typeof QueryJobsResponse>;
+
+/**
+ * Body of `PATCH /internal/v1/jobs/:id`: the status job-execution-service moves a job to, with what
+ * that status needs. `result` is checked against the job type's result schema by job-service.
+ */
+export const UpdateJobRequest = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('processing') }),
+  z.object({ status: z.literal('completed'), result: z.unknown() }),
+  z.object({ status: z.literal('failed'), error: JobError }),
+]);
+export type UpdateJobRequest = z.infer<typeof UpdateJobRequest>;

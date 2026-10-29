@@ -12,6 +12,12 @@ export const ERROR_CODES = [
   'VALIDATION_FAILED',
   /** The request body is larger than the configured limit; `details.limitBytes` holds the limit. */
   'PAYLOAD_TOO_LARGE',
+  /** No job has the requested id. */
+  'JOB_NOT_FOUND',
+  /** The operation is not allowed in the job's current status; `details.status` holds that status. */
+  'JOB_STATUS_CONFLICT',
+  /** The job queue could not be reached in time; callers that can carry on log it instead. */
+  'QUEUE_UNAVAILABLE',
   /** An unexpected failure; details are logged, not returned. */
   'INTERNAL_ERROR',
 ] as const;

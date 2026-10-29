@@ -4,9 +4,15 @@ import { UNREACHABLE_DATABASE_URL, UNREACHABLE_REDIS_URL } from './support/depen
 import { InProcessJobService } from './support/in-process-job-service.js';
 import { JOB_SERVICE_TEST_ENV } from './support/running-job-service.js';
 
+interface OpenApiOperation {
+  responses: Record<string, { content?: Record<string, { schema?: unknown }> }>;
+  requestBody?: { content: Record<string, { schema?: unknown }> };
+  parameters?: { name: string; in: string }[];
+}
+
 interface OpenApiDocument {
   openapi: string;
-  paths: Record<string, Record<string, { responses: Record<string, unknown> }>>;
+  paths: Record<string, Record<string, OpenApiOperation>>;
 }
 
 describe('API documentation (job-service over HTTP)', () => {
@@ -41,5 +47,24 @@ describe('API documentation (job-service over HTTP)', () => {
     expect(response.status).toBe(200);
     expect(document.openapi).toMatch(/^3\./);
     expect(Object.keys(document.paths['/health']?.get?.responses ?? {})).toEqual(['200']);
+  });
+
+  it('Docs list the job routes: submit, get, query and delete under /v1/jobs with their schemas', async () => {
+    const response = await fetch(service.url({ path: '/docs-json' }).url);
+    const { paths } = (await response.json()) as OpenApiDocument;
+    const jobs = paths['/v1/jobs'];
+    const job = paths['/v1/jobs/{id}'];
+
+    expect(jobs?.post?.requestBody?.content['application/json']?.schema).toBeDefined();
+    expect(jobs?.post?.responses['201']?.content?.['application/json']?.schema).toBeDefined();
+    expect(jobs?.get?.parameters?.map((parameter) => parameter.name).sort()).toEqual([
+      'limit',
+      'offset',
+    ]);
+    expect(jobs?.get?.responses['200']?.content?.['application/json']?.schema).toBeDefined();
+    expect(job?.get?.responses['200']?.content?.['application/json']?.schema).toBeDefined();
+    expect(job?.get?.parameters?.map((parameter) => parameter.name)).toEqual(['id']);
+    expect(Object.keys(job?.delete?.responses ?? {})).toContain('204');
+    expect(Object.keys(paths).filter((path) => path.startsWith('/internal'))).toEqual([]);
   });
 });

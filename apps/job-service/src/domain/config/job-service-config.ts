@@ -9,4 +9,10 @@ export interface JobServiceConfig extends BaseConfig {
   readonly bodyLimitBytes: number;
   /** The shared token job-execution-service presents on every `/internal` call. */
   readonly internalServiceToken: string;
+  /** Page size of a job query without `limit`. */
+  readonly queryDefaultLimit: number;
+  /** Largest `limit` a job query may ask for. */
+  readonly queryMaxLimit: number;
+  /** How long putting a job on the queue may take before the job is left pending. */
+  readonly enqueueTimeoutMs: number;
 }

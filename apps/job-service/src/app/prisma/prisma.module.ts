@@ -7,17 +7,21 @@ import {
 import { DATABASE, type Database } from '../../domain/database/database.js';
 import { PrismaDatabase } from '../../infra/prisma/prisma-database.js';
 
-/** job-service's one Postgres connection pool under `DATABASE`, closed when the app shuts down. */
+/**
+ * job-service's one Postgres connection pool, closed when the app shuts down. It is exported under
+ * `DATABASE` (its port) and as `PrismaDatabase` for the modules that wire Prisma adapters.
+ */
 @Module({
   providers: [
     {
-      provide: DATABASE,
-      useFactory: (config: JobServiceConfig): Database =>
+      provide: PrismaDatabase,
+      useFactory: (config: JobServiceConfig): PrismaDatabase =>
         new PrismaDatabase({ databaseUrl: config.databaseUrl }),
       inject: [JOB_SERVICE_CONFIG],
     },
+    { provide: DATABASE, useExisting: PrismaDatabase },
   ],
-  exports: [DATABASE],
+  exports: [DATABASE, PrismaDatabase],
 })
 export class PrismaModule implements OnModuleDestroy {
   constructor(@Inject(DATABASE) private readonly database: Database) {}

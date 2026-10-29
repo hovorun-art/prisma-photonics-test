@@ -4,8 +4,9 @@ A background job processing system: an API accepts jobs, workers take them from 
 them, Postgres keeps their state and a web UI shows them. Built as an interview task; design
 trade-offs are in [DECISIONS.md](DECISIONS.md), AI usage in `AI_USAGE.md`.
 
-> Status: walking skeleton. Every service starts, connects and answers its health check; job
-> submission and the job types arrive in the next milestones ([docs/roadmap/](docs/roadmap/)).
+> Status: the job API works (submit, get, query and delete email jobs; queued on submit).
+> Running jobs and the UI for them arrive next ([docs/roadmap/](docs/roadmap/)). The full API is
+> documented at http://localhost:3000/docs.
 
 ## Run it
 
@@ -41,6 +42,17 @@ npm run dev        # reads .env.example; a .env next to it overrides any value
 curl -i http://localhost:3000/health
 # HTTP/1.1 200 OK
 # {"status":"ok"}
+
+# Submit an email job (priority and maxAttempts are optional)
+curl -s -X POST http://localhost:3000/v1/jobs \
+  -H 'content-type: application/json' \
+  -d '{"type":"email","payload":{"to":"ada@example.com","subject":"Hello","body":"Hi Ada"}}'
+# {"id":"<uuid>","status":"pending","priority":5,"attempts":0,"maxAttempts":3,...,"type":"email",...}
+
+# Read it back, and query the newest jobs
+curl -s http://localhost:3000/v1/jobs/<uuid>
+curl -s 'http://localhost:3000/v1/jobs?limit=20&offset=0'
+# {"items":[...],"total":1}
 
 curl -i http://localhost:3000/no-such-route
 # HTTP/1.1 404 Not Found

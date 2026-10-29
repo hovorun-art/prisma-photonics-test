@@ -11,12 +11,17 @@ import {
 import { ZodValidationException } from 'nestjs-zod';
 import { ZodError } from 'zod';
 
+import { VALIDATION_FAILED_MESSAGE } from '../../domain/http/validation-failed.js';
+
 /** HTTP status per error code. A new code in `ERROR_CODES` does not compile until it has a row here. */
 export const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<ErrorCode, HttpStatus>> = {
   INTERNAL_UNAUTHORIZED: HttpStatus.UNAUTHORIZED,
   ROUTE_NOT_FOUND: HttpStatus.NOT_FOUND,
   VALIDATION_FAILED: HttpStatus.BAD_REQUEST,
   PAYLOAD_TOO_LARGE: HttpStatus.PAYLOAD_TOO_LARGE,
+  JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
+  JOB_STATUS_CONFLICT: HttpStatus.CONFLICT,
+  QUEUE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
   INTERNAL_ERROR: HttpStatus.INTERNAL_SERVER_ERROR,
 };
 
@@ -58,7 +63,7 @@ export class ErrorResponseFilter implements ExceptionFilter {
     if (exception instanceof ZodValidationException) {
       const zodError = exception.getZodError();
       const issues = zodError instanceof ZodError ? zodError.issues : [];
-      this.send(response, 'VALIDATION_FAILED', 'Request validation failed', { issues });
+      this.send(response, 'VALIDATION_FAILED', VALIDATION_FAILED_MESSAGE, { issues });
       return;
     }
 

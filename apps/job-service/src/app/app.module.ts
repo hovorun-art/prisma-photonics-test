@@ -5,11 +5,13 @@ import {
   ServiceConfigModule,
 } from '@job-queue/service-kit';
 import { DynamicModule, Module } from '@nestjs/common';
-import { APP_FILTER } from '@nestjs/core';
+import { APP_FILTER, APP_PIPE } from '@nestjs/core';
+import { ZodValidationPipe } from 'nestjs-zod';
 
 import { JOB_SERVICE_CONFIG, type JobServiceConfig } from '../domain/config/job-service-config.js';
 import { ErrorResponseFilter } from './errors/error-response.filter.js';
 import { InternalAccessModule } from './internal-access/internal-access.module.js';
+import { JobsModule } from './jobs/jobs.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 
 export interface AppOptions {
@@ -34,8 +36,13 @@ export class AppModule {
         }),
         HealthModule,
         InternalAccessModule,
+        JobsModule,
       ],
-      providers: [{ provide: APP_FILTER, useClass: ErrorResponseFilter }],
+      providers: [
+        { provide: APP_FILTER, useClass: ErrorResponseFilter },
+        // Validates every parameter typed with a Zod DTO (`createZodDto`) against its schema.
+        { provide: APP_PIPE, useClass: ZodValidationPipe },
+      ],
     };
   }
 }

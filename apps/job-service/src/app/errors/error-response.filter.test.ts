@@ -7,6 +7,9 @@ import { z } from 'zod';
 
 import { MalformedBodyError } from '../../domain/http/malformed-body.error.js';
 import { PayloadTooLargeError } from '../../domain/http/payload-too-large.error.js';
+import { JobNotFoundError } from '../../domain/jobs/errors/job-not-found.error.js';
+import { JobQueueUnavailableError } from '../../domain/jobs/errors/job-queue-unavailable.error.js';
+import { JobStatusConflictError } from '../../domain/jobs/errors/job-status-conflict.error.js';
 import { ErrorResponseFilter } from './error-response.filter.js';
 
 class InternalAccessDenied extends DomainError<'INTERNAL_UNAUTHORIZED'> {
@@ -53,8 +56,27 @@ describe('ErrorResponseFilter', () => {
     });
   });
 
+  it('maps the job errors to 404, 409 and 503 with their details', () => {
+    const id = '7b0f5a3e-2c4d-4e8f-9a1b-3c5d7e9f1a2b';
+    const cases = [
+      { error: new JobNotFoundError({ id }), status: 404 },
+      { error: new JobStatusConflictError({ id, status: 'processing' }), status: 409 },
+      { error: new JobQueueUnavailableError({ jobId: id, attempt: 1 }), status: 503 },
+    ];
+
+    for (const { error, status } of cases) {
+      new ErrorResponseFilter().catch(error, host);
+
+      expect(reply.status).toBe(status);
+      expect(ErrorBody.parse(reply.body)).toMatchObject({
+        code: error.code,
+        details: error.details,
+      });
+    }
+  });
+
   it('maps an unknown error to 500 INTERNAL_ERROR without leaking it, and logs it', () => {
-    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementationOnce(() => undefined);
     const failure = new Error('connection pool exhausted');
 
     new ErrorResponseFilter().catch(failure, host);
@@ -111,7 +133,7 @@ describe('ErrorResponseFilter', () => {
   });
 
   it('treats any other framework HTTP exception as unexpected: 500 INTERNAL_ERROR, logged', () => {
-    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const logged = vi.spyOn(Logger.prototype, 'error').mockImplementationOnce(() => undefined);
 
     new ErrorResponseFilter().catch(new BadRequestException('Some framework detail'), host);
 
