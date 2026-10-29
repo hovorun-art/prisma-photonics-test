@@ -1,0 +1,23 @@
+{
+  "name": "@job-queue/kernel",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Framework-free shared kernel: DomainError and the Clock, Random and Sleeper ports",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@job-queue/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --passWithNoTests"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "@job-queue/test-support",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Test-only helpers shared by the integration and e2e tests of the backend apps: a spawned-service harness and Redis and Postgres connection counters. Never part of a runtime image.",
+  "type": "module",
+  "exports": {
+    ".": {
+      "@job-queue/source": "./src/index.ts",
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@job-queue/kernel": "*",
+    "ioredis": "^6.0.0"
+  }
+}

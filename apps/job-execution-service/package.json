@@ -1,0 +1,38 @@
+{
+  "name": "@job-queue/job-execution-service",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Job Execution context: takes jobs from the queue and runs them; answers its own GET /health; reaches job state only through job-service's internal API",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "nest start --watch",
+    "start": "node dist/main.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests --project job-execution-service:unit",
+    "test:integration": "vitest run --passWithNoTests --project job-execution-service:integration",
+    "test:app-e2e": "vitest run --passWithNoTests --project job-execution-service:e2e"
+  },
+  "dependencies": {
+    "@job-queue/contracts": "*",
+    "@job-queue/kernel": "*",
+    "@job-queue/service-kit": "*",
+    "@nestjs/common": "^11.2.8",
+    "@nestjs/core": "^11.2.8",
+    "@nestjs/platform-express": "^11.2.8",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2"
+  },
+  "devDependencies": {
+    "@job-queue/test-support": "*",
+    "@nestjs/cli": "^11.0.24",
+    "@nestjs/testing": "^11.2.8",
+    "@swc/core": "^1.16.20",
+    "@testcontainers/redis": "^12.2.1",
+    "pino-pretty": "^13.2.0",
+    "testcontainers": "^12.2.1",
+    "unplugin-swc": "^2.0.0"
+  }
+}

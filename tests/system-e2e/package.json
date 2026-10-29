@@ -1,0 +1,18 @@
+{
+  "name": "@job-queue/system-e2e",
+  "version": "0.0.0",
+  "private": true,
+  "description": "System end-to-end tests against the full docker compose stack",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --max-warnings 0 --no-error-on-unmatched-pattern",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@job-queue/contracts": "*"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1"
+  }
+}

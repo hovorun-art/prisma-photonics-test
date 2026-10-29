@@ -1,0 +1,54 @@
+{
+  "name": "job-queue",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Job Queue Service: job-service, job-execution-service and job-ui",
+  "license": "UNLICENSED",
+  "type": "module",
+  "engines": {
+    "node": ">=26.0.0",
+    "npm": ">=11.0.0"
+  },
+  "workspaces": [
+    "packages/*",
+    "apps/*",
+    "tests/*"
+  ],
+  "scripts": {
+    "build:packages": "npm run build -w @job-queue/kernel -w @job-queue/contracts -w @job-queue/service-kit",
+    "build": "npm run build:packages && npm run build -w @job-queue/job-service -w @job-queue/job-execution-service -w @job-queue/job-ui",
+    "dev": "docker compose up -d postgres redis && npm run build:packages && node --env-file=.env.example --env-file-if-exists=.env node_modules/concurrently/dist/bin/index.js --names job-service,job-execution-service,job-ui --prefix-colors blue,magenta,green \"npm run dev -w @job-queue/job-service\" \"npm run dev -w @job-queue/job-execution-service\" \"npm run dev -w @job-queue/job-ui\"",
+    "typecheck": "tsc --noEmit -p tooling/tsconfig.json && npm run typecheck --workspaces --if-present",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests --project '*:unit)'",
+    "test:integration": "vitest run --passWithNoTests --project '*:integration)'",
+    "test:e2e": "npm run build:packages && npm run test:e2e -w @job-queue/job-ui && npm run test:e2e -w @job-queue/system-e2e",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.6",
+    "concurrently": "^10.0.6",
+    "eslint": "^10.13.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-import-resolver-typescript": "^4.4.5",
+    "eslint-plugin-boundaries": "^7.4.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "typescript": "~6.0.3",
+    "typescript-eslint": "^8.72.1",
+    "vitest": "^5.0.5"
+  },
+  "allowScripts": {
+    "@swc/core": true,
+    "prisma": true,
+    "@prisma/engines": true,
+    "@scarf/scarf": false,
+    "protobufjs": false,
+    "ssh2": false,
+    "cpu-features": false,
+    "unrs-resolver": true
+  }
+}

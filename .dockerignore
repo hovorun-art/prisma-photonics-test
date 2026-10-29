@@ -1,0 +1,17 @@
+.git
+.claude
+.github
+.env
+.env.*
+!.env.example
+node_modules
+**/node_modules
+**/dist
+**/build
+**/coverage
+**/playwright-report
+**/test-results
+**/*.tsbuildinfo
+apps/job-service/src/infra/prisma/generated
+docs
+openspec

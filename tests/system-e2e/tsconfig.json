@@ -1,0 +1,13 @@
+{
+  "extends": "../../tooling/tsconfig/library.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false
+  },
+  // The suite validates responses against the shared contracts; listing their entry point also
+  // keeps the typecheck valid before the first spec exists.
+  "files": ["../../packages/contracts/src/index.ts"],
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "playwright-report", "test-results"]
+}

@@ -1,0 +1,10 @@
+{
+  // Typechecks the shared tooling and the root Vitest config (run by the root `typecheck` script).
+  "extends": "./tsconfig/library.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["**/*.ts", "../vitest.config.ts"]
+}

@@ -1,0 +1,12 @@
+// job-service owns the database: no other service connects to it (design.md, "Repository layout").
+// The scaffold has no models yet; job tables arrive with the email-job-flow change.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/infra/prisma/generated"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}

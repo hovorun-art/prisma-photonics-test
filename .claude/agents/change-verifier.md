@@ -50,6 +50,14 @@ under "Assumed" or "Open questions" was never approved by the user: a requiremen
 7. Edge cases: for each requirement, name the obvious boundary inputs (empty,
    single element, max constraints, carry/overflow, null) and say whether they
    are covered by code or tests.
+8. Duplication: look for the same logic written more than once, across apps (`apps/*`), across
+   packages and inside one app: classes or functions doing the same job, copied constants and
+   enums (they drift apart), repeated bootstrap, shutdown, config-parsing, logging, connection or
+   health wiring. Compare files with similar names or roles between apps (e.g. `diff` the two
+   versions). Each duplicate is a gap: name both locations and where the shared version belongs
+   (`packages/kernel` for framework-free logic, a shared package for framework-bound code), with
+   the hooks or params each app needs to add its own part. Near-identical copies that differ only
+   by accident count as duplicates too.
 
 ## Report
 

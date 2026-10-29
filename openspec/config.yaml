@@ -9,8 +9,11 @@ context: |
   shadcn/ui, TanStack Query, Leaflet). Postgres via Prisma is the source of truth; Redis only holds
   the queue. Contracts are Zod schemas in packages/contracts. TypeScript strict, npm workspaces,
   Node 26, Vitest, ESLint + Prettier, Docker Compose.
-  Architecture: DDD + onion per module (domain, application, infrastructure, presentation; the domain
-  imports no framework); interfaces first, bound through DI tokens; modules talk only through public
+  Architecture: DDD + onion, layers first: src/domain (interfaces and types only), src/infra (all
+  implementations), src/app (NestJS entry points and wiring), features as subfolders inside each
+  layer; the domain imports no framework; every class
+  implements an interface, no free functions, constructors take one deps object, every method takes
+  a Request object and returns a Response object; interfaces first, bound through DI tokens; modules talk only through public
   interfaces so each can become its own microservice. Time and randomness come through injected ports.
   Errors are our own classes with stable codes, handled by code, never by message.
   Specs describe user-visible behaviour and edge cases (API responses, UI, job outcomes), not

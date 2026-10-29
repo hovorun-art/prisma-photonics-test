@@ -1,0 +1,99 @@
+# Job Queue Service
+
+A background job processing system: an API accepts jobs, workers take them from a queue and run
+them, Postgres keeps their state and a web UI shows them. Built as an interview task; design
+trade-offs are in [DECISIONS.md](DECISIONS.md), AI usage in `AI_USAGE.md`.
+
+> Status: walking skeleton. Every service starts, connects and answers its health check; job
+> submission and the job types arrive in the next milestones ([docs/roadmap/](docs/roadmap/)).
+
+## Run it
+
+Requirements: Docker (with Compose v2). For local development also Node 26 and npm.
+
+```bash
+cp .env.example .env            # optional: compose has the same defaults built in
+docker compose up --build --wait
+```
+
+| Service | URL |
+|---|---|
+| job-service API | http://localhost:3000 |
+| API docs (Swagger) | http://localhost:3000/docs |
+| job-ui | http://localhost:8080 |
+
+Scale the workers: `docker compose up --wait --scale job-execution-service=3`.
+Stop and remove everything: `docker compose down -v`.
+
+Local development (Postgres and Redis in Docker, the apps on the host with hot reload):
+
+```bash
+npm ci
+npm run dev        # reads .env.example; a .env next to it overrides any value
+```
+
+`npm run dev` leaves Postgres and Redis running in Docker; stop them with
+`docker compose stop postgres redis`.
+
+## Try it
+
+```bash
+curl -i http://localhost:3000/health
+# HTTP/1.1 200 OK
+# {"status":"ok"}
+
+curl -i http://localhost:3000/no-such-route
+# HTTP/1.1 404 Not Found
+# {"code":"ROUTE_NOT_FOUND","message":"...","details":{}}
+```
+
+Every error the API returns has the same body: `code` (from a closed list), `message`, `details`.
+The codes today: `INTERNAL_UNAUTHORIZED` (401), `ROUTE_NOT_FOUND` (404), `VALIDATION_FAILED` (400,
+also for a body that is not valid JSON), `PAYLOAD_TOO_LARGE` (413, the limit is in `details`; set
+with `JOB_SERVICE_BODY_LIMIT_BYTES`) and `INTERNAL_ERROR` (500).
+
+## Tests
+
+```bash
+npm test            # unit, integration and per-app e2e (needs Docker for Testcontainers)
+npm run test:e2e    # job-ui in a browser + system e2e against the full compose stack
+npm run typecheck
+npm run lint
+```
+
+Test levels: unit tests next to the code; integration tests (`*.int.test.ts`) run one adapter
+against a real Postgres or Redis; per-app e2e tests (`apps/<app>/test/e2e/`) run each app as a black
+box; the system e2e (`tests/system-e2e/`) starts the whole stack with two workers. Request and
+response shapes are shared Zod schemas, so stubs and the real API cannot drift apart. The
+integration and e2e tests of both backends share one set of helpers in `tests/support/` (starts the
+built service as a process, counts Redis and Postgres connections); it is test-only and never part
+of an image.
+
+## Architecture
+
+```
+            ┌──────────┐   /api    ┌──────────────┐      ┌──────────┐
+ browser ──►│  job-ui  │──────────►│ job-service  │─────►│ Postgres │
+            │ (nginx)  │           │ REST + docs  │      └──────────┘
+            └──────────┘           └──────┬───────┘
+                                          │ queue          ┌───────┐
+                                          └───────────────►│ Redis │
+                                ┌───────────────────────┐  └───┬───┘
+                                │ job-execution-service │◄─────┘
+                                │  (N instances)        │
+                                └───────────────────────┘
+```
+
+- **job-service** (NestJS) owns job state; it is the only service with database access.
+- **job-execution-service** (NestJS) will take jobs from the queue (BullMQ on Redis) and run them;
+  it changes job state only through job-service's internal API. It scales horizontally.
+- **job-ui** (React + Vite) is served by nginx, which forwards `/api` to job-service.
+- **Shared packages:** `packages/contracts` (Zod schemas for every request, response and error),
+  `packages/kernel` (framework-free ports and base classes), `packages/service-kit` (bootstrap,
+  config, logging, Redis and health shared by both backends).
+- Each backend is split into `domain/` (interfaces), `infra/` (implementations) and `app/`
+  (NestJS wiring), so any part can later move into its own service.
+
+Health checks report only their own process (`GET /health` → 200), never related services, so
+services that wait for each other cannot deadlock. See [DECISIONS.md](DECISIONS.md) for this and
+the other trade-offs.

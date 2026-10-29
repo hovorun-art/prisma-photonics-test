@@ -1,0 +1,107 @@
+# The whole stack: `docker compose up --build`; several workers:
+# `docker compose up --build --scale job-execution-service=3`.
+# Variables come from `.env` (copy .env.example); the defaults below match .env.example.
+name: ${COMPOSE_PROJECT_NAME:-job-queue}
+
+x-node-healthcheck: &node-healthcheck
+  interval: 5s
+  timeout: 3s
+  retries: 12
+  start_period: 5s
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-jobqueue}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobqueue}
+      POSTGRES_DB: ${POSTGRES_DB:-jobqueue}
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # One-shot: applies the migrations, then exits.
+  migrate:
+    build:
+      context: .
+      target: migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-jobqueue}:${POSTGRES_PASSWORD:-jobqueue}@postgres:5432/${POSTGRES_DB:-jobqueue}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  job-service:
+    build:
+      context: .
+      target: job-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JOB_SERVICE_PORT: ${JOB_SERVICE_PORT:-3000}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-jobqueue}:${POSTGRES_PASSWORD:-jobqueue}@postgres:5432/${POSTGRES_DB:-jobqueue}
+      REDIS_URL: redis://redis:6379
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-change-me-local-dev-token}
+    ports:
+      - '${JOB_SERVICE_PORT:-3000}:${JOB_SERVICE_PORT:-3000}'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *node-healthcheck
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:$${JOB_SERVICE_PORT}/health']
+
+  # Scalable and with no published port (every replica listens on the same container port) and no
+  # database settings: it reaches job state only through job-service's internal API.
+  job-execution-service:
+    build:
+      context: .
+      target: job-execution-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JOB_EXECUTION_SERVICE_PORT: ${JOB_EXECUTION_SERVICE_PORT:-3001}
+      REDIS_URL: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      <<: *node-healthcheck
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:$${JOB_EXECUTION_SERVICE_PORT}/health']
+
+  job-ui:
+    build:
+      context: .
+      target: job-ui
+    environment:
+      JOB_SERVICE_PORT: ${JOB_SERVICE_PORT:-3000}
+    ports:
+      - '${JOB_UI_PORT:-8080}:80'
+    depends_on:
+      job-service:
+        condition: service_healthy
+    healthcheck:
+      <<: *node-healthcheck
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:80/']
+
+volumes:
+  postgres-data:

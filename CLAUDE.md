@@ -35,17 +35,32 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
 - Every spec scenario (WHEN/THEN) has at least one test that sets up its WHEN and asserts its THEN;
   name the test after the scenario so the verifier can trace it.
 - Fix the code, not the test. Change a test only when it contradicts the spec, and then say so.
-- Tests are deterministic: time, randomness and I/O come in through parameters or fakes.
+- Tests are deterministic: time, randomness and I/O come in through injected ports. In tests use
+  Vitest's own tools (`vi.useFakeTimers()`, `vi.setSystemTime()`, `vi.fn()`, object literals typed as
+  the port interface); no shared fake packages, and no tests for test doubles.
+- One test file per source file (`random.ts` → `random.test.ts`), next to it; no grab-bag test
+  files. Test behaviour, not language facts: no tests that a token is a `symbol` or that a
+  constant exists.
+- Levels: unit (`*.test.ts` next to the code), integration (`*.int.test.ts`, one adapter against
+  its real dependency via Testcontainers), per-app e2e (`apps/<app>/test/e2e/`, the app as a black
+  box with its own infrastructure, other apps simulated), contract checks through the shared Zod
+  schemas (no Pact), system e2e (`tests/system-e2e`, full compose stack, Playwright).
 - With `TDD_STRICT=1` in `.claude/flow.conf`, a hook blocks edits to source files until a test file
   has changed on the branch.
 
 ## Commands
 
-Keep in sync with `CHECK_CMDS` in `.claude/flow.conf`. Root scripts run across all workspaces;
-exact names are fixed by the `project-scaffold` change.
-- `docker compose up --build` (whole stack), `docker compose up --scale job-execution-service=N` (several workers)
-- `npm run dev` / `npm run build`
-- `npm run typecheck`, `npm run lint`, `npm test` (all three run by the Stop hook)
+Keep in sync with `CHECK_CMDS` in `.claude/flow.conf`. Root scripts run across all workspaces.
+- `docker compose up --build --wait` (whole stack), `docker compose up --scale job-execution-service=N`
+  (several workers); `docker compose down -v` to remove it
+- `npm run dev`: Postgres and Redis in Docker, the three apps on the host in watch mode (reads
+  `.env.example`, then `.env` overrides)
+- `npm run build` (shared packages first: `npm run build:packages`)
+- `npm run typecheck`, `npm run lint`, `npm test` (all three run by the Stop hook); `npm test` runs
+  unit, integration and backend per-app e2e (Testcontainers, needs Docker); `npm run test:unit`,
+  `npm run test:integration` for one level
+- `npm run test:e2e`: job-ui Playwright and the system e2e on a compose stack (CI and the verifier)
+- `npm run format` / `npm run format:check`
 
 ## Purpose and decisions
 
@@ -73,45 +88,91 @@ the stack changes.
 
 ## Architecture
 
-DDD with onion layers. Planned layout; `project-scaffold` makes it real and this section is updated
-when it changes.
+DDD with onion layers, layers first (see "Code style"). Current layout:
 ```
-apps/job-service            Job bounded context (owns the Job aggregate and job logs): REST API for
-                            submit, get, list, cancel, retry, health; Swagger
-apps/job-execution-service  Job Execution context: takes jobs from the queue, runs them, applies retries
-                            and crash recovery. Scaled with `docker compose up --scale job-execution-service=N`
-                            plus in-process concurrency. Domain modules, each behind a handler
-                            interface so it can become its own microservice later:
-                              notifications (email), webhooks, flight-transit (aircraft transit
-                              reports), batch-processing
-apps/job-ui                 React + Vite UI: job list and details, logs, transit map
-packages/contracts          Zod schemas and inferred types: job types, payloads, results, API
-                            requests/responses, error codes
-packages/<shared-kernel>    Only what is truly shared (e.g. clock and random ports); fixed in project-scaffold
-docker-compose.yml          postgres, redis, job-service, job-execution-service, job-ui
+apps/job-service            Job bounded context (owns the Job aggregate and job logs; today only
+                            GET /health, Swagger at /docs, the error filter and the /internal guard).
+                            src/{domain,infra,app}/ + main.ts; prisma/ (schema, migrations)
+apps/job-execution-service  Job Execution context (today: connects to Redis, logs its start, GET /health
+                            on a port that is not published). Scaled with
+                            `docker compose up --scale job-execution-service=N`. Later domain modules,
+                            each behind a handler interface so it can become its own microservice:
+                              notifications (email), webhooks, flight-transit, batch-processing
+apps/job-ui                 React + Vite UI (today: the started page), src/features/<feature>/
+packages/kernel             framework-free: Clock, Random, Sleeper ports, DomainError + ERROR_CODES,
+                            SignalGracefulShutdown, ProcessFatalErrorHandler
+packages/contracts          Zod schemas and inferred types: health response, error body, internal
+                            API prefix and token scheme (later: jobs, payloads, results)
+packages/service-kit        shared NestJS pieces for the backends: NestServiceBootstrap, base config
+                            (NODE_ENV, LOG_LEVEL, REDIS_URL, port), logging with redaction, Redis module,
+                            health module, config module
+tests/support               test-only helpers for the integration and e2e tests (spawned-service
+                            harness, Redis and Postgres connection counters); a dev dependency,
+                            never in a runtime image
+tests/system-e2e            Playwright suite against the full compose stack
+tooling/                    shared tsconfig, ESLint (layer and class rules) and Vitest presets
+Dockerfile                  one multi-stage file: job-service, job-execution-service, migrate, job-ui (nginx)
+docker-compose.yml          postgres, redis, migrate (one-shot), job-service, job-execution-service, job-ui
 ```
-- Postgres is the source of truth for job state; Redis only holds the queue. BullMQ is used only
+- Postgres is the source of truth for job state and only job-service touches it;
+  job-execution-service has no database access and will change job state only through
+  job-service's `/internal` API (service token). Redis only holds the queue. BullMQ is used only
   through our queue interface; how it maps to Postgres state is decided in the core job flow change.
+- Health checks report only their own process (`GET /health` → 200 `{ "status": "ok" }`), never
+  related services, so services waiting on each other's health cannot deadlock.
+- No logic is written twice: framework-free shared code goes to `packages/kernel`, NestJS-bound
+  shared code to `packages/service-kit`; apps add their own parts through params.
 - Time (clock), randomness (webhook failure rate, sleep durations, generated flight data) and
   sleeping come in through injected ports, so execution and job handlers test deterministically.
 
 ## Code style
 
 **Backend modules (DDD + onion).**
-- Each module (bounded context or domain module) has the layers `domain/` (entities, value objects,
-  domain errors, repository interfaces), `application/` (use cases, ports), `infrastructure/`
-  (Prisma, BullMQ and other adapters) and `presentation/` (controllers, queue consumers, mapping to
-  contracts). Dependencies point inwards only: domain imports nothing from other layers or from
-  NestJS, Prisma or BullMQ.
-- Everything is an interface first, then an implementation: repositories, queue, clock, random,
-  job handlers, other modules. Implementations are bound to interfaces through Nest DI with
-  `Symbol` tokens.
-- Modules talk to each other only through a public interface and its token, exported from the
-  module's `index.ts`. No imports of another module's internals (enforced by an ESLint import rule).
-  Calls between modules must work if the other side later becomes a remote service: plain data in
-  and out (contract types), no shared entities, no shared transactions across modules.
-- `job-execution-service` changes job state only through a port of the Job context, never by
-  writing the Job table directly; today the adapter can be in-process, later an HTTP or queue client.
+- Layers first: every app's `src/` has exactly `domain/`, `infra/` and `app/` (plus `main.ts`).
+  Features go inside each layer as subfolders (`domain/health/`, `infra/health/`,
+  `app/health/`), with deeper subfolders when they divide the code logically
+  (`infra/health/redis/`). The same layout applies to `packages/kernel/src` and `packages/service-kit/src`.
+  - `domain/`: only what is not implemented: interfaces (ports and use cases) with their
+    Request/Response types and DI token, value types, and domain errors. No classes with logic, no
+    NestJS, Prisma, Redis or pino imports.
+  - `infra/`: every implementation of a `domain/` interface: use-case logic and adapters (Prisma,
+    Redis, BullMQ, HTTP clients, pino).
+  - `app/`: NestJS entry points (controllers, guards, filters, lifecycle hooks) and the Nest wiring
+    (`app/app.module.ts`, `app/<feature>/<feature>.module.ts`); entry points call `domain/`
+    interfaces through DI tokens.
+  Dependencies: `domain/` imports only `packages/kernel`, contract types and other `domain/` files;
+  `infra/` imports `domain/`, `infra/`, kernel and contracts; `app/` imports `domain/`, kernel and
+  contracts, and only `*.module.ts` files import `infra/` to wire it.
+- Interfaces first: every class implements an interface (from `domain/`, the kernel, or a framework
+  interface such as Nest's `CanActivate`). No standalone classes. Bound to their interface through
+  Nest DI with a `Symbol` token.
+- No free functions: all logic lives in class methods. A helper used by one class is a `private`
+  method of it (e.g. `private isStopped(signal)`). Exempt: React components and hooks, `main.ts`,
+  configuration files.
+- Constructors take at most two objects: `d: <Class>Deps` (collaborators: ports, clients,
+  loggers) and, when the class needs configuration, `p: <Class>Params` (values and options:
+  intervals, tokens, ports, extra steps), always with named properties, never positional values:
+  `constructor(private readonly d: HeartbeatLoopImplDeps, private readonly p: HeartbeatLoopImplParams)`.
+  A class with only data (an error) takes just `p`. Modules build both with `useFactory`. Exempt:
+  classes Nest instantiates itself (controllers, guards, filters, hooks), which keep Nest's
+  per-parameter injection.
+- Every public method that has inputs takes one request object and every public method returns
+  one response object (or a Promise of it), named `<Method><Interface>Request` /
+  `<Method><Interface>Response`, e.g. `HeartbeatLoop.run(req: RunHeartbeatLoopRequest):
+  Promise<RunHeartbeatLoopResponse>`. A method without inputs takes no parameter at all (no empty
+  request object): `clock.now()` returns `NowClockResponse`. Applies to kernel ports too. Exempt:
+  framework-owned signatures (`canActivate`, `catch`, `onApplicationBootstrap`, controller handlers
+  returning contract types).
+- Implementation names: `<Tech><Interface>` when a technology or strategy distinguishes it
+  (`RedisHeartbeat`, `PrismaDependencyProbe`); `<Interface>Impl` only when there is nothing
+  meaningful to distinguish it by yet (`HeartbeatLoopImpl`). File names follow the class
+  (`redis-heartbeat.ts`, `heartbeat-loop.impl.ts`). Test fakes: `Fake<Interface>`.
+- Features use each other only through `domain/` interfaces and their DI tokens, never another
+  feature's `infra/` class. Calls between features must work if the other side later becomes a
+  remote service: plain data in and out (contract types), no shared entities, no shared
+  transactions across features.
+- `job-execution-service` changes job state only through job-service's internal API, never by
+  writing the Job table directly.
 - Name things after the domain (Job, JobLog, Execution, Transit), not after technical roles
   (processor, manager, helper, utils).
 
@@ -119,11 +180,15 @@ docker-compose.yml          postgres, redis, job-service, job-execution-service,
 `packages/contracts`; types are inferred from the schemas (`z.infer`), never written twice. Input is
 validated at the edge (HTTP and queue consumers); inner layers trust their types.
 
-**Errors.** Our own error classes, each with a stable `code` from a shared union in
-`packages/contracts`, plus structured `details`. Code handles errors by class or `code`, never by
-message text. Domain and application code throw these errors; one exception filter per app maps
+**Errors.** Our own error classes extending `DomainError`, each with a stable `code` from the
+closed list `ERROR_CODES` in `packages/kernel` (a code outside it does not compile; contracts build
+the `ErrorCode` schema from the same list), plus structured `details`. A new failure adds its code to
+`ERROR_CODES` first (today: `INTERNAL_UNAUTHORIZED`, `ROUTE_NOT_FOUND`, `VALIDATION_FAILED`,
+`PAYLOAD_TOO_LARGE`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table. Code handles errors by class or `code`, never by
+message text. `domain/` interfaces declare these errors and `infra/` code throws them; one exception filter per app maps
 codes to HTTP status and a uniform response body (`code`, `message`, `details`). Never throw strings
-or bare `Error` for expected failures; unknown errors are logged and returned as a generic 500.
+or bare `Error` for expected failures; unknown errors, including framework errors with no code of
+our own, are logged and returned as a generic 500 (no framework error body passes through).
 
 **Frontend.** Feature folders (`features/jobs`, `features/transit-map`, ...), each with its own
 components, hooks and API calls. Server state through TanStack Query (polling for live updates);

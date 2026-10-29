@@ -47,6 +47,63 @@ ours.
 - *Kafka*: a log, not a job queue. No per-message priority, delays or per-job acks; operational
   overhead far beyond this task.
 
+**Health checks report only the service itself.** `GET /health` on job-service and on
+job-execution-service answers 200 `{ "status": "ok" }` while the process runs. It does not probe
+Postgres, Redis or the other service. If health checks included related services, services that
+wait for each other's health (compose `depends_on: service_healthy`, orchestrator readiness) could
+form a circular dependency: A waits for B to be healthy, B reports unhealthy because A is not up,
+and nothing ever becomes healthy. A failing dependency also would get the healthy service restarted,
+which does not fix the dependency. *Trade-off:* `/health` does not tell an operator that Postgres or
+Redis is down; that shows up as errors and logs on the requests that need them. An earlier version
+probed dependencies and listed live execution instances through heartbeats; we removed it as more
+complexity than this stage needs.
+
+**Job state has one owner: job-service.** Only job-service has database access.
+job-execution-service will read and change job state only through job-service's `/internal` API,
+never by writing the jobs table. Two services sharing one table is the shared-database
+anti-pattern: a schema change breaks both, and the Job entity's rules can be bypassed. Clients get a
+narrow external update (cancel from pending/scheduled, retry from failed); the system's own changes
+(status, attempts, errors, progress, results, logs) go through a separate internal update method.
+*Trade-off:* field-level internal attributes (as in gRPC services with per-field permissions) would
+express this more precisely; a second method is simpler and enough here. Every state change costs
+an HTTP hop from the execution service; timeouts and retries for it are designed with the first job
+flow.
+
+**Internal API protected by a shared service token.** Routes under `/internal` require
+`Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
+docs. *Trade-off:* a shared secret in environment variables is weaker than service identity (mTLS,
+or gRPC with per-service credentials), but needs no certificate setup. It is replaceable behind the
+guard.
+
+**Contracts through shared Zod schemas, not Pact.** Every request, response and error body is a
+Zod schema in `packages/contracts`, used by the server for validation and OpenAPI and by the tests
+to validate stubs and fixtures. In one repository this catches contract drift at compile and test
+time. *Trade-off:* no consumer-driven contract tests; if the services were split into separate
+repositories, Pact (or published schemas) would be the next step.
+
+**Code structure: layers first, an interface for every class.** Each app has `domain/` (interfaces
+and types only), `infra/` (every implementation) and `app/` (NestJS entry points and wiring).
+Every class implements an interface; constructors take a deps object and, when configured, a
+params object; every method with inputs takes one request object and returns one response object.
+Logic shared between the services lives once: framework-free in `packages/kernel` (graceful
+shutdown, fatal-error handling), NestJS-bound in `packages/service-kit` (bootstrap, base config,
+logging, Redis, health). ESLint enforces the layers and the class shapes. *Why:* any feature or
+domain module can later move into its own service without rewrites, and named request/response
+objects keep signatures stable as fields are added. *Trade-off:* noticeably more boilerplate
+(request/response types, interfaces with a single implementation, factory wiring in modules) than
+idiomatic NestJS.
+
+**One large commit for the scaffold, small commits after it.** The task asks for small, clean
+commits, and the feature work follows that. The project scaffold (workspaces, tooling, shared
+packages, both services, Docker, CI, test levels) is deliberately one commit. While the
+infrastructure was being set up and the AI workflow tuned (code rules, layer and class lint rules,
+test levels, agent instructions), the same files were rewritten several times: the module layout
+moved to layers first, health went from dependency probes and heartbeats to a plain 200, and
+duplicated code moved into shared packages. Committing each intermediate state would have recorded
+mostly churn that the next step overwrote. *Trade-off:* the scaffold's history is not reviewable
+step by step; the reasoning behind each turn is kept instead in this file, in the OpenSpec change
+(`openspec/changes/project-scaffold/`: decisions, design and tasks) and in the AI chat logs.
+
 ---
 
 ## 1. Job Pickup Strategy

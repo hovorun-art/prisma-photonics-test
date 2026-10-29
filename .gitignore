@@ -5,3 +5,27 @@ openspec/changes/*/.verify-attempts
 .claude/.tests-passed
 .claude/.test-attempts
 .claude/worktrees/
+
+# dependencies and build output
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+
+# generated code (rebuilt by `prisma generate` on install, typecheck, test and build)
+apps/job-service/src/infra/prisma/generated/
+
+# tests
+coverage/
+playwright-report/
+test-results/
+blob-report/
+
+# local environment (the committed template is .env.example)
+.env
+.env.*
+!.env.example
+
+# logs and OS files
+*.log
+.DS_Store

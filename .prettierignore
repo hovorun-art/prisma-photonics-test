@@ -1,0 +1,14 @@
+node_modules
+dist
+build
+coverage
+playwright-report
+test-results
+package-lock.json
+/.claude
+/openspec
+/docs
+**/generated
+**/prisma/migrations
+# hand-written docs are not reformatted
+*.md
