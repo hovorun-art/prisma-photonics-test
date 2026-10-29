@@ -10,11 +10,11 @@ logged. `DECISIONS.md` sections 1–4 are filled in along the way.
 | Change | Intent | Depends on |
 |---|---|---|
 | `retry-backoff` | Automatic retries with backoff up to the maximum attempts; the error is stored | `webhook-job` |
-| `priority-scheduling` | Higher-priority jobs run first; scheduled jobs start when their time arrives | `email-job-flow` |
-| `concurrent-pickup` | Several workers never execute the same job twice | `email-job-flow` |
+| `priority-scheduling` | Higher-priority jobs run first; scheduled jobs start when their time arrives | `email-job-execution` |
+| `concurrent-pickup` | Several workers never execute the same job twice | `email-job-execution` |
 | `crash-recovery` | A job held by a worker that dies is recovered and finishes | `concurrent-pickup` |
-| `idempotency` | Submitting with an idempotency key already used returns the existing job | `email-job-flow` |
-| `job-log` | Each lifecycle step and attempt is logged and shown in the job details | `email-job-flow` |
+| `idempotency` | Submitting with an idempotency key already used returns the existing job | `job-api` |
+| `job-log` | Each lifecycle step and attempt is logged and shown in the job details | `email-job-execution` |
 
 ## Open questions
 

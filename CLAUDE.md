@@ -35,9 +35,10 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
 - Every spec scenario (WHEN/THEN) has at least one test that sets up its WHEN and asserts its THEN;
   name the test after the scenario so the verifier can trace it.
 - Fix the code, not the test. Change a test only when it contradicts the spec, and then say so.
-- Tests are deterministic: time, randomness and I/O come in through injected ports. In tests use
-  Vitest's own tools (`vi.useFakeTimers()`, `vi.setSystemTime()`, `vi.fn()`, object literals typed as
-  the port interface); no shared fake packages, and no tests for test doubles.
+- Tests are deterministic: time, randomness and I/O come in through injected ports. In unit tests
+  mock a class's dependencies with `mockDeep<Port>()` from `vitest-mock-extended` and pass them as
+  its `d: <Class>Deps` object; time with Vitest's own tools (`vi.useFakeTimers()`,
+  `vi.setSystemTime()`). No shared fake packages, and no tests for test doubles.
 - One test file per source file (`random.ts` → `random.test.ts`), next to it; no grab-bag test
   files. Test behaviour, not language facts: no tests that a token is a `symbol` or that a
   constant exists.
