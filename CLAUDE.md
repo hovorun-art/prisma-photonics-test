@@ -1,7 +1,11 @@
 # Project
 
-<!-- TODO: one paragraph: what this is, for whom, the core loop or main use case. -->
-<What the product is and what it does.> Spec-driven with OpenSpec; the flow's hooks, skills and verifier agent live in `.claude/`.
+Job Queue Service: an interview task (Senior AI-Integrated Full Stack Engineer). Clients submit
+background jobs (email, webhook, aircraft transit report, batch) through an API; workers pull them
+from a Redis queue (BullMQ) and execute them, with job state, results and logs in Postgres; a web UI lists,
+inspects, cancels and retries jobs and shows aircraft transits on a map. The reviewers assess
+concurrency, failure handling and state management (duplicate-free pickup, crash recovery, retry
+with backoff, priority, scheduled jobs, idempotency) and the honesty of `DECISIONS.md`. Spec-driven with OpenSpec; the flow's hooks, skills and verifier agent live in `.claude/`.
 The full concept is in `docs/concept.md` (a source for decisions; each point is decided in a change).
 
 ## Language
@@ -37,22 +41,52 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
 
 ## Commands
 
-<!-- TODO: keep in sync with CHECK_CMDS in .claude/flow.conf -->
+Keep in sync with `CHECK_CMDS` in `.claude/flow.conf`. Root scripts run across all workspaces;
+exact names are fixed by the `project-scaffold` change.
+- `docker compose up --build` (whole stack), `docker compose up --scale worker=N` (several workers)
 - `npm run dev` / `npm run build`
 - `npm run typecheck`, `npm run lint`, `npm test` (all three run by the Stop hook)
 
 ## Purpose and decisions
 
-<!-- TODO: why this stack, what the project is for (prototype? product?), key libraries and why. -->
+A take-home assessment, built to production-like standards but scoped to the task. The full list
+of planning decisions is in `docs/concept.md` ("Decided during planning"); design trade-offs for the
+reviewers go into `DECISIONS.md` as they are made, not at the end.
+
+- Node 26, TypeScript, npm workspaces monorepo.
+- API and worker: NestJS. Database: Postgres via Prisma (raw SQL via `$queryRaw` where
+  concurrency-critical queries need locking). Queue: BullMQ on Redis behind our own queue interface
+  (enqueue, claim, complete, fail, cancel), so its internals can be replaced later; what BullMQ does
+  and what we own is in `DECISIONS.md`.
+- Web: React + Vite, Tailwind + shadcn/ui, Leaflet + react-leaflet (OpenStreetMap tiles). Updates by
+  polling first; Server-Sent Events later if time allows.
+- API docs: Swagger/OpenAPI from NestJS.
+- Tests: Vitest in every workspace; integration tests run against real Postgres and Redis.
+- Aircraft data: generated from a bundled static airport list, no external API.
+- Submission files: `README.md`, `DECISIONS.md`, `AI_USAGE.md`, `docs/ai-chats/` (Markdown exported
+  from Claude Code sessions by a script at the end), `Dockerfile`, `docker-compose.yml`.
+
 Specs must describe user-visible behaviour, not implementation details, so they stay reusable if
 the stack changes.
 
 ## Architecture
 
-<!-- TODO: module map, what is pure/testable, where randomness and time come from, shared contracts. -->
+Planned layout; `project-scaffold` makes it real and this section is updated when it changes.
 ```
-src/...
+apps/api       NestJS HTTP API: submit, get, list, cancel, retry, health; Swagger
+apps/worker    NestJS worker process: takes jobs from the queue, runs handlers, writes state to Postgres;
+               scaled with `docker compose up --scale worker=N` plus in-process concurrency
+apps/web       React + Vite UI: job list and details, logs, transit map
+packages/shared  job types, payload/result schemas, status lifecycle, shared contracts
+packages/db      Prisma schema, migrations, client
+docker-compose.yml  postgres, redis, api, worker, web
 ```
+- Postgres is the source of truth for job state; Redis only holds the queue. Status transitions
+  follow the lifecycle in `docs/concept.md` and are pure, unit-testable functions.
+- Time (clock), randomness (webhook failure rate, sleep durations, generated flight data) and
+  sleeping come in through injected providers, so the worker and job handlers test deterministically.
+- BullMQ is used only through the queue interface; how it maps to Postgres state is decided in the
+  core job flow change.
 
 ## Asking
 

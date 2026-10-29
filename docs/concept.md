@@ -100,3 +100,29 @@ A Git repository with:
 6. Honest DECISIONS.md.
 7. Test the worker independently.
 8. Small, clean commits.
+
+## Decided during planning
+
+- Queue: BullMQ on Redis, behind our own queue interface; Postgres holds job state and results and
+  is the source of truth. A library is allowed by the task ("use any queue/cache technology"). What
+  is assessed is how the six critical details work, so `DECISIONS.md` says which part BullMQ handles
+  and which part is ours. Replacing BullMQ's internals with custom Redis logic is a possible later
+  step. Priority: a running system first, improvements after.
+- Backend: TypeScript + NestJS (API and worker).
+- Frontend: React + Vite, its own service/container.
+- Layout: npm workspaces monorepo (apps and shared packages).
+- Database access: Prisma (raw SQL via `$queryRaw` where concurrency-critical queries need it).
+- Live updates: polling first; Server-Sent Events later if time allows.
+- In scope: job log (table and UI view), map hover details (bonus), Swagger/OpenAPI docs.
+- Aircraft transit data: generated from a bundled static airport list (no external API).
+- Map: Leaflet + react-leaflet with OpenStreetMap tiles.
+- UI styling: Tailwind + shadcn/ui.
+- Tests: Vitest for every workspace.
+- AI chat transcripts: exported at the end into `docs/ai-chats/` as Markdown by a conversion script
+  we write.
+- Workers: a scalable worker service (`docker compose up --scale worker=N`) plus configurable
+  in-process concurrency per worker, to show duplicate-pickup safety across processes.
+- Queue integration details (job ids, sync with Postgres, cancel/retry races): decided inside the
+  core job flow change.
+- Package manager: npm (workspaces).
+- Node: 26 (Docker `node:26-alpine`, `engines`); fall back to 24 if a core library does not support it.
