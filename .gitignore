@@ -1,0 +1,7 @@
+# spec-driven flow: local state of hooks, verifier and agents
+openspec/changes/*/.verdict
+openspec/changes/*/.verify-attempts
+.claude/.verify-running
+.claude/.tests-passed
+.claude/.test-attempts
+.claude/worktrees/

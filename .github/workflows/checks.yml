@@ -1,0 +1,24 @@
+# The same checks as the Stop hook, so the rules hold outside Claude Code too.
+# TODO: keep the steps in sync with CHECK_CMDS in .claude/flow.conf and the project's stack.
+name: checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: .claude/hooks/check-language.sh
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build

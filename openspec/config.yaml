@@ -1,0 +1,15 @@
+schema: spec-flow
+
+# Project facts for every artifact. The flow's own rules (decisions, approval, test first, task groups)
+# live in openspec/schemas/spec-flow/schema.yaml and CLAUDE.md; keep only what is specific to this product.
+context: |
+  TODO: what the product is, the stack (language, framework, test runner, linter), and the main
+  architectural rule (for example: logic is pure and separate from UI so it is unit-testable).
+  Specs describe user-visible behaviour and edge cases, not implementation.
+  Language: English only in all artifacts; other languages only in translation files (e.g. locales/).
+  Checks: the CHECK_CMDS in .claude/flow.conf.
+
+# Per-artifact rules for this project (proposal, decisions, specs, design, tasks), for example:
+# rules:
+#   specs:
+#     - 'Every API error scenario names the HTTP status'
