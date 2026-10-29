@@ -38,7 +38,10 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
 - Tests are deterministic: time, randomness and I/O come in through injected ports. In unit tests
   mock a class's dependencies with `mockDeep<Port>()` from `vitest-mock-extended` and pass them as
   its `d: <Class>Deps` object; time with Vitest's own tools (`vi.useFakeTimers()`,
-  `vi.setSystemTime()`). No shared fake packages, and no tests for test doubles.
+  `vi.setSystemTime()`). Stub each expected call with the `...Once` forms (`mockResolvedValueOnce`,
+  `mockRejectedValueOnce`, `mockReturnValueOnce`, `mockImplementationOnce`), never the persistent
+  ones, so an unexpected extra call gets nothing and fails; ESLint enforces it in test files. No
+  shared fake packages, and no tests for test doubles.
 - One test file per source file (`random.ts` → `random.test.ts`), next to it; no grab-bag test
   files. Test behaviour, not language facts: no tests that a token is a `symbol` or that a
   constant exists.
@@ -91,8 +94,10 @@ the stack changes.
 
 DDD with onion layers, layers first (see "Code style"). Current layout:
 ```
-apps/job-service            Job bounded context (owns the Job aggregate and job logs; today only
-                            GET /health, Swagger at /docs, the error filter and the /internal guard).
+apps/job-service            Job bounded context (owns the Job aggregate and job logs): GET /health,
+                            Swagger at /docs, the error filter, the /internal guard, the job API
+                            (/v1/jobs: create, get, query, delete; /internal/v1/jobs: get, update)
+                            over one JobService; jobs table via Prisma, BullMQ queue behind JobQueue.
                             src/{domain,infra,app}/ + main.ts; prisma/ (schema, migrations)
 apps/job-execution-service  Job Execution context (today: connects to Redis, logs its start, GET /health
                             on a port that is not published). Scaled with
@@ -103,12 +108,14 @@ apps/job-ui                 React + Vite UI (today: the started page), src/featu
 packages/kernel             framework-free: Clock, Random, Sleeper ports, DomainError + ERROR_CODES,
                             SignalGracefulShutdown, ProcessFatalErrorHandler
 packages/contracts          Zod schemas and inferred types: health response, error body, internal
-                            API prefix and token scheme (later: jobs, payloads, results)
+                            API prefix and token scheme, the Job entity (jobs/job.ts: statuses,
+                            types, limits, payloads, results, requests) and the queue message
 packages/service-kit        shared NestJS pieces for the backends: NestServiceBootstrap, base config
                             (NODE_ENV, LOG_LEVEL, REDIS_URL, port), logging with redaction, Redis module,
                             health module, config module
 tests/support               test-only helpers for the integration and e2e tests (spawned-service
-                            harness, Redis and Postgres connection counters); a dev dependency,
+                            harness, Redis and Postgres connection counters, Prisma migrate deploy
+                            for test databases); a dev dependency,
                             never in a runtime image
 tests/system-e2e            Playwright suite against the full compose stack
 tooling/                    shared tsconfig, ESLint (layer and class rules) and Vitest presets
@@ -118,7 +125,8 @@ docker-compose.yml          postgres, redis, migrate (one-shot), job-service, jo
 - Postgres is the source of truth for job state and only job-service touches it;
   job-execution-service has no database access and will change job state only through
   job-service's `/internal` API (service token). Redis only holds the queue. BullMQ is used only
-  through our queue interface; how it maps to Postgres state is decided in the core job flow change.
+  through our queue interface; how it maps to Postgres state is in `DECISIONS.md` (queue entries
+  carry only the job id, one entry per attempt).
 - Health checks report only their own process (`GET /health` → 200 `{ "status": "ok" }`), never
   related services, so services waiting on each other's health cannot deadlock.
 - No logic is written twice: framework-free shared code goes to `packages/kernel`, NestJS-bound
@@ -185,7 +193,7 @@ validated at the edge (HTTP and queue consumers); inner layers trust their types
 closed list `ERROR_CODES` in `packages/kernel` (a code outside it does not compile; contracts build
 the `ErrorCode` schema from the same list), plus structured `details`. A new failure adds its code to
 `ERROR_CODES` first (today: `INTERNAL_UNAUTHORIZED`, `ROUTE_NOT_FOUND`, `VALIDATION_FAILED`,
-`PAYLOAD_TOO_LARGE`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table. Code handles errors by class or `code`, never by
+`PAYLOAD_TOO_LARGE`, `JOB_NOT_FOUND`, `JOB_STATUS_CONFLICT`, `QUEUE_UNAVAILABLE`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table. Code handles errors by class or `code`, never by
 message text. `domain/` interfaces declare these errors and `infra/` code throws them; one exception filter per app maps
 codes to HTTP status and a uniform response body (`code`, `message`, `details`). Never throw strings
 or bare `Error` for expected failures; unknown errors, including framework errors with no code of

@@ -37,20 +37,12 @@ the compose nginx proxy is built in `job-ui-crud`. Motivation: proposal.md; beha
 
 ### Contracts (`packages/contracts/src/jobs/`)
 
-One file per concept, each with its schemas and inferred types:
+One entity, one file (schemas and inferred types together):
 
 | File | Exports |
 |---|---|
-| `job-status.ts` | `JobStatus` enum (`scheduled`, `pending`, `processing`, `completed`, `failed`, `cancelled`), `FINISHED_JOB_STATUSES` |
-| `email-job.ts` | `EmailJobPayload` `{ to, subject, body }`, `EmailJobResult` `{ messageId }`, `EMAIL_LIMITS` |
-| `job-type.ts` | `JobType` enum (`email` only), `JOB_RESULT_SCHEMAS` keyed by type |
-| `job.ts` | `Job` (response shape), `JOB_LIMITS` (priority and max-attempts ranges and defaults) |
-| `create-job.ts` | `CreateJobRequest`: discriminated union on `type` (one branch per type, today `email`) |
-| `query-jobs.ts` | `QueryJobsRequest` (`limit`, `offset`, coerced from query strings), `QueryJobsResponse` `{ items, total }` |
-| `job-id.ts` | `JobIdParams` `{ id: uuid }` |
-| `update-job.ts` | `UpdateJobRequest`: discriminated union on `status` (`processing`; `completed` + `result`; `failed` + `error`), `JobError` `{ code, message, details? }` |
+| `job.ts` | Routes (`JOBS_ROUTE`, `INTERNAL_JOBS_ROUTE`); `JobStatus`, `FINISHED_JOB_STATUSES`; `JobType`, `JOB_RESULT_SCHEMAS`; `JOB_LIMITS`, `EMAIL_LIMITS`; `JobError`; `EmailJobPayload`, `EmailJobResult`; `Job` (response shape, discriminated on `type`); `CreateJobRequest` (discriminated on `type`); `JobIdParams`; `QueryJobsRequest`, `QueryJobsResponse` `{ items, total }`; `UpdateJobRequest` (discriminated on `status`: `processing`; `completed` + `result`; `failed` + `error`) |
 | `job-queue.ts` | `JOB_QUEUE_NAME`, `JobQueueMessage` `{ jobId }` |
-| `routes.ts` | `JOBS_ROUTE` (`/v1/jobs`), `INTERNAL_JOBS_ROUTE` (`/internal/v1/jobs`) |
 
 Values (constants in contracts, decided as "shared Zod schemas, not env config"):
 priority integer 1–10, default 5; max attempts integer 1–10, default 3; subject 1–200 characters,
@@ -67,8 +59,12 @@ strings (`z.iso.datetime()`), unused ones `null`.
 
 ### Error codes
 
-`JOB_NOT_FOUND` (404) and `JOB_STATUS_CONFLICT` (409, `details.status` = current status) are added
-to `ERROR_CODES` and the filter's status table. A query `limit` above the configured maximum is
+`JOB_NOT_FOUND` (404), `JOB_STATUS_CONFLICT` (409, `details.status` = current status) and
+`QUEUE_UNAVAILABLE` (503) are added to `ERROR_CODES` and the filter's status table.
+`QUEUE_UNAVAILABLE` is thrown by `BullMqJobQueue` (`JobQueueUnavailableError`) and caught by
+`JobServiceImpl`, so no route returns it today; the code keeps the "no bare `Error`" rule. A result
+that does not match the job type is `InvalidJobResultError` (`VALIDATION_FAILED`, issue paths under
+`result`). A query `limit` above the configured maximum is
 thrown as `QueryLimitExceededError` with code `VALIDATION_FAILED` and `details.issues` in the same
 shape as Zod issues (`path: ['limit']`), because the maximum is runtime config and cannot live in
 the shared schema.
@@ -78,8 +74,12 @@ the shared schema.
 Prisma model `Job` (table `jobs`), first real migration: `id uuid pk`, `type JobType`, `payload
 jsonb`, `status JobStatus`, `priority int`, `attempts int`, `max_attempts int`, `result jsonb null`,
 `error jsonb null`, `scheduled_at`, `started_at`, `completed_at` (nullable `timestamptz`),
-`created_at`, `updated_at`; Postgres enums for type and status. The id comes from a `JobIdFactory`
-port (`crypto.randomUUID()`), so tests fix ids.
+`created_at`, `updated_at`; Postgres enums for type and status. The id is assigned by Postgres
+(`DEFAULT gen_random_uuid()`), `created_at` by Postgres (`@default(now())`) and `updated_at` by
+Prisma on every write (`@updatedAt`); the repository's `create` takes a `NewJob` (a job without
+these three) and returns the stored job. `startedAt` and `completedAt` mark lifecycle steps and come
+from the kernel `Clock` in `JobServiceImpl`. Rows are turned into the `Job` contract by a private method of the
+repository (parsed through the shared schema), not a separate mapper class.
 
 Indexes:
 - `(created_at DESC, id DESC)`: the query's order; `id` breaks ties so offset paging is stable. The
@@ -135,12 +135,13 @@ response is unchanged (decided: 201 / 200, job stays pending).
 
 ### Layers
 
-- `domain/jobs/`: `JobService`, `JobRepository`, `JobQueue`, `JobIdFactory` interfaces with their
+- `domain/jobs/`: `JobService`, `JobRepository`, `JobQueue` interfaces with their
   Request/Response types and tokens; `errors/` with `JobNotFoundError`, `JobStatusConflictError`,
-  `QueryLimitExceededError`.
+  `QueryLimitExceededError`, `InvalidJobResultError`, `JobQueueUnavailableError`.
 - `infra/jobs/`: `job-service.impl.ts` (`JobServiceImpl`, the lifecycle rules), `prisma/`
-  (`PrismaJobRepository`, `JobRecordMapper`), `queue/` (`BullMqJobQueue`), `id/`
-  (`CryptoJobIdFactory`).
+  (`PrismaJobRepository`), `queue/` (`BullMqJobQueue`).
+- `tests/support`: `PrismaMigrateDeploy` applies the migrations to a Testcontainers Postgres for
+  the integration and e2e tests.
 - `app/jobs/`: `JobsController` (`/v1/jobs`, Swagger), `InternalJobsController`
   (`/internal/v1/jobs`, `@ApiExcludeController()`, `ServiceTokenGuard`), DTOs via `createZodDto`,
   `JobsModule` (wiring with `useFactory`, closes the BullMQ queue on shutdown).
@@ -161,7 +162,7 @@ port gains a method without touching hand-written doubles; time through `vi.useF
 1. Contracts, kernel codes, `domain/jobs` interfaces and errors (shared foundation).
 2. `infra/jobs/prisma/` with the Prisma schema and migration.
 3. `infra/jobs/queue/`.
-4. `infra/jobs/job-service.impl.ts` and `infra/jobs/id/`.
+4. `infra/jobs/job-service.impl.ts`.
 5. `app/jobs/`, config, filter table, e2e, docs (integration).
 
 ## Risks / Trade-offs

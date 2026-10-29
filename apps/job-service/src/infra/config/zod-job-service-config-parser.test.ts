@@ -26,8 +26,46 @@ describe('ZodJobServiceConfigParser', () => {
         databaseUrl: 'postgresql://jobqueue:jobqueue@localhost:5432/jobqueue',
         redisUrl: 'redis://localhost:6379',
         internalServiceToken: 'a-long-random-token',
+        queryDefaultLimit: 20,
+        queryMaxLimit: 100,
+        enqueueTimeoutMs: 2000,
       },
     });
+  });
+
+  it('reads the configured query page sizes and enqueue timeout', () => {
+    const env = {
+      ...ENV,
+      JOB_SERVICE_QUERY_DEFAULT_LIMIT: '10',
+      JOB_SERVICE_QUERY_MAX_LIMIT: '50',
+      JOB_SERVICE_ENQUEUE_TIMEOUT_MS: '500',
+    };
+
+    expect(parser.parse({ env })).toMatchObject({
+      ok: true,
+      config: { queryDefaultLimit: 10, queryMaxLimit: 50, enqueueTimeoutMs: 500 },
+    });
+  });
+
+  it('rejects a default page size above the maximum page size', () => {
+    const result = parser.parse({
+      env: { ...ENV, JOB_SERVICE_QUERY_DEFAULT_LIMIT: '200', JOB_SERVICE_QUERY_MAX_LIMIT: '100' },
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.ok ? '' : result.problems).toContain('JOB_SERVICE_QUERY_DEFAULT_LIMIT');
+  });
+
+  it('rejects a query page size or enqueue timeout that is not a positive number', () => {
+    for (const name of [
+      'JOB_SERVICE_QUERY_DEFAULT_LIMIT',
+      'JOB_SERVICE_QUERY_MAX_LIMIT',
+      'JOB_SERVICE_ENQUEUE_TIMEOUT_MS',
+    ]) {
+      const result = parser.parse({ env: { ...ENV, [name]: '0' } });
+
+      expect(result.ok ? '' : result.problems).toContain(name);
+    }
   });
 
   it('defaults the environment to development and the log level to info', () => {

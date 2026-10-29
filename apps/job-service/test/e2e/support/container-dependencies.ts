@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url';
+
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 
@@ -5,6 +7,7 @@ import {
   ClientListRedisConnectionCounter,
   CONTAINER_IMAGES,
   PgStatActivityConnectionCounter,
+  PrismaMigrateDeploy,
   type PostgresConnectionCounter,
   type RedisConnectionCounter,
 } from '@job-queue/test-support';
@@ -25,7 +28,13 @@ export interface StartContainerDependenciesResponse {
   dependencies: ContainerDependencies;
 }
 
-/** Postgres and Redis in Testcontainers, plus a Redis client that observes the connections. */
+/** job-service's directory, which holds its Prisma config and migrations. */
+const JOB_SERVICE_DIR = fileURLToPath(new URL('../../..', import.meta.url));
+
+/**
+ * Postgres (migrated to the latest schema) and Redis in Testcontainers, plus a Redis client that
+ * observes the connections.
+ */
 export class ContainerDependencies implements Dependencies {
   private readonly postgresConnections: PostgresConnectionCounter;
   private readonly redisConnections: RedisConnectionCounter;
@@ -42,6 +51,9 @@ export class ContainerDependencies implements Dependencies {
       new PostgreSqlContainer(CONTAINER_IMAGES.postgres).start(),
       new RedisContainer(CONTAINER_IMAGES.redis).start(),
     ]);
+    await new PrismaMigrateDeploy({ appDir: JOB_SERVICE_DIR }).migrate({
+      databaseUrl: postgres.getConnectionUri(),
+    });
     return { dependencies: new ContainerDependencies({ postgres, redis }) };
   }
 

@@ -63,11 +63,65 @@ job-execution-service will read and change job state only through job-service's 
 never by writing the jobs table. Two services sharing one table is the shared-database
 anti-pattern: a schema change breaks both, and the Job entity's rules can be bypassed. Clients get a
 narrow external update (cancel from pending/scheduled, retry from failed); the system's own changes
-(status, attempts, errors, progress, results, logs) go through a separate internal update method.
+(status, attempts, errors, results, logs) go through a separate internal update method.
 *Trade-off:* field-level internal attributes (as in gRPC services with per-field permissions) would
 express this more precisely; a second method is simpler and enough here. Every state change costs
 an HTTP hop from the execution service; timeouts and retries for it are designed with the first job
 flow.
+
+**Five operations per feature, lifecycle rules inside `update`.** The job API, `JobService` and
+`JobRepository` each have exactly create, get, query, update and delete. Starting, completing and
+failing a job are not methods of their own: job-execution-service sends one internal `PATCH` with
+the target status, and `JobService.update` decides the next state from the stored job (start only
+from pending and count the attempt; complete only from processing and check the result against the
+job type; fail only from processing, then retry or fail for good). *Why:* a small, uniform surface
+that maps one to one onto REST and onto a later remote service. *Trade-off:* `update` is one method
+with a branch per status instead of named methods; the request body (a union keyed by status) is
+what names the step.
+
+**Concurrent state changes: compare-and-set in Postgres.** `JobRepository.update` writes only while
+the job's status and attempts still equal what `JobService` read (`UPDATE ... WHERE id = $1 AND
+status = $2 AND attempts = $3`); `delete` only while the status is a finished one. When two workers
+report a start for the same job at the same time, Postgres' row lock lets one `UPDATE` match and the
+other match nothing, which becomes 409 `JOB_STATUS_CONFLICT`. Attempts are part of the condition
+because a job can go processing → pending → processing (another worker took the retry) between a
+read and a write; status alone would not notice. *Trade-off:* every report reads before it writes
+(one extra query), which `update` needs anyway to validate the result and decide on a retry.
+
+**Retry rule owned by job-service; an attempt is counted on start.** The worker only reports
+`failed` with an error. job-service sends the job back to pending (and queues the next attempt)
+while attempts are below max attempts, otherwise it fails the job for good. Counting on start means
+a worker that crashes mid-job still uses up an attempt, so a job that kills its worker cannot loop
+forever. In job-api the retry is immediate; backoff delays come with the retry-backoff change.
+
+**Queue entries carry only the job id, one entry per attempt.** job-service puts
+`{ jobId }` on the BullMQ queue under the entry id `<jobId>_<attempt>`; the worker reads the job
+from job-service, so Postgres stays the only copy of job data and a deleted or changed job is seen
+at once. BullMQ ignores an `add` with an id it already has, so the same attempt is never queued
+twice, while a retry (the next attempt) gets its own entry. (`:` would read better, but BullMQ
+rejects it in custom ids.) Ids themselves come from Postgres (`gen_random_uuid()`).
+
+**Enqueue failure leaves the job pending, not the request failed.** A job is stored first, then
+queued. If Redis is down or slower than the configured timeout, the submit (or the retry report)
+still succeeds, the job stays pending and a warning with the job id is logged. The crash-recovery
+change adds a sweep that re-queues pending jobs that have no queue entry; until then such a job
+waits. *Alternatives:* deleting the row and answering 503 (simple, but the client must resubmit and
+may not); a transactional outbox (a row in the same transaction, relayed to Redis until it
+succeeds), which is the robust answer and the one we would take with more time. *Trade-off:* a
+window in which a job is pending but not queued.
+
+**Query: offset pages over indexed columns.** `GET /v1/jobs?limit&offset` returns newest first,
+ordered by `(created_at DESC, id DESC)` so jobs created in the same millisecond keep a stable order
+across pages. Indexes: `(created_at DESC, id DESC)` for this order, `(status, created_at DESC)` for
+status filters and the pending-job sweep, `(type, created_at DESC)` for type filters. Default and
+maximum page size are configuration; a larger `limit` is a 400, not silently clamped.
+*Trade-off:* offset paging gets slower on deep pages and can repeat or skip rows while jobs are
+being inserted; keyset (cursor) paging fixes both but makes a numbered table in the UI harder.
+
+**Limits in the shared contract, page sizes in config.** Priority and max-attempts ranges and
+defaults and the email field lengths are constants in the shared Zod schemas, so the API and the
+UI form validate with the same rules. Values that operators tune (page sizes, enqueue timeout) are
+environment config of job-service.
 
 **Internal API protected by a shared service token.** Routes under `/internal` require
 `Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
