@@ -35,3 +35,12 @@ export {
   type NodeServiceLauncherParams,
 } from './infra/node-service-launcher.js';
 export { NpmServiceBuild, type NpmServiceBuildParams } from './infra/npm-service-build.js';
+export type {
+  DatabaseMigrator,
+  MigrateDatabaseMigratorRequest,
+  MigrateDatabaseMigratorResponse,
+} from './domain/database-migrator.js';
+export {
+  PrismaMigrateDeploy,
+  type PrismaMigrateDeployParams,
+} from './infra/prisma-migrate-deploy.js';

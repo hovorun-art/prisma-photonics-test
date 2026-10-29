@@ -1,5 +1,5 @@
 // job-service owns the database: no other service connects to it (design.md, "Repository layout").
-// The scaffold has no models yet; job tables arrive with the email-job-flow change.
+// Job state lives here; job-execution-service changes it only through the internal API.
 
 generator client {
   provider     = "prisma-client"
@@ -9,4 +9,49 @@ generator client {
 
 datasource db {
   provider = "postgresql"
+}
+
+enum JobType {
+  email
+
+  @@map("job_type")
+}
+
+enum JobStatus {
+  scheduled
+  pending
+  processing
+  completed
+  failed
+  cancelled
+
+  @@map("job_status")
+}
+
+/// A background job; job-service is the only writer. Timestamps keep milliseconds, like the API.
+model Job {
+  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type        JobType
+  payload     Json
+  status      JobStatus
+  /// Higher is more urgent.
+  priority    Int
+  /// Attempts started so far; counted when an attempt starts.
+  attempts    Int
+  maxAttempts Int       @map("max_attempts")
+  result      Json?
+  error       Json?
+  scheduledAt DateTime? @map("scheduled_at") @db.Timestamptz(3)
+  startedAt   DateTime? @map("started_at") @db.Timestamptz(3)
+  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+
+  /// The query's order (newest first, id breaks ties so offset paging is stable).
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "jobs_created_at_id_idx")
+  /// Status filters and the sweep of pending jobs.
+  @@index([status, createdAt(sort: Desc)], map: "jobs_status_created_at_idx")
+  /// Type filters.
+  @@index([type, createdAt(sort: Desc)], map: "jobs_type_created_at_idx")
+  @@map("jobs")
 }
