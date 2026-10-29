@@ -157,7 +157,7 @@ After completing all artifacts, summarize:
 - Change name and location
 - List of artifacts created with brief descriptions, plus any conditional artifact you skipped and why
 - What's ready: "All artifacts needed for implementation are ready." (or, if you stopped at approval, what is still open)
-- Next step: offer it with AskUserQuestion (see "Next steps" in CLAUDE.md): commit the planning artifacts on the main branch, then `/apply <name>`.
+- Next step: offer it with AskUserQuestion (see "Next steps" in CLAUDE.md): commit the planning artifacts on the change's own branch (`<name>`, created before the first artifact), then `/apply <name>`.
 
 **Artifact Creation Guidelines**
 

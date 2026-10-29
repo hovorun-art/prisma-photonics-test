@@ -24,9 +24,10 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
   such git command. One approval covers one command, not later ones. Never route around the prompt
   (other tools, `--no-verify`, scripts).
 - New features are built on their own branch, never on the main branch (`MAIN_BRANCH` in
-  `.claude/flow.conf`): one branch per change, named after the change (`<change>`). Only planning
-  artifacts (`openspec/changes/<change>/`) go on the main branch; the change is archived on its own
-  branch, so the merge brings the code and the updated main specs together.
+  `.claude/flow.conf`): one branch per change, named after the change (`<change>`), created before
+  the first planning artifact. Planning (`openspec/changes/<change>/`), code and the archive all go on
+  that branch; the main branch only receives the merge, which brings the code and the updated main
+  specs together.
 
 ## Testing (TDD)
 
@@ -242,8 +243,8 @@ types from `packages/contracts`.
      `ui-from-screenshots` skill.
    - No numbers in specs: tunable values (speeds, timings, limits, sizes) live in config and may be
      recorded in `decisions.md`, `design.md`, `tasks.md` and `ui.md`; specs say "the configured ...".
-2. Commit the planning artifacts on the main branch (with the user's approval), then implement on the
-   change's own branch with `/apply`, test first. Sequential by default; parallel groups
+2. Commit the planning artifacts on the change's own branch (with the user's approval), then implement
+   there with `/apply`, test first. Sequential by default; parallel groups
    only if the user chooses it (the apply skill describes how).
 3. Hooks enforce the loop (settings in `.claude/flow.conf`): lint on each edit, full checks at the
    end, then the `change-verifier` subagent must return PASS before the work is done. Run it
