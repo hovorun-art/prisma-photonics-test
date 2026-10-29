@@ -120,9 +120,18 @@ A Git repository with:
 - Tests: Vitest for every workspace.
 - AI chat transcripts: exported at the end into `docs/ai-chats/` as Markdown by a conversion script
   we write.
-- Workers: a scalable worker service (`docker compose up --scale worker=N`) plus configurable
+- Workers: a scalable `job-execution-service` (`docker compose up --scale job-execution-service=N`) plus configurable
   in-process concurrency per worker, to show duplicate-pickup safety across processes.
 - Queue integration details (job ids, sync with Postgres, cancel/retry races): decided inside the
   core job flow change.
 - Package manager: npm (workspaces).
 - Node: 26 (Docker `node:26-alpine`, `engines`); fall back to 24 if a core library does not support it.
+- Apps: `job-service` (Job bounded context, REST API) and `job-execution-service` (runs jobs);
+  domain modules `notifications`, `webhooks`, `flight-transit`, `batch-processing`, each prepared
+  to become its own microservice. Code organisation: DDD + onion, interfaces first, modules talk
+  only through public interfaces and DI tokens.
+- Contracts: Zod schemas in a shared package, used for validation, OpenAPI and the UI. REST +
+  OpenAPI instead of tRPC, so services other than our UI can use the API.
+- Errors: our own error classes with stable codes, handled by type/code, never by message.
+- Frontend: feature folders + TanStack Query.
+- Conventions: strict TypeScript, ESLint + Prettier, pino structured logging, Conventional Commits.

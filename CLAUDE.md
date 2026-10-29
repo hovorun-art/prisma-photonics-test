@@ -43,7 +43,7 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
 
 Keep in sync with `CHECK_CMDS` in `.claude/flow.conf`. Root scripts run across all workspaces;
 exact names are fixed by the `project-scaffold` change.
-- `docker compose up --build` (whole stack), `docker compose up --scale worker=N` (several workers)
+- `docker compose up --build` (whole stack), `docker compose up --scale job-execution-service=N` (several workers)
 - `npm run dev` / `npm run build`
 - `npm run typecheck`, `npm run lint`, `npm test` (all three run by the Stop hook)
 
@@ -54,13 +54,15 @@ of planning decisions is in `docs/concept.md` ("Decided during planning"); desig
 reviewers go into `DECISIONS.md` as they are made, not at the end.
 
 - Node 26, TypeScript, npm workspaces monorepo.
-- API and worker: NestJS. Database: Postgres via Prisma (raw SQL via `$queryRaw` where
+- Backend: NestJS, two apps (`job-service`, `job-execution-service`). Database: Postgres via Prisma (raw SQL via `$queryRaw` where
   concurrency-critical queries need locking). Queue: BullMQ on Redis behind our own queue interface
   (enqueue, claim, complete, fail, cancel), so its internals can be replaced later; what BullMQ does
   and what we own is in `DECISIONS.md`.
 - Web: React + Vite, Tailwind + shadcn/ui, Leaflet + react-leaflet (OpenStreetMap tiles). Updates by
   polling first; Server-Sent Events later if time allows.
-- API docs: Swagger/OpenAPI from NestJS.
+- Contracts: Zod schemas in `packages/contracts`, shared by the backend (validation pipe, OpenAPI
+  generation) and the web UI. REST + OpenAPI, not tRPC: other services must be able to call the API.
+- API docs: Swagger/OpenAPI generated from the Zod schemas.
 - Tests: Vitest in every workspace; integration tests run against real Postgres and Redis.
 - Aircraft data: generated from a bundled static airport list, no external API.
 - Submission files: `README.md`, `DECISIONS.md`, `AI_USAGE.md`, `docs/ai-chats/` (Markdown exported
@@ -71,22 +73,70 @@ the stack changes.
 
 ## Architecture
 
-Planned layout; `project-scaffold` makes it real and this section is updated when it changes.
+DDD with onion layers. Planned layout; `project-scaffold` makes it real and this section is updated
+when it changes.
 ```
-apps/api       NestJS HTTP API: submit, get, list, cancel, retry, health; Swagger
-apps/worker    NestJS worker process: takes jobs from the queue, runs handlers, writes state to Postgres;
-               scaled with `docker compose up --scale worker=N` plus in-process concurrency
-apps/web       React + Vite UI: job list and details, logs, transit map
-packages/shared  job types, payload/result schemas, status lifecycle, shared contracts
-packages/db      Prisma schema, migrations, client
-docker-compose.yml  postgres, redis, api, worker, web
+apps/job-service            Job bounded context (owns the Job aggregate and job logs): REST API for
+                            submit, get, list, cancel, retry, health; Swagger
+apps/job-execution-service  Job Execution context: takes jobs from the queue, runs them, applies retries
+                            and crash recovery. Scaled with `docker compose up --scale job-execution-service=N`
+                            plus in-process concurrency. Domain modules, each behind a handler
+                            interface so it can become its own microservice later:
+                              notifications (email), webhooks, flight-transit (aircraft transit
+                              reports), batch-processing
+apps/web                    React + Vite UI: job list and details, logs, transit map
+packages/contracts          Zod schemas and inferred types: job types, payloads, results, API
+                            requests/responses, error codes
+packages/<shared-kernel>    Only what is truly shared (e.g. clock and random ports); fixed in project-scaffold
+docker-compose.yml          postgres, redis, job-service, job-execution-service, web
 ```
-- Postgres is the source of truth for job state; Redis only holds the queue. Status transitions
-  follow the lifecycle in `docs/concept.md` and are pure, unit-testable functions.
+- Postgres is the source of truth for job state; Redis only holds the queue. BullMQ is used only
+  through our queue interface; how it maps to Postgres state is decided in the core job flow change.
 - Time (clock), randomness (webhook failure rate, sleep durations, generated flight data) and
-  sleeping come in through injected providers, so the worker and job handlers test deterministically.
-- BullMQ is used only through the queue interface; how it maps to Postgres state is decided in the
-  core job flow change.
+  sleeping come in through injected ports, so execution and job handlers test deterministically.
+
+## Code style
+
+**Backend modules (DDD + onion).**
+- Each module (bounded context or domain module) has the layers `domain/` (entities, value objects,
+  domain errors, repository interfaces), `application/` (use cases, ports), `infrastructure/`
+  (Prisma, BullMQ and other adapters) and `presentation/` (controllers, queue consumers, mapping to
+  contracts). Dependencies point inwards only: domain imports nothing from other layers or from
+  NestJS, Prisma or BullMQ.
+- Everything is an interface first, then an implementation: repositories, queue, clock, random,
+  job handlers, other modules. Implementations are bound to interfaces through Nest DI with
+  `Symbol` tokens.
+- Modules talk to each other only through a public interface and its token, exported from the
+  module's `index.ts`. No imports of another module's internals (enforced by an ESLint import rule).
+  Calls between modules must work if the other side later becomes a remote service: plain data in
+  and out (contract types), no shared entities, no shared transactions across modules.
+- `job-execution-service` changes job state only through a port of the Job context, never by
+  writing the Job table directly; today the adapter can be in-process, later an HTTP or queue client.
+- Name things after the domain (Job, JobLog, Execution, Transit), not after technical roles
+  (processor, manager, helper, utils).
+
+**Validation and contracts.** Every request, job payload and job result has a Zod schema in
+`packages/contracts`; types are inferred from the schemas (`z.infer`), never written twice. Input is
+validated at the edge (HTTP and queue consumers); inner layers trust their types.
+
+**Errors.** Our own error classes, each with a stable `code` from a shared union in
+`packages/contracts`, plus structured `details`. Code handles errors by class or `code`, never by
+message text. Domain and application code throw these errors; one exception filter per app maps
+codes to HTTP status and a uniform response body (`code`, `message`, `details`). Never throw strings
+or bare `Error` for expected failures; unknown errors are logged and returned as a generic 500.
+
+**Frontend.** Feature folders (`features/jobs`, `features/transit-map`, ...), each with its own
+components, hooks and API calls. Server state through TanStack Query (polling for live updates);
+shadcn components in `components/ui`; no global store unless a real need appears. API calls use the
+types from `packages/contracts`.
+
+**General.**
+- TypeScript `strict` with `noUncheckedIndexedAccess`; no `any` (use `unknown` and narrow).
+- ESLint + Prettier; formatting is never discussed in review.
+- Structured logging with pino (JSON); every log line in job handling carries `jobId` and, in
+  execution, the worker instance id.
+- Conventional Commits: `type(scope): summary`, e.g. `feat(job-service): ...`,
+  `fix(job-execution-service): ...`, `docs: ...`. Small commits, one logical step each.
 
 ## Asking
 
