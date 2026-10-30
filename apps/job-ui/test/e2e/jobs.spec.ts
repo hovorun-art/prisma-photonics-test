@@ -1,20 +1,25 @@
 import { randomUUID } from 'node:crypto';
 
-import type { CreateJobRequest, Job } from '@job-queue/contracts';
+import type { CreateJobRequest, Job, JobLogEntry } from '@job-queue/contracts';
 import { expect, type Page, test } from '@playwright/test';
 
 import { API_BASE_PATH } from '../../src/config/api-base-path';
+import { jobLogEntryFixtures } from '../../src/features/jobs/testing/job-fixtures';
 import { en } from '../../src/locales/en';
 
 interface MockJobService {
   /** Answers job-ui's API calls from `jobs`; returns the ids it was asked to delete. */
-  install(req: { page: Page; jobs: Job[] }): Promise<{ deleted: string[] }>;
+  install(req: { page: Page; jobs: Job[]; logs?: JobLogEntry[] }): Promise<{ deleted: string[] }>;
   job(req: Partial<Job>): Job;
 }
 
 /** An in-memory job-service behind `page.route`: list (with the status and type filters), get, create and delete. */
 class RoutedJobService implements MockJobService {
-  async install(req: { page: Page; jobs: Job[] }): Promise<{ deleted: string[] }> {
+  async install(req: {
+    page: Page;
+    jobs: Job[];
+    logs?: JobLogEntry[];
+  }): Promise<{ deleted: string[] }> {
     const { jobs } = req;
     const deleted: string[] = [];
     // Statistics are not part of these scenarios: refuse them, so no call reaches the preview server.
@@ -24,7 +29,7 @@ class RoutedJobService implements MockJobService {
       const id = new URL(request.url()).pathname.split('/v1/jobs/')[1];
       if (request.method() === 'POST') {
         const body = request.postDataJSON() as CreateJobRequest;
-        const job = this.job({ id: '99999999-9999-4999-8999-999999999999', ...body });
+        const job = this.job({ id: CREATED_JOB_ID, ...body });
         jobs.unshift(job);
         return route.fulfill({ status: 201, json: job });
       }
@@ -53,13 +58,27 @@ class RoutedJobService implements MockJobService {
       );
       return route.fulfill({ json: { items: matching, total: matching.length } });
     });
+    // Registered after the jobs route, so it wins for `/logs`: the entries of every job, by level.
+    await req.page.route(`**${API_BASE_PATH}/v1/jobs/*/logs**`, (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      const levels = params.getAll('level');
+      const after = params.get('after');
+      // The cursor is the index of an entry: only later entries are new.
+      const all = req.logs ?? [];
+      const items = all
+        .filter((_, index) => after === null || index > Number(after))
+        .filter((entry) => levels.length === 0 || levels.includes(entry.level));
+      return route.fulfill({
+        json: { items, nextCursor: all.length === 0 ? after : String(all.length - 1) },
+      });
+    });
     return { deleted };
   }
 
   job(req: Partial<Job>): Job {
     // A partial of either job type over an email job: the caller keeps type and payload in step.
     return {
-      id: '7f3a9c21-4b5d-4e6f-8a7b-9c0d1e2f3a4b',
+      id: DEFAULT_JOB_ID,
       type: 'email',
       status: 'pending',
       priority: 5,
@@ -78,6 +97,10 @@ class RoutedJobService implements MockJobService {
     } as Job;
   }
 }
+
+/** The id the mocked create call gives a new job, and the id of jobs built without one. */
+const CREATED_JOB_ID = randomUUID();
+const DEFAULT_JOB_ID = randomUUID();
 
 const api: MockJobService = new RoutedJobService();
 
@@ -115,10 +138,8 @@ test('Submit a valid email job: the new job page opens', async ({ page }) => {
   await page.getByLabel(en.submit.body, { exact: true }).fill('Hi team');
   await page.getByRole('button', { name: en.submit.submit }).click();
 
-  await expect(page).toHaveURL(/\/jobs\/99999999-9999-4999-8999-999999999999$/);
-  await expect(
-    page.getByRole('heading', { level: 1, name: '99999999-9999-4999-8999-999999999999' }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/jobs/${CREATED_JOB_ID}$`));
+  await expect(page.getByRole('heading', { level: 1, name: CREATED_JOB_ID })).toBeVisible();
 });
 
 test('Delete a finished job: confirming deletes it and opens the jobs list', async ({ page }) => {
@@ -151,7 +172,7 @@ test('Submit a valid webhook job: the new job page shows the webhook payload', a
   await page.getByLabel(en.submit.jsonBody, { exact: true }).fill('{"orderId": "o-1"}');
   await page.getByRole('button', { name: en.submit.submit }).click();
 
-  await expect(page).toHaveURL(/\/jobs\/99999999-9999-4999-8999-999999999999$/);
+  await expect(page).toHaveURL(new RegExp(`/jobs/${CREATED_JOB_ID}$`));
   const payload = page.getByRole('region', { name: en.job.payload });
   await expect(payload).toContainText('"method": "PUT"');
   await expect(payload).toContainText('"url": "https://hooks.example.com/orders"');
@@ -220,4 +241,42 @@ test('Back restores the previous filter: Failed, then Completed, then Back shows
   );
   await expect(page.getByRole('link', { name: FAILED_ID.slice(0, 8) })).toBeVisible();
   await expect(page.getByRole('link', { name: COMPLETED_ID.slice(0, 8) })).toHaveCount(0);
+});
+
+test('Log on the job page: rows stay after a follow-up poll and the level filter works', async ({
+  page,
+}) => {
+  const job = api.job({
+    status: 'completed',
+    attempts: 1,
+    result: { messageId: 'msg_1' },
+  });
+  const logs = [
+    jobLogEntryFixtures.build({ jobId: job.id, message: 'Job submitted', attempt: null }),
+    jobLogEntryFixtures.build({
+      jobId: job.id,
+      message: 'Handler finished',
+      metadata: { durationMs: 42 },
+    }),
+    jobLogEntryFixtures.build({
+      jobId: job.id,
+      message: 'Attempt failed',
+      level: 'error',
+      metadata: { code: 'SEND_FAILED' },
+    }),
+  ];
+  await api.install({ page, jobs: [job], logs });
+
+  const followUp = page.waitForResponse(
+    (response) => response.url().includes('/logs') && response.url().includes('after='),
+  );
+
+  await page.goto(`/jobs/${job.id}`);
+  await followUp;
+  const log = page.getByRole('region', { name: en.log.title });
+
+  await expect(log.getByRole('listitem')).toHaveCount(3);
+  await log.getByRole('button', { name: en.log.levels.error }).click();
+  await expect(log.getByRole('listitem')).toHaveCount(1);
+  await expect(log).toContainText('Attempt failed');
 });

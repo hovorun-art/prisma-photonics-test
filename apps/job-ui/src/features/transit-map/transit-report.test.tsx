@@ -4,18 +4,27 @@ import { userEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { Route, Routes } from 'react-router';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { en } from '@/locales';
 
-import { transitJobFixtures } from '../jobs/testing/job-fixtures';
+import { jobLogEntryFixtures, transitJobFixtures } from '../jobs/testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../jobs/testing/test-providers';
 import { TransitReport } from './transit-report';
 
 const server = setupServer();
+/** Waits for a poll; generous, since the whole repo's tests share the machine. */
+const POLL_WAIT = { timeout: 5000 };
 
 beforeAll(() => {
   server.listen({ onUnhandledFrame: 'error' });
+});
+beforeEach(() => {
+  server.use(
+    http.get(`${TEST_API_BASE}/v1/jobs/:id/logs`, () =>
+      HttpResponse.json({ items: [], nextCursor: null }),
+    ),
+  );
 });
 afterEach(() => {
   server.resetHandlers();
@@ -72,6 +81,33 @@ function placeOf(element: Element) {
 
 describe('TransitReport', () => {
   const job = transitJobFixtures.completed();
+
+  it('Log on the transit report: the Log card at the bottom with the job entries', async () => {
+    server.use(
+      http.get(`${TEST_API_BASE}/v1/jobs/${job.id}/logs`, ({ request }) => {
+        const after = new URL(request.url).searchParams.get('after');
+        return HttpResponse.json({
+          items:
+            after === null
+              ? [jobLogEntryFixtures.build({ jobId: job.id, message: 'Handler finished' })]
+              : [],
+          nextCursor: 'c1',
+        });
+      }),
+    );
+
+    renderReport(job);
+
+    const log = await screen.findByRole('region', { name: en.log.title }, POLL_WAIT);
+    expect(await within(log).findByText('Handler finished', {}, POLL_WAIT)).toBeVisible();
+    const regions = screen.getAllByRole('region');
+    expect(regions.at(-1)).toBe(log);
+    const map = screen.getByRole('region', { name: en.report.mapLabel });
+    const result = screen.getByRole('region', { name: en.job.result });
+    for (const before of [map, result]) {
+      expect(before.compareDocumentPosition(log) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    }
+  });
 
   it('Report header: the route as title, status and type badges, the id and the total time', () => {
     renderReport(job);

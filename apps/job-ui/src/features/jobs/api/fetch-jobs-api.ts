@@ -2,6 +2,7 @@ import {
   ErrorBody,
   Job,
   JOBS_ROUTE,
+  QueryJobLogResponse,
   QueryJobsResponse,
   QueueStats,
   STATS_ROUTE,
@@ -18,6 +19,8 @@ import type {
   GetJobsApiResponse,
   JobListFilters,
   JobsApi,
+  LogsJobsApiRequest,
+  LogsJobsApiResponse,
   QueryJobsApiRequest,
   QueryJobsApiResponse,
   StatsJobsApiRequest,
@@ -63,6 +66,20 @@ export class FetchJobsApi implements JobsApi {
   async delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse> {
     await this.send({ path: this.jobPath(req.id), init: { method: 'DELETE' } });
     return { id: req.id };
+  }
+
+  async logs(req: LogsJobsApiRequest): Promise<LogsJobsApiResponse> {
+    const params = new URLSearchParams();
+    if (req.after !== undefined) params.set('after', req.after);
+    if (req.limit !== undefined) params.set('limit', String(req.limit));
+    for (const level of req.level ?? []) params.append('level', level);
+    const search = params.toString();
+    const path = `${this.jobPath(req.id)}/logs`;
+    const response = await this.send({
+      path: search === '' ? path : `${path}?${search}`,
+      init: { method: 'GET' },
+    });
+    return this.parse({ schema: QueryJobLogResponse, response });
   }
 
   async stats(req: StatsJobsApiRequest): Promise<StatsJobsApiResponse> {

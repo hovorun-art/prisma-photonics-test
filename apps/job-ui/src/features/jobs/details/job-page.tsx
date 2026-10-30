@@ -10,6 +10,7 @@ import { useJob } from '../hooks/use-job';
 import { JobDetailsList } from './job-details-list';
 import { JobHeader } from './job-header';
 import { JobNotFound } from './job-not-found';
+import { JobLogCard } from './job-log-card';
 import { JsonCard } from './json-card';
 import { Lifecycle } from './lifecycle';
 
@@ -53,6 +54,7 @@ export function JobPage() {
               <JobDetailsList job={job} />
             </aside>
           </div>
+          <JobLogCard jobId={job.id} />
         </>
       ) : (
         <div

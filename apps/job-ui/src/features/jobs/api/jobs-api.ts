@@ -2,8 +2,10 @@ import type {
   CreateJobRequest,
   ErrorCode,
   Job,
+  JobLogLevel,
   JobStatus,
   JobType,
+  QueryJobLogResponse,
   QueryJobsResponse,
   QueueStats,
 } from '@job-queue/contracts';
@@ -40,6 +42,16 @@ export interface DeleteJobsApiResponse {
   readonly id: string;
 }
 
+export interface LogsJobsApiRequest {
+  readonly id: string;
+  /** Opaque cursor of the last entry already shown; only newer entries are returned. */
+  readonly after?: string;
+  readonly limit?: number;
+  /** Levels to return (OR); left out means all. */
+  readonly level?: readonly JobLogLevel[];
+}
+export type LogsJobsApiResponse = QueryJobLogResponse;
+
 export type StatsJobsApiRequest = JobListFilters;
 
 export interface StatsJobsApiResponse {
@@ -55,6 +67,8 @@ export interface JobsApi {
   get(req: GetJobsApiRequest): Promise<GetJobsApiResponse>;
   create(req: CreateJobsApiRequest): Promise<CreateJobsApiResponse>;
   delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse>;
+  /** One page of the job's log, oldest first (`GET /v1/jobs/:id/logs`). */
+  logs(req: LogsJobsApiRequest): Promise<LogsJobsApiResponse>;
   /** The queue statistics (`GET /v1/stats`), with job counts faceted by the filters. */
   stats(req: StatsJobsApiRequest): Promise<StatsJobsApiResponse>;
 }
