@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
 import {
   type ChangeJobStatusRequest,
+  type CreateJobRequest,
   ErrorBody,
   FINISHED_JOB_STATUSES,
   type FlightTransitJobResult,
@@ -45,6 +46,10 @@ import { JOB_LOG_STREAM, type JobLogStream } from '../../src/domain/job-log/job-
 import { JOB_LOG_WRITER, type JobLogWriter } from '../../src/domain/job-log/job-log-writer.js';
 import { JOB_QUEUE, type JobQueue } from '../../src/domain/jobs/job-queue.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../src/domain/jobs/job-repository.js';
+import {
+  JOB_REQUEST_FINGERPRINT,
+  type JobRequestFingerprint,
+} from '../../src/domain/jobs/job-request-fingerprint.js';
 import { JOB_SERVICE_SETUP_STEPS } from '../../src/infra/bootstrap/job-service-bootstrap.js';
 import { ZodJobServiceConfigParser } from '../../src/infra/config/zod-job-service-config-parser.js';
 import { PrismaDatabase } from '../../src/infra/prisma/prisma-database.js';
@@ -64,6 +69,12 @@ export const TEST_CONFIG = {
   /** Not the defaults, so the tests show the configured windows reach the statistics. */
   statsRecentWindowMinutes: 60,
   statsThroughputWindowMinutes: 2,
+  /** The configured wait before an automatic retry: retry n draws from [min, max] x 2^(n-1), capped. */
+  retryMinDelayMs: 1_000,
+  retryMaxDelayMs: 2_000,
+  retryCapDelayMs: 5_000,
+  /** Not the default, so the tests show the configured limit reaches the internal job read. */
+  maxProcessingMsEmail: 12_345,
 } as const;
 
 export const AUTHORIZATION = `${SERVICE_TOKEN_SCHEME} ${TEST_CONFIG.serviceToken}`;
@@ -130,6 +141,18 @@ export interface SeedRequest {
   /** When a finished job finished (ISO 8601); defaults to now. */
   completedAt?: string;
   /** The error of a failed attempt; defaults to none. */
+  error?: JobError;
+  /** The job's execution time; defaults to an hour ahead for a `scheduled` job, otherwise none. */
+  scheduledAt?: string;
+}
+
+export interface SeedKeyedRequest {
+  /** The submission as the contract parses it (defaults applied), with its `idempotencyKey`. */
+  request: CreateJobRequest;
+  status: JobStatus;
+  /** Attempts used so far. */
+  attempts: number;
+  /** The error of the last failed attempt; defaults to none. */
   error?: JobError;
 }
 
@@ -257,6 +280,10 @@ export class JobServiceUnderTest implements Closable {
         JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES: String(
           TEST_CONFIG.statsThroughputWindowMinutes,
         ),
+        JOB_SERVICE_RETRY_MIN_DELAY_MS: String(TEST_CONFIG.retryMinDelayMs),
+        JOB_SERVICE_RETRY_MAX_DELAY_MS: String(TEST_CONFIG.retryMaxDelayMs),
+        JOB_SERVICE_RETRY_CAP_DELAY_MS: String(TEST_CONFIG.retryCapDelayMs),
+        JOB_SERVICE_MAX_PROCESSING_MS_EMAIL: String(TEST_CONFIG.maxProcessingMsEmail),
       },
     });
     if (!parsed.ok) throw new Error(parsed.problems);
@@ -482,9 +509,38 @@ export class JobServiceUnderTest implements Closable {
         attempts: options.attempts ?? (notStarted ? 0 : 1),
         maxAttempts: options.maxAttempts ?? 3,
         error: options.error ?? null,
-        scheduledAt: status === 'scheduled' ? new Date(Date.now() + 3_600_000).toISOString() : null,
+        scheduledAt:
+          options.scheduledAt ??
+          (status === 'scheduled' ? new Date(Date.now() + 3_600_000).toISOString() : null),
         startedAt: notStarted ? null : now,
         completedAt: finished ? (options.completedAt ?? now) : null,
+      },
+    });
+    return job;
+  }
+
+  /**
+   * Stores a job as submitted with `request` (its key and fingerprint included, the fingerprint
+   * from the app's own port), in a state no route can create it in at once: a transit whose
+   * departure day is over, or a job waiting for its retry.
+   */
+  async seedKeyed({ request, status, attempts, error }: SeedKeyedRequest): Promise<Job> {
+    const { fingerprint } = this.app
+      .get<JobRequestFingerprint>(JOB_REQUEST_FINGERPRINT)
+      .of({ job: request });
+    const { job } = await this.app.get<JobRepository>(JOB_REPOSITORY).create({
+      job: {
+        ...request,
+        status,
+        attempts,
+        result: null,
+        error: error ?? null,
+        groupId: request.groupId ?? null,
+        idempotencyKey: request.idempotencyKey ?? null,
+        requestFingerprint: fingerprint,
+        scheduledAt: request.scheduledAt ?? null,
+        startedAt: attempts === 0 ? null : new Date().toISOString(),
+        completedAt: null,
       },
     });
     return job;

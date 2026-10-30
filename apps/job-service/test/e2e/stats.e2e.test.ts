@@ -83,12 +83,16 @@ describe('job-service queue statistics', () => {
   it('Failed attempt that will be retried', async () => {
     const job = await service.seed({ status: 'processing', attempts: 1, maxAttempts: 3 });
     service.queue.enqueue.mockResolvedValueOnce({});
-    const report = await service.report({ id: job.id, body: { status: 'failed', error: ERROR } });
+    const report = await service.report({
+      id: job.id,
+      body: { status: 'failed', run: 1, attempt: 1, error: ERROR },
+    });
     expect(report.status).toBe(200);
 
     const stats = await service.stats();
 
-    expect(stats.pending).toBe(1);
+    expect(stats.scheduled).toBe(1);
+    expect(stats.pending).toBe(0);
     expect(stats.processing).toBe(0);
     expect(stats.recent.failed).toBe(0);
   });

@@ -8,6 +8,10 @@ import type {
   CreateManyJobRepositoryResponse,
   DeleteJobRepositoryRequest,
   DeleteJobRepositoryResponse,
+  FindByIdempotencyKeysJobRepositoryRequest,
+  FindByIdempotencyKeysJobRepositoryResponse,
+  FindSinceJobRepositoryRequest,
+  FindSinceJobRepositoryResponse,
   GetJobRepositoryRequest,
   GetJobRepositoryResponse,
   JobChanges,
@@ -15,9 +19,11 @@ import type {
   NewJob,
   QueryJobRepositoryRequest,
   QueryJobRepositoryResponse,
+  StoredJob,
   UpdateJobRepositoryRequest,
   UpdateJobRepositoryResponse,
 } from '../../../domain/jobs/job-repository.js';
+import { IdempotencyKeyTakenError } from '../../../domain/jobs/errors/idempotency-key-taken.error.js';
 import {
   Prisma,
   type PrismaClient,
@@ -29,6 +35,9 @@ export interface PrismaJobRepositoryDeps {
   /** job-service's one connection pool (`PrismaDatabase`). */
   prisma: PrismaClient;
 }
+
+/** "Unique constraint failed on the {constraint}": the only unique column besides the id is the key. */
+const UNIQUE_CONSTRAINT_FAILED = 'P2002';
 
 /** "An operation failed because it depends on one or more records that were required but not found." */
 const RECORD_NOT_FOUND = 'P2025';
@@ -55,8 +64,12 @@ export class PrismaJobRepository implements JobRepository {
   constructor(private readonly d: PrismaJobRepositoryDeps) {}
 
   async create(req: CreateJobRepositoryRequest): Promise<CreateJobRepositoryResponse> {
-    const row = await this.d.prisma.job.create({ data: this.toCreateData(req.job) });
-    return { job: this.toJob(row) };
+    try {
+      const row = await this.d.prisma.job.create({ data: this.toCreateData(req.job) });
+      return { job: this.toJob(row) };
+    } catch (error) {
+      throw this.translateStoreError(error);
+    }
   }
 
   /**
@@ -64,16 +77,55 @@ export class PrismaJobRepository implements JobRepository {
    * of a multi-row `VALUES` in the order they were given, so the result keeps the request order.
    */
   async createMany(req: CreateManyJobRepositoryRequest): Promise<CreateManyJobRepositoryResponse> {
-    const rows = await this.d.prisma.job.createManyAndReturn({
-      data: req.jobs.map((job) => this.toCreateData(job)),
-    });
-    return { jobs: rows.map((row) => this.toJob(row)) };
+    try {
+      const rows = await this.d.prisma.job.createManyAndReturn({
+        data: req.jobs.map((job) => this.toCreateData(job)),
+      });
+      return { jobs: rows.map((row) => this.toJob(row)) };
+    } catch (error) {
+      throw this.translateStoreError(error);
+    }
   }
 
   async get(req: GetJobRepositoryRequest): Promise<GetJobRepositoryResponse> {
     const row = await this.d.prisma.job.findUnique({ where: { id: req.id } });
     if (row === null) throw new JobNotFoundError({ id: req.id });
-    return { job: this.toJob(row), run: row.run };
+    return this.toStoredJob(row);
+  }
+
+  async findByIdempotencyKeys(
+    req: FindByIdempotencyKeysJobRepositoryRequest,
+  ): Promise<FindByIdempotencyKeysJobRepositoryResponse> {
+    const rows = await this.d.prisma.job.findMany({
+      where: { idempotencyKey: { in: [...req.keys] } },
+    });
+    return { jobs: rows.map((row) => this.toStoredJob(row)) };
+  }
+
+  /** Served by the `(status, updated_at)` index. */
+  async findWaitingSince(
+    req: FindSinceJobRepositoryRequest,
+  ): Promise<FindSinceJobRepositoryResponse> {
+    const rows = await this.d.prisma.job.findMany({
+      where: {
+        updatedAt: { lte: req.before },
+        OR: [{ status: 'pending' }, { status: 'scheduled', scheduledAt: { lte: req.before } }],
+      },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      take: req.limit,
+    });
+    return { jobs: rows.map((row) => this.toStoredJob(row)) };
+  }
+
+  async findProcessingSince(
+    req: FindSinceJobRepositoryRequest,
+  ): Promise<FindSinceJobRepositoryResponse> {
+    const rows = await this.d.prisma.job.findMany({
+      where: { status: 'processing', updatedAt: { lte: req.before } },
+      orderBy: [{ updatedAt: 'asc' }, { id: 'asc' }],
+      take: req.limit,
+    });
+    return { jobs: rows.map((row) => this.toStoredJob(row)) };
   }
 
   async query(req: QueryJobRepositoryRequest): Promise<QueryJobRepositoryResponse> {
@@ -131,6 +183,17 @@ export class PrismaJobRepository implements JobRepository {
     throw new JobStatusConflictError({ id, status: row.status });
   }
 
+  /** A lost race for the idempotency key becomes `IdempotencyKeyTakenError`; anything else is rethrown as is. */
+  private translateStoreError(error: unknown): unknown {
+    if (
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === UNIQUE_CONSTRAINT_FAILED
+    ) {
+      return new IdempotencyKeyTakenError();
+    }
+    return error;
+  }
+
   private isRecordNotFound(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === RECORD_NOT_FOUND;
   }
@@ -147,6 +210,8 @@ export class PrismaJobRepository implements JobRepository {
       result: this.toJsonColumn(job.result),
       error: this.toJsonColumn(job.error),
       groupId: job.groupId ?? null,
+      idempotencyKey: job.idempotencyKey ?? null,
+      requestFingerprint: job.requestFingerprint ?? null,
       scheduledAt: this.toDate(job.scheduledAt),
       startedAt: this.toDate(job.startedAt),
       completedAt: this.toDate(job.completedAt),
@@ -165,6 +230,9 @@ export class PrismaJobRepository implements JobRepository {
       ...(changes.completedAt === undefined
         ? {}
         : { completedAt: this.toDate(changes.completedAt) }),
+      ...(changes.scheduledAt === undefined
+        ? {}
+        : { scheduledAt: this.toDate(changes.scheduledAt) }),
     };
   }
 
@@ -181,6 +249,10 @@ export class PrismaJobRepository implements JobRepository {
     return value === null ? null : value.toISOString();
   }
 
+  private toStoredJob(row: JobRow): StoredJob {
+    return { job: this.toJob(row), run: row.run, requestFingerprint: row.requestFingerprint };
+  }
+
   /** Rows are read back through the shared `Job` schema, so the API never returns a malformed job. */
   private toJob(row: JobRow): Job {
     return Job.parse({
@@ -194,6 +266,7 @@ export class PrismaJobRepository implements JobRepository {
       result: row.result,
       error: row.error,
       groupId: row.groupId,
+      idempotencyKey: row.idempotencyKey,
       scheduledAt: this.toIso(row.scheduledAt),
       startedAt: this.toIso(row.startedAt),
       completedAt: this.toIso(row.completedAt),

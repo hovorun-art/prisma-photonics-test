@@ -1,4 +1,12 @@
-import { CLOCK, type Clock, ConfiguredPageLimit, SystemClock } from '@job-queue/kernel';
+import {
+  CLOCK,
+  type Clock,
+  ConfiguredPageLimit,
+  RANDOM,
+  type Random,
+  SystemClock,
+  SystemRandom,
+} from '@job-queue/kernel';
 import { Inject, Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
 
 import {
@@ -8,13 +16,20 @@ import {
 import { JOB_COUNTS, type JobCounts } from '../../domain/jobs/job-counts.js';
 import { JOB_QUEUE, type JobQueue } from '../../domain/jobs/job-queue.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../domain/jobs/job-repository.js';
+import {
+  JOB_REQUEST_FINGERPRINT,
+  type JobRequestFingerprint,
+} from '../../domain/jobs/job-request-fingerprint.js';
+import { RETRY_DELAY, type RetryDelay } from '../../domain/jobs/retry-delay.js';
 import { JOB_SERVICE } from '../../domain/jobs/job-service.js';
 import { JOB_STATISTICS } from '../../domain/jobs/job-statistics.js';
 import { JobServiceImpl } from '../../infra/jobs/job-service.impl.js';
+import { Sha256JobRequestFingerprint } from '../../infra/jobs/idempotency/sha256-job-request-fingerprint.js';
 import { JobStatisticsImpl } from '../../infra/jobs/job-statistics.impl.js';
 import { PrismaJobCounts } from '../../infra/jobs/prisma/prisma-job-counts.js';
 import { PrismaJobRepository } from '../../infra/jobs/prisma/prisma-job-repository.js';
 import { BullMqJobQueue } from '../../infra/jobs/queue/bullmq-job-queue.js';
+import { ExponentialJitterRetryDelay } from '../../infra/jobs/retry/exponential-jitter-retry-delay.js';
 import { PrismaDatabase } from '../../infra/prisma/prisma-database.js';
 import { InternalAccessModule } from '../internal-access/internal-access.module.js';
 import { PrismaModule } from '../prisma/prisma.module.js';
@@ -31,6 +46,14 @@ import { StatsController } from './stats.controller.js';
   controllers: [JobsController, InternalJobsController, StatsController],
   providers: [
     { provide: CLOCK, useClass: SystemClock },
+    { provide: RANDOM, useClass: SystemRandom },
+    {
+      provide: RETRY_DELAY,
+      useFactory: (random: Random, config: JobServiceConfig): RetryDelay =>
+        new ExponentialJitterRetryDelay({ random }, config.retryDelay),
+      inject: [RANDOM, JOB_SERVICE_CONFIG],
+    },
+    { provide: JOB_REQUEST_FINGERPRINT, useClass: Sha256JobRequestFingerprint },
     {
       provide: JOB_REPOSITORY,
       useFactory: (prisma: PrismaDatabase): JobRepository => new PrismaJobRepository({ prisma }),
@@ -51,6 +74,8 @@ import { StatsController } from './stats.controller.js';
         repository: JobRepository,
         queue: JobQueue,
         clock: Clock,
+        retryDelay: RetryDelay,
+        fingerprint: JobRequestFingerprint,
         config: JobServiceConfig,
       ) =>
         new JobServiceImpl(
@@ -58,6 +83,8 @@ import { StatsController } from './stats.controller.js';
             repository,
             queue,
             clock,
+            retryDelay,
+            fingerprint,
             logger: new Logger('JobService'),
             pageLimit: new ConfiguredPageLimit({
               defaultLimit: config.queryDefaultLimit,
@@ -66,7 +93,14 @@ import { StatsController } from './stats.controller.js';
           },
           { bulkMaxJobs: config.bulkMaxJobs },
         ),
-      inject: [JOB_REPOSITORY, JOB_QUEUE, CLOCK, JOB_SERVICE_CONFIG],
+      inject: [
+        JOB_REPOSITORY,
+        JOB_QUEUE,
+        CLOCK,
+        RETRY_DELAY,
+        JOB_REQUEST_FINGERPRINT,
+        JOB_SERVICE_CONFIG,
+      ],
     },
     {
       provide: JOB_COUNTS,

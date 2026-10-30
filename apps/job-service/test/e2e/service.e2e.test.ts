@@ -100,7 +100,14 @@ describe('job-service health, docs and shutdown', () => {
       const bulk = paths[JOBS_BULK_ROUTE]?.post;
       expect(bulk?.requestBody?.content['application/json']?.schema).toBeDefined();
       expect(bulk?.responses['201']?.content?.['application/json']?.schema).toBeDefined();
-      expect(Object.keys(bulk?.responses ?? {}).sort()).toEqual(['201', '400', '413']);
+      expect(bulk?.responses['200']?.content?.['application/json']?.schema).toBeDefined();
+      expect(Object.keys(bulk?.responses ?? {}).sort()).toEqual([
+        '200',
+        '201',
+        '400',
+        '409',
+        '413',
+      ]);
       expect(jobs?.get?.parameters?.map((parameter) => parameter.name).sort()).toEqual([
         'groupId',
         'limit',

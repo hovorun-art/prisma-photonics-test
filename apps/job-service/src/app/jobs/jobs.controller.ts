@@ -19,6 +19,7 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
@@ -46,6 +47,11 @@ import {
   QueryJobsResponseDto,
 } from './job.dto.js';
 
+/** The part of the HTTP response a handler sets with `@Res({ passthrough: true })`. */
+interface StatusResponse {
+  status(code: number): unknown;
+}
+
 /** The public job routes: submit (one or in bulk), get, query, status change and delete. */
 @ApiTags('jobs')
 @Controller(JOBS_ROUTE)
@@ -53,14 +59,28 @@ export class JobsController {
   constructor(@Inject(JOB_SERVICE) private readonly jobs: JobService) {}
 
   @Post()
-  @ApiOperation({ summary: 'Submit a job; it is stored as pending and put on the queue' })
+  @ApiOperation({
+    summary: 'Submit a job; it is stored as pending and put on the queue',
+    description:
+      'With an `idempotencyKey`, repeating the same request answers the job the first one created ' +
+      '(200 instead of 201); the same key with a different request answers 409 ' +
+      '`IDEMPOTENCY_KEY_CONFLICT` naming the existing job. A key is remembered as long as its job exists.',
+  })
   @ApiCreatedResponse({ type: JobDto, description: 'The stored job' })
+  @ApiOkResponse({ type: JobDto, description: 'The existing job of a repeated submission' })
   @ApiBody({ type: CreateJobDto })
   @ApiBadRequestResponse({ description: 'VALIDATION_FAILED' })
+  @ApiConflictResponse({
+    description:
+      'IDEMPOTENCY_KEY_CONFLICT: the key belongs to a job submitted with another request',
+  })
   async create(
     @Body(new ZodValidationPipe(CreateJobRequest)) body: CreateJobRequest,
+    @Res({ passthrough: true }) res: StatusResponse,
   ): Promise<Job> {
-    return (await this.jobs.create({ job: body })).job;
+    const { job, created } = await this.jobs.create({ job: body });
+    res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return job;
   }
 
   @Post('bulk')
@@ -69,11 +89,21 @@ export class JobsController {
     description:
       'Each item is an ordinary job submission of any type, optionally with a `groupId`. Any ' +
       'invalid item rejects the whole request, its issues naming the item (`jobs.3.payload.to`). ' +
-      'At most the configured maximum of jobs per request.',
+      'At most the configured maximum of jobs per request. An item with an `idempotencyKey` that ' +
+      'belongs to a job submitted with the same request answers that job at its position and ' +
+      'creates nothing; a key that belongs to another request answers 409 ' +
+      '`IDEMPOTENCY_KEY_CONFLICT` for the whole request.',
   })
   @ApiCreatedResponse({
     type: CreateJobsBulkResponseDto,
-    description: 'The stored jobs, in the order of the request',
+    description: 'The jobs, in the order of the request; at least one of them was created',
+  })
+  @ApiOkResponse({
+    type: CreateJobsBulkResponseDto,
+    description: 'Every item matched an existing job by its idempotency key; nothing was created',
+  })
+  @ApiConflictResponse({
+    description: "IDEMPOTENCY_KEY_CONFLICT: an item's key belongs to a job with another request",
   })
   @ApiBody({ type: CreateJobsBulkDto })
   @ApiBadRequestResponse({
@@ -82,8 +112,11 @@ export class JobsController {
   @ApiPayloadTooLargeResponse({ description: 'PAYLOAD_TOO_LARGE: above the configured body limit' })
   async createBulk(
     @Body(new ZodValidationPipe(CreateJobsBulkRequest)) body: CreateJobsBulkRequest,
+    @Res({ passthrough: true }) res: StatusResponse,
   ): Promise<CreateJobsBulkResponse> {
-    return { items: (await this.jobs.createMany({ jobs: body.jobs })).jobs };
+    const { jobs, created } = await this.jobs.createMany({ jobs: body.jobs });
+    res.status(created ? HttpStatus.CREATED : HttpStatus.OK);
+    return { items: jobs };
   }
 
   @Get(':id')

@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
 
-import { Job, JOB_LIMITS } from '@job-queue/contracts';
+import { InternalJob, Job, JOB_LIMITS } from '@job-queue/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { JobQueueUnavailableError } from '../../src/domain/jobs/errors/job-queue-unavailable.error.js';
-import { JobServiceUnderTest, TRANSIT_REPORT } from './job-service-under-test.js';
+import { JobServiceUnderTest, TEST_CONFIG, TRANSIT_REPORT } from './job-service-under-test.js';
 
 const UNKNOWN_ID = randomUUID();
 const ERROR = { code: 'SEND_FAILED', message: 'Mailbox unavailable' };
@@ -12,12 +12,23 @@ const EMAIL_JOB = {
   type: 'email',
   payload: { to: 'ada@example.com', subject: 'Hello', body: 'Hi Ada' },
 };
-const START = { status: 'processing' };
-const FAIL = { status: 'failed', error: ERROR };
-const COMPLETE = { status: 'completed', result: { messageId: 'm-1' } };
 
 describe('job-service internal job routes', () => {
   let service: JobServiceUnderTest;
+
+  /** A worker's reports about an entry: the first attempt of the first run unless told otherwise. */
+  const entry = ({ run = 1, attempt = 1 } = {}) => ({ run, attempt });
+  const start = (of = {}) => ({ status: 'processing', ...entry(of) });
+  const fail = (of = {}, error: object = ERROR) => ({ status: 'failed', ...entry(of), error });
+  const complete = (of = {}, result: object = { messageId: 'm-1' }) => ({
+    status: 'completed',
+    ...entry(of),
+    result,
+  });
+  const START = start();
+  const FAIL = fail();
+  const COMPLETE = complete();
+  const RESULT = { messageId: 'm-1' };
 
   const expectInvalid = async (response: Response): Promise<void> => {
     await service.errorBody({ response, status: 400, code: 'VALIDATION_FAILED' });
@@ -41,6 +52,19 @@ describe('job-service internal job routes', () => {
     return Job.parse(await responses.find((response) => response.status === 200)!.json());
   };
 
+  /**
+   * The retry time of a failure reported between `before` and the response: the configured delay
+   * of that retry after the response time, within the range the backoff allows.
+   */
+  const expectRetryDelay = (job: Job, window: { before: number; retry: number }): void => {
+    const growth = 2 ** (window.retry - 1);
+    const min = Math.min(TEST_CONFIG.retryMinDelayMs * growth, TEST_CONFIG.retryCapDelayMs);
+    const max = Math.min(TEST_CONFIG.retryMaxDelayMs * growth, TEST_CONFIG.retryCapDelayMs);
+    const scheduledAt = Date.parse(job.scheduledAt ?? '');
+    expect(scheduledAt).toBeGreaterThanOrEqual(window.before + min);
+    expect(scheduledAt).toBeLessThanOrEqual(Date.now() + max);
+  };
+
   beforeAll(async () => {
     service = await JobServiceUnderTest.start();
   }, 180_000);
@@ -61,6 +85,18 @@ describe('job-service internal job routes', () => {
       expect(Job.parse(await response.json())).toEqual(job);
     });
 
+    it('Read a job with its time limit', async () => {
+      const job = await service.seed({ status: 'pending' });
+
+      const response = await service.read({ id: job.id });
+
+      expect(response.status).toBe(200);
+      expect(InternalJob.parse(await response.json())).toEqual({
+        ...job,
+        maxProcessingMs: TEST_CONFIG.maxProcessingMsEmail,
+      });
+    });
+
     it('Read an unknown job', async () => {
       await expectNotFound(await service.read({ id: UNKNOWN_ID }));
     });
@@ -79,13 +115,26 @@ describe('job-service internal job routes', () => {
       expect(await service.stored(job.id)).toEqual(job);
     });
 
+    it('Report without run and attempt', async () => {
+      const job = await service.seed({ status: 'pending' });
+
+      for (const body of [
+        { status: 'processing' },
+        { status: 'completed', result: RESULT },
+        { status: 'failed', error: ERROR },
+      ]) {
+        const paths = await service.issuePaths(await service.report({ id: job.id, body }));
+        expect(paths).toContainEqual(['run']);
+        expect(paths).toContainEqual(['attempt']);
+      }
+      expect(await service.stored(job.id)).toEqual(job);
+    });
+
     it('Result does not match the job type', async () => {
       const result = { statusCode: 200, responseBody: {} };
       const job = await service.seed({ status: 'processing' });
 
-      await expectInvalid(
-        await service.report({ id: job.id, body: { status: 'completed', result } }),
-      );
+      await expectInvalid(await service.report({ id: job.id, body: complete({}, result) }));
       expect(await service.stored(job.id)).toEqual(job);
     });
 
@@ -137,37 +186,6 @@ describe('job-service internal job routes', () => {
       expect(service.queue.enqueue).not.toHaveBeenCalled();
     });
 
-    it('Start a job that is not pending', async () => {
-      const status = 'completed';
-      const job = await service.seed({ status });
-
-      await service.expectConflict({
-        response: await service.report({ id: job.id, body: START }),
-        status,
-      });
-      expect(await service.stored(job.id)).toEqual(job);
-    });
-
-    it('Two workers start the same job', async () => {
-      const job = await service.seed({ status: 'pending', attempts: 0 });
-
-      await race(job.id, START, 'processing');
-
-      expect((await service.stored(job.id)).attempts).toBe(1);
-    });
-
-    it('Two workers start the same scheduled job', async () => {
-      const job = await service.seed({ status: 'scheduled' });
-
-      await race(job.id, START, 'processing');
-
-      expect(await service.stored(job.id)).toMatchObject({
-        status: 'processing',
-        attempts: 1,
-        scheduledAt: job.scheduledAt,
-      });
-    });
-
     it('Complete a processing job', async () => {
       const job = await service.seed({ status: 'processing' });
 
@@ -177,7 +195,7 @@ describe('job-service internal job routes', () => {
       const completed = Job.parse(await response.json());
       expect(completed).toMatchObject({
         status: 'completed',
-        result: COMPLETE.result,
+        result: RESULT,
         attempts: job.attempts,
       });
       expect(completed.completedAt).toEqual(expect.any(String));
@@ -196,6 +214,41 @@ describe('job-service internal job routes', () => {
       expect(await service.stored(job.id)).toEqual(job);
     });
 
+    it('Completion of a recovered attempt', async () => {
+      // Recovery failed attempt 1: the job waits for attempt 2 while the slow worker reports.
+      const job = await service.seed({
+        status: 'scheduled',
+        attempts: 1,
+        error: { code: 'WORKER_LOST', message: 'The worker was lost' },
+      });
+
+      await service.expectConflict({
+        response: await service.report({ id: job.id, body: COMPLETE }),
+        status: 'scheduled',
+      });
+      expect(await service.stored(job.id)).toEqual(job);
+    });
+
+    it('Failure from an earlier run', async () => {
+      service.queue.enqueue.mockResolvedValueOnce({});
+      const failed = await service.seed({ status: 'failed', attempts: 3, maxAttempts: 3 });
+      expect(
+        (await service.changeStatus({ id: failed.id, body: { status: 'pending' } })).status,
+      ).toBe(200);
+      expect((await service.report({ id: failed.id, body: start({ run: 2 }) })).status).toBe(200);
+      const running = await service.stored(failed.id);
+
+      await service.expectConflict({
+        response: await service.report({ id: failed.id, body: fail({ run: 1 }) }),
+        status: 'processing',
+      });
+      await service.expectConflict({
+        response: await service.report({ id: failed.id, body: complete({ run: 1 }) }),
+        status: 'processing',
+      });
+      expect(await service.stored(failed.id)).toEqual(running);
+    });
+
     it('Two workers complete the same job', async () => {
       const job = await service.seed({ status: 'processing' });
 
@@ -206,25 +259,60 @@ describe('job-service internal job routes', () => {
 
     it('Failure with attempts left', async () => {
       const job = await service.seed({ status: 'processing', attempts: 1, maxAttempts: 3 });
+      const before = Date.now();
 
       const response = await service.report({ id: job.id, body: FAIL });
 
       expect(response.status).toBe(200);
       const failed = Job.parse(await response.json());
       expect(failed).toMatchObject({
-        status: 'pending',
+        status: 'scheduled',
         attempts: 1,
         error: ERROR,
         completedAt: null,
       });
+      expectRetryDelay(failed, { before, retry: 1 });
       expect(await service.stored(job.id)).toEqual(failed);
       expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
         jobId: job.id,
         run: 1,
         attempt: 2,
         priority: job.priority,
-        runAt: null,
+        runAt: failed.scheduledAt,
       });
+    });
+
+    it.each([
+      ['retry 2 doubles the range', 2],
+      ['retry 3 is capped', 3],
+    ])('Delay grows with each retry (%s)', async (_name, attempts) => {
+      const job = await service.seed({ status: 'processing', attempts, maxAttempts: 5 });
+      const before = Date.now();
+
+      const response = await service.report({ id: job.id, body: fail({ attempt: attempts }) });
+
+      expect(response.status).toBe(200);
+      const failed = Job.parse(await response.json());
+      expect(failed.status).toBe('scheduled');
+      expectRetryDelay(failed, { before, retry: attempts });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        run: 1,
+        attempt: attempts + 1,
+        priority: job.priority,
+        runAt: failed.scheduledAt,
+      });
+    });
+
+    it('Invalid payload with attempts left', async () => {
+      const error = { code: 'INVALID_PAYLOAD', message: 'The payload does not match' };
+      const job = await service.seed({ status: 'processing', attempts: 1, maxAttempts: 3 });
+
+      const response = await service.report({ id: job.id, body: fail({}, error) });
+
+      expect(response.status).toBe(200);
+      expect(Job.parse(await response.json())).toMatchObject({ status: 'scheduled', error });
+      expect(service.queue.enqueue).toHaveBeenCalledOnce();
     });
 
     it('A completion and a failure race on the same job', async () => {
@@ -246,7 +334,7 @@ describe('job-service internal job routes', () => {
           run: 1,
           attempt: 2,
           priority: job.priority,
-          runAt: null,
+          runAt: winner.scheduledAt,
         });
       }
     });
@@ -254,10 +342,10 @@ describe('job-service internal job routes', () => {
     it('Two workers fail the same job', async () => {
       const job = await service.seed({ status: 'processing', attempts: 1, maxAttempts: 3 });
 
-      await race(job.id, FAIL, 'pending');
+      const winner = await race(job.id, FAIL, 'scheduled');
 
       expect(await service.stored(job.id)).toMatchObject({
-        status: 'pending',
+        status: 'scheduled',
         attempts: 1,
         error: ERROR,
       });
@@ -266,7 +354,7 @@ describe('job-service internal job routes', () => {
         run: 1,
         attempt: 2,
         priority: job.priority,
-        runAt: null,
+        runAt: winner.scheduledAt,
       });
     });
 
@@ -279,16 +367,17 @@ describe('job-service internal job routes', () => {
       const response = await service.report({ id: job.id, body: FAIL });
 
       expect(response.status).toBe(200);
-      expect(Job.parse(await response.json())).toMatchObject({ status: 'pending', error: ERROR });
+      const failed = Job.parse(await response.json());
+      expect(failed).toMatchObject({ status: 'scheduled', error: ERROR });
       expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
         jobId: job.id,
         run: 1,
         attempt: 2,
         priority: job.priority,
-        runAt: null,
+        runAt: failed.scheduledAt,
       });
       expect(await service.stored(job.id)).toMatchObject({
-        status: 'pending',
+        status: 'scheduled',
         attempts: 1,
         error: ERROR,
       });
@@ -297,21 +386,21 @@ describe('job-service internal job routes', () => {
     it('Completing a retried job clears the earlier error', async () => {
       const job = await service.seed({ status: 'processing', attempts: 1, maxAttempts: 3 });
       expect((await service.report({ id: job.id, body: FAIL })).status).toBe(200);
-      expect((await service.report({ id: job.id, body: START })).status).toBe(200);
+      expect((await service.report({ id: job.id, body: start({ attempt: 2 }) })).status).toBe(200);
 
-      const response = await service.report({ id: job.id, body: COMPLETE });
+      const response = await service.report({ id: job.id, body: complete({ attempt: 2 }) });
 
       expect(response.status).toBe(200);
       expect(await service.stored(job.id)).toMatchObject({
         status: 'completed',
         attempts: 2,
-        result: COMPLETE.result,
+        result: RESULT,
         error: null,
       });
     });
 
     it('Retries count attempts through the routes', async () => {
-      // A scheduled, high-priority job: the retry keeps its priority and runs at once.
+      // A scheduled, high-priority job: the retry keeps its priority and waits for its backoff time.
       const scheduledAt = new Date(Date.now() + 60_000).toISOString();
       const job = await service.submitted({
         ...EMAIL_JOB,
@@ -321,9 +410,16 @@ describe('job-service internal job routes', () => {
       });
 
       expect((await service.report({ id: job.id, body: START })).status).toBe(200);
-      expect((await service.report({ id: job.id, body: FAIL })).status).toBe(200);
-      const retried = Job.parse(await (await service.report({ id: job.id, body: START })).json());
-      const failed = Job.parse(await (await service.report({ id: job.id, body: FAIL })).json());
+      const firstFailure = Job.parse(
+        await (await service.report({ id: job.id, body: FAIL })).json(),
+      );
+      const second = { attempt: 2 };
+      const retried = Job.parse(
+        await (await service.report({ id: job.id, body: start(second) })).json(),
+      );
+      const failed = Job.parse(
+        await (await service.report({ id: job.id, body: fail(second) })).json(),
+      );
 
       expect(retried).toMatchObject({ status: 'processing', attempts: 2 });
       expect(failed).toMatchObject({ status: 'failed', attempts: 2, maxAttempts: 2 });
@@ -335,7 +431,13 @@ describe('job-service internal job routes', () => {
           priority: JOB_LIMITS.priority.max,
           runAt: scheduledAt,
         },
-        { jobId: job.id, run: 1, attempt: 2, priority: JOB_LIMITS.priority.max, runAt: null },
+        {
+          jobId: job.id,
+          run: 1,
+          attempt: 2,
+          priority: JOB_LIMITS.priority.max,
+          runAt: firstFailure.scheduledAt,
+        },
       ]);
     });
 
@@ -357,7 +459,10 @@ describe('job-service internal job routes', () => {
     ])('Failure on the last attempt (%s)', async (_case, maxAttempts) => {
       const job = await service.seed({ status: 'processing', attempts: maxAttempts, maxAttempts });
 
-      const response = await service.report({ id: job.id, body: FAIL });
+      const response = await service.report({
+        id: job.id,
+        body: fail({ attempt: maxAttempts }),
+      });
 
       expect(response.status).toBe(200);
       const failed = Job.parse(await response.json());
@@ -415,7 +520,7 @@ describe('job-service internal job routes', () => {
       const job = await service.seed({ status: 'processing', type: 'webhook' });
       const result = { statusCode: 200, responseBody: { received: true } };
 
-      const response = await service.report({ id: job.id, body: { status: 'completed', result } });
+      const response = await service.report({ id: job.id, body: complete({}, result) });
 
       expect(response.status).toBe(200);
       expect(Job.parse(await response.json())).toMatchObject({ status: 'completed', result });
@@ -428,9 +533,7 @@ describe('job-service internal job routes', () => {
     ])('Webhook result does not match (%s)', async (_case, result) => {
       const job = await service.seed({ status: 'processing', type: 'webhook' });
 
-      await expectInvalid(
-        await service.report({ id: job.id, body: { status: 'completed', result } }),
-      );
+      await expectInvalid(await service.report({ id: job.id, body: complete({}, result) }));
       expect(await service.stored(job.id)).toEqual(job);
     });
 
@@ -447,7 +550,7 @@ describe('job-service internal job routes', () => {
         details: { statusCode: 503 },
       };
 
-      const response = await service.report({ id: job.id, body: { status: 'failed', error } });
+      const response = await service.report({ id: job.id, body: fail({ attempt: 3 }, error) });
 
       expect(response.status).toBe(200);
       expect(Job.parse(await (await service.get(job.id)).json())).toMatchObject({
@@ -462,7 +565,7 @@ describe('job-service internal job routes', () => {
   describe('flight transit results', () => {
     it('Transit report is stored', async () => {
       const job = await service.seed({ status: 'processing', type: 'flight-transit' });
-      const body = { status: 'completed', result: TRANSIT_REPORT };
+      const body = complete({}, TRANSIT_REPORT);
 
       const response = await service.report({ id: job.id, body });
 
@@ -478,7 +581,7 @@ describe('job-service internal job routes', () => {
       const job = await service.seed({ status: 'processing', type: 'flight-transit' });
       const result = { ...TRANSIT_REPORT, origin: { ...TRANSIT_REPORT.origin, iata: 'CDG' } };
 
-      const response = await service.report({ id: job.id, body: { status: 'completed', result } });
+      const response = await service.report({ id: job.id, body: complete({}, result) });
 
       expect(response.status).toBe(200);
       expect(Job.parse(await response.json())).toMatchObject({ status: 'completed', result });
@@ -492,7 +595,7 @@ describe('job-service internal job routes', () => {
     ])('Transit report does not match (%s)', async (_case, result, path) => {
       const job = await service.seed({ status: 'processing', type: 'flight-transit' });
 
-      const response = await service.report({ id: job.id, body: { status: 'completed', result } });
+      const response = await service.report({ id: job.id, body: complete({}, result) });
 
       expect(await service.issuePaths(response)).toContainEqual(path);
       expect(await service.stored(job.id)).toEqual(job);
@@ -511,7 +614,7 @@ describe('job-service internal job routes', () => {
         details: { origin: 'LHR', destination: 'JFK' },
       };
 
-      const response = await service.report({ id: job.id, body: { status: 'failed', error } });
+      const response = await service.report({ id: job.id, body: fail({ attempt: 3 }, error) });
 
       expect(response.status).toBe(200);
       expect(Job.parse(await (await service.get(job.id)).json())).toMatchObject({
