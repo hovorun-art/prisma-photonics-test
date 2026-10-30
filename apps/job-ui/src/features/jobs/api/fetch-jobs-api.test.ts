@@ -23,18 +23,53 @@ afterAll(() => {
 describe('FetchJobsApi', () => {
   it('query sends the offset and returns the page and the total', async () => {
     const job = jobFixtures.build();
-    let offset: string | null = null;
+    let search = '';
     server.use(
       http.get(`${BASE}/v1/jobs`, ({ request }) => {
-        offset = new URL(request.url).searchParams.get('offset');
+        search = new URL(request.url).search;
         return HttpResponse.json({ items: [job], total: 21 });
       }),
     );
 
     const page = await api.query({ offset: 20 });
 
-    expect(offset).toBe('20');
+    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({ offset: '20' });
     expect(page).toEqual({ items: [job], total: 21 });
+  });
+
+  it('query sends the status and type filters when given', async () => {
+    let search = '';
+    server.use(
+      http.get(`${BASE}/v1/jobs`, ({ request }) => {
+        search = new URL(request.url).search;
+        return HttpResponse.json({ items: [], total: 0 });
+      }),
+    );
+
+    await api.query({ offset: 0, status: 'failed', type: 'flight-transit' });
+
+    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({
+      offset: '0',
+      status: 'failed',
+      type: 'flight-transit',
+    });
+  });
+
+  it('query leaves out the filters that are not given', async () => {
+    let search = '';
+    server.use(
+      http.get(`${BASE}/v1/jobs`, ({ request }) => {
+        search = new URL(request.url).search;
+        return HttpResponse.json({ items: [], total: 0 });
+      }),
+    );
+
+    await api.query({ offset: 0, type: 'webhook' });
+
+    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({
+      offset: '0',
+      type: 'webhook',
+    });
   });
 
   it('get returns the job of the id', async () => {
@@ -77,7 +112,40 @@ describe('FetchJobsApi', () => {
     const stats = queueStatsFixtures.build();
     server.use(http.get(`${BASE}/v1/stats`, () => HttpResponse.json(stats)));
 
-    await expect(api.stats()).resolves.toEqual({ stats });
+    await expect(api.stats({})).resolves.toEqual({ stats });
+  });
+
+  it('stats sends no filters when none are given', async () => {
+    let search: string | null = null;
+    server.use(
+      http.get(`${BASE}/v1/stats`, ({ request }) => {
+        search = new URL(request.url).search;
+        return HttpResponse.json(queueStatsFixtures.build());
+      }),
+    );
+
+    await api.stats({});
+
+    expect(search).toBe('');
+  });
+
+  it('stats sends the status and type filters and returns the faceted counts', async () => {
+    const stats = queueStatsFixtures.build();
+    let search = '';
+    server.use(
+      http.get(`${BASE}/v1/stats`, ({ request }) => {
+        search = new URL(request.url).search;
+        return HttpResponse.json(stats);
+      }),
+    );
+
+    const answer = await api.stats({ status: 'failed', type: 'webhook' });
+
+    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({
+      status: 'failed',
+      type: 'webhook',
+    });
+    expect(answer.stats.counts).toEqual(stats.counts);
   });
 
   it('stats rejects an answer that does not match the statistics contract', async () => {
@@ -87,7 +155,7 @@ describe('FetchJobsApi', () => {
       ),
     );
 
-    const error: unknown = await api.stats().catch((caught: unknown) => caught);
+    const error: unknown = await api.stats({}).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 200, code: null, message: 'API unreachable' });
@@ -103,7 +171,7 @@ describe('FetchJobsApi', () => {
       ),
     );
 
-    const error: unknown = await api.stats().catch((caught: unknown) => caught);
+    const error: unknown = await api.stats({}).catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 500, code: 'INTERNAL_ERROR' });

@@ -1,7 +1,15 @@
+import { JobStatus, JobType, type QueueStats } from '@job-queue/contracts';
 import type { Clock } from '@job-queue/kernel';
 
-import type { JobCounts } from '../../domain/jobs/job-counts.js';
-import type { GetJobStatisticsResponse, JobStatistics } from '../../domain/jobs/job-statistics.js';
+import type {
+  CountByStatusAndTypeJobCountsResponse,
+  JobCounts,
+} from '../../domain/jobs/job-counts.js';
+import type {
+  GetJobStatisticsRequest,
+  GetJobStatisticsResponse,
+  JobStatistics,
+} from '../../domain/jobs/job-statistics.js';
 
 const MS_PER_MINUTE = 60_000;
 
@@ -17,19 +25,29 @@ export interface JobStatisticsImplParams {
   throughputWindowMinutes: number;
 }
 
-/** Measures both windows back from the clock's now and turns the counts into statistics. */
+/**
+ * Measures both windows back from the clock's now and turns the counts into statistics. The counts
+ * per status and per type are folded from the status and type pairs: each facet keeps only the
+ * pairs that match the other facet's filter, so a filter never narrows its own counts.
+ */
 export class JobStatisticsImpl implements JobStatistics {
   constructor(
     private readonly d: JobStatisticsImplDeps,
     private readonly p: JobStatisticsImplParams,
   ) {}
 
-  async get(): Promise<GetJobStatisticsResponse> {
+  async get(req: GetJobStatisticsRequest): Promise<GetJobStatisticsResponse> {
     const now = this.d.clock.now().now.getTime();
-    const counts = await this.d.counts.count({
-      recentSince: this.minutesBefore({ nowMs: now, minutes: this.p.recentWindowMinutes }),
-      throughputSince: this.minutesBefore({ nowMs: now, minutes: this.p.throughputWindowMinutes }),
-    });
+    const [counts, pairs] = await Promise.all([
+      this.d.counts.count({
+        recentSince: this.minutesBefore({ nowMs: now, minutes: this.p.recentWindowMinutes }),
+        throughputSince: this.minutesBefore({
+          nowMs: now,
+          minutes: this.p.throughputWindowMinutes,
+        }),
+      }),
+      this.d.counts.countByStatusAndType(),
+    ]);
     return {
       stats: {
         pending: counts.pending,
@@ -44,8 +62,29 @@ export class JobStatisticsImpl implements JobStatistics {
           windowMinutes: this.p.throughputWindowMinutes,
           perMinute: counts.throughputCompleted / this.p.throughputWindowMinutes,
         },
+        counts: this.facets({ cells: pairs.cells, filters: req }),
       },
     };
+  }
+
+  private facets(req: {
+    cells: CountByStatusAndTypeJobCountsResponse['cells'];
+    filters: GetJobStatisticsRequest;
+  }): QueueStats['counts'] {
+    const status = Object.fromEntries(JobStatus.options.map((s) => [s, 0])) as Record<
+      JobStatus,
+      number
+    >;
+    const type = Object.fromEntries(JobType.options.map((t) => [t, 0])) as Record<JobType, number>;
+    for (const cell of req.cells) {
+      if (req.filters.type === undefined || cell.type === req.filters.type) {
+        status[cell.status] += cell.count;
+      }
+      if (req.filters.status === undefined || cell.status === req.filters.status) {
+        type[cell.type] += cell.count;
+      }
+    }
+    return { status, type };
   }
 
   private minutesBefore(req: { nowMs: number; minutes: number }): string {

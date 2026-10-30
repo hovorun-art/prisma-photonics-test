@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { CreateJobRequest, Job } from '@job-queue/contracts';
 import { expect, type Page, test } from '@playwright/test';
 
@@ -10,11 +12,13 @@ interface MockJobService {
   job(req: Partial<Job>): Job;
 }
 
-/** An in-memory job-service behind `page.route`: list, get, create and delete. */
+/** An in-memory job-service behind `page.route`: list (with the status and type filters), get, create and delete. */
 class RoutedJobService implements MockJobService {
   async install(req: { page: Page; jobs: Job[] }): Promise<{ deleted: string[] }> {
     const { jobs } = req;
     const deleted: string[] = [];
+    // Statistics are not part of these scenarios: refuse them, so no call reaches the preview server.
+    await req.page.route(`**${API_BASE_PATH}/v1/stats**`, (route) => route.abort());
     await req.page.route(`**${API_BASE_PATH}/v1/jobs**`, async (route) => {
       const request = route.request();
       const id = new URL(request.url()).pathname.split('/v1/jobs/')[1];
@@ -41,7 +45,13 @@ class RoutedJobService implements MockJobService {
               json: { code: 'JOB_NOT_FOUND', message: 'Job not found', details: { id } },
             });
       }
-      return route.fulfill({ json: { items: jobs, total: jobs.length } });
+      const params = new URL(request.url()).searchParams;
+      const status = params.get('status');
+      const type = params.get('type');
+      const matching = jobs.filter(
+        (j) => (status === null || j.status === status) && (type === null || j.type === type),
+      );
+      return route.fulfill({ json: { items: matching, total: matching.length } });
     });
     return { deleted };
   }
@@ -146,4 +156,68 @@ test('Submit a valid webhook job: the new job page shows the webhook payload', a
   await expect(payload).toContainText('"method": "PUT"');
   await expect(payload).toContainText('"url": "https://hooks.example.com/orders"');
   await expect(payload).toContainText('"orderId": "o-1"');
+});
+
+const FAILED_ID = randomUUID();
+const PENDING_ID = randomUUID();
+const COMPLETED_ID = randomUUID();
+
+test('Reload keeps the filters: after a reload Failed is still pressed and only failed jobs show', async ({
+  page,
+}) => {
+  const failed = api.job({
+    id: FAILED_ID,
+    status: 'failed',
+    attempts: 3,
+    error: { code: 'SEND_FAILED', message: 'Mailbox unavailable' },
+  });
+  const pending = api.job({ id: PENDING_ID });
+  await api.install({ page, jobs: [failed, pending] });
+  await page.goto('/jobs');
+  const statusFilter = page.getByRole('group', { name: en.list.filterByStatus });
+  await statusFilter.getByRole('button', { name: /^Failed/ }).click();
+  await expect(page).toHaveURL(/\/jobs\?status=failed$/);
+
+  await page.reload();
+
+  await expect(statusFilter.getByRole('button', { name: /^Failed/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.getByRole('link', { name: FAILED_ID.slice(0, 8) })).toBeVisible();
+  await expect(page.getByRole('link', { name: PENDING_ID.slice(0, 8) })).toHaveCount(0);
+});
+
+test('Back restores the previous filter: Failed, then Completed, then Back shows Failed again', async ({
+  page,
+}) => {
+  const failed = api.job({
+    id: FAILED_ID,
+    status: 'failed',
+    attempts: 3,
+    error: { code: 'SEND_FAILED', message: 'Mailbox unavailable' },
+  });
+  const completed = api.job({
+    id: COMPLETED_ID,
+    status: 'completed',
+    attempts: 1,
+    result: { messageId: 'msg_1' },
+  });
+  await api.install({ page, jobs: [failed, completed] });
+  await page.goto('/jobs');
+  const statusFilter = page.getByRole('group', { name: en.list.filterByStatus });
+  await statusFilter.getByRole('button', { name: /^Failed/ }).click();
+  await expect(page.getByRole('link', { name: COMPLETED_ID.slice(0, 8) })).toHaveCount(0);
+  await statusFilter.getByRole('button', { name: /^Completed/ }).click();
+  await expect(page.getByRole('link', { name: FAILED_ID.slice(0, 8) })).toHaveCount(0);
+
+  await page.goBack();
+
+  await expect(page).toHaveURL(/\/jobs\?status=failed$/);
+  await expect(statusFilter.getByRole('button', { name: /^Failed/ })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  );
+  await expect(page.getByRole('link', { name: FAILED_ID.slice(0, 8) })).toBeVisible();
+  await expect(page.getByRole('link', { name: COMPLETED_ID.slice(0, 8) })).toHaveCount(0);
 });

@@ -166,6 +166,34 @@ knows only queue entries, not final failures or history); a server-side cache of
 the throughput jumpy. The demo seed's volume mode measures the query, and a few seconds of cache is
 the next step if it matters.
 
+**Filter counts: faceted, on the statistics route, from one group-by.** The jobs list's status
+and type buttons show how many jobs each would list. The counts are faceted: status counts respect
+the chosen type and type counts the chosen status, so a button's number is the list's `total` after
+clicking it. They are a `counts` part of `GET /v1/stats` (optional `status` and `type` parameters,
+one value each; a repeated, empty or unknown value is a 400 `VALIDATION_FAILED`), not of the job
+list response: the list's answer stays one page, and the UI already polls the statistics once per
+interval, so the cards, the buttons and the header pill still share one request. The filters
+change only `counts`; the cards stay unfiltered. job-service reads every job once with
+`SELECT status, type, count(*) ... GROUP BY status, type` (at most 6 × 3 rows, one snapshot) and the
+use case folds the cells into the two facets, so the facet rule is plain code under unit tests and
+the SQL stays trivial. Counts cover all jobs over all time, unlike the cards' windows. The "All"
+counts are sums the UI adds up, not fields of the answer. *Alternatives:* counts in
+`GET /v1/jobs` (mixes a page with aggregates and runs them on every page turn); two filtered
+`GROUP BY` queries in SQL (the facet rule only an integration test can see, and two snapshots);
+several values per filter (the UI picks one; `GET /v1/jobs` keeps its repeated filters).
+*Trade-off:* the group-by reads every row of `jobs` on every poll of every open list. Fine at this
+volume, though not measured yet; if the demo seed's volume mode shows it slow, a `(status, type)`
+index for an index-only scan, then a counter table updated with each status change (or a few
+seconds of cache), would be next.
+
+**job-ui: filters live only in the URL.** `/jobs?status=failed&type=webhook` is the single source
+of the chosen filters: a filtered list can be shared, survives a reload, and each change is a
+history step, so Back restores the previous filters. A value that is not a known status or type is
+treated as All and never sent. The list's paging belongs to one set of filters and starts again at
+the first page on any change. *Alternative:* component or global state (lost on reload, not
+shareable). *Trade-off:* the header pill reads the filters from the URL too, so it shares the
+list's statistics request.
+
 **Limits in the shared contract, page sizes in config.** Priority and max-attempts ranges and
 defaults and the email field lengths are constants in the shared Zod schemas, so the API and the
 UI form validate with the same rules. Values that operators tune (page sizes, enqueue timeout) are
@@ -223,7 +251,8 @@ and one request per open page per interval; SSE is the planned upgrade if time a
 **job-ui: the whole design laid out now, unbuilt parts disabled.** Filters, search, Cancel/Retry,
 queue statistics, the health pill, scheduling and idempotency fields are in place but disabled with
 a "Coming soon" tooltip; each later change enables its part (the statistics cards and the API
-status pill are live since `queue-stats-service`). *Why:* reviewers see the target UI,
+status pill are live since `queue-stats-service`, the status and type filters since
+`job-list-filters-ui`). *Why:* reviewers see the target UI,
 and later changes only wire behaviour. *Trade-off:* visible controls that do nothing yet.
 
 **job-ui: the form validates with the API's own schema.** The submit form uses `react-hook-form`
