@@ -28,6 +28,11 @@ export interface BullMqJobQueueDeps {
   clock: Clock;
 }
 
+interface WithinSignalRequest {
+  work: Promise<unknown>;
+  signal: AbortSignal;
+}
+
 interface OptionsRequest {
   entry: EnqueueJobQueueRequest;
   now: Date | null;
@@ -118,10 +123,15 @@ export class BullMqJobQueue implements JobQueue {
 
   async cancel(req: CancelJobQueueRequest): Promise<CancelJobQueueResponse> {
     const message: JobCancellationMessage = { jobId: req.jobId };
+    const timeout = AbortSignal.timeout(this.p.enqueueTimeoutMs);
     try {
-      await this.withinTimeout(
-        this.publisher.publish(JOB_CANCELLATIONS_CHANNEL, JSON.stringify(message)),
-      );
+      // Never sent once the timeout has passed: a late announcement could stop a later run of the
+      // same job (a retry) on a worker.
+      await this.publisherReady(timeout);
+      await this.withinSignal({
+        work: this.publisher.publish(JOB_CANCELLATIONS_CHANNEL, JSON.stringify(message)),
+        signal: timeout,
+      });
     } catch (err) {
       this.d.logger.warn({ err, jobId: req.jobId }, 'Cancellation could not be announced');
       throw new JobQueueUnavailableError({ cancelledJobId: req.jobId });
@@ -159,12 +169,38 @@ export class BullMqJobQueue implements JobQueue {
 
   /** Rejects when `work` has not settled within the configured enqueue timeout. */
   private async withinTimeout(work: Promise<unknown>): Promise<void> {
-    const timeout = AbortSignal.timeout(this.p.enqueueTimeoutMs);
-    const timedOut = new Promise<never>((_resolve, reject) => {
-      timeout.addEventListener('abort', () => {
-        reject(timeout.reason as Error);
+    await this.withinSignal({ work, signal: AbortSignal.timeout(this.p.enqueueTimeoutMs) });
+  }
+
+  /** Rejects when `signal` aborts before `work` has settled. */
+  private async withinSignal({ work, signal }: WithinSignalRequest): Promise<void> {
+    signal.throwIfAborted();
+    const aborted = new Promise<never>((_resolve, reject) => {
+      signal.addEventListener('abort', () => {
+        reject(signal.reason as Error);
       });
     });
-    await Promise.race([work, timedOut]);
+    await Promise.race([work, aborted]);
+  }
+
+  /**
+   * Resolves once the publisher's connection is ready, at once when it is; rejects when `signal`
+   * aborts first. Its commands are not buffered (`enableOfflineQueue: false`), so a publish sent
+   * before then (just after start, or while it reconnects) would be refused.
+   */
+  private publisherReady(signal: AbortSignal): Promise<void> {
+    if (this.publisher.status === 'ready') return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const onReady = (): void => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      };
+      const onAbort = (): void => {
+        this.publisher.off('ready', onReady);
+        reject(signal.reason as Error);
+      };
+      this.publisher.once('ready', onReady);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
   }
 }

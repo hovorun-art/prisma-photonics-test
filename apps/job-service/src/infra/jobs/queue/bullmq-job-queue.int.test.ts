@@ -295,6 +295,30 @@ describe('BullMqJobQueue against Redis', () => {
       }
     });
 
+    it('announces a cancellation sent right after the queue was built', async () => {
+      const subscriber = new Redis(container.getConnectionUrl());
+      const fresh = new BullMqJobQueue(
+        { logger: { warn: vi.fn() }, clock },
+        { redisUrl: container.getConnectionUrl(), enqueueTimeoutMs: ENQUEUE_TIMEOUT_MS },
+      );
+      try {
+        const received = new Promise<unknown>((resolve) => {
+          subscriber.on('message', (_channel: string, message: string) => {
+            resolve(JSON.parse(message));
+          });
+        });
+        await subscriber.subscribe(JOB_CANCELLATIONS_CHANNEL);
+
+        // No await between building the queue and the cancel: its connection is not ready yet.
+        await expect(fresh.cancel({ jobId: JOB_ID })).resolves.toEqual({});
+
+        expect(JobCancellationMessage.parse(await received)).toEqual({ jobId: JOB_ID });
+      } finally {
+        subscriber.disconnect();
+        await fresh.close();
+      }
+    });
+
     it('rejects within the configured timeout and logs the job id while Redis cannot be reached', async () => {
       const warn = vi.fn();
       const unreachable = new BullMqJobQueue(

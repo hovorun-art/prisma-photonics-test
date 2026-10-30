@@ -152,7 +152,9 @@ is a BullMQ Pro feature. *Safety net:* pub/sub is fire and forget. If a worker m
 (reconnecting, Redis down when job-service publishes), the handler runs to its end and its
 `completed` or `failed` report gets 409, because the job is no longer `processing`; the worker logs
 that as a lost race. The job stays `cancelled`; only the work is wasted. A failed publish is only
-logged; the cancel still answers 200.
+logged; the cancel still answers 200. A publish waits for its connection to be ready (just after
+start, or while it reconnects) only within the enqueue timeout and is never sent later: a late
+announcement could stop a later run of the same job, after a retry.
 
 **Retry by hand: a run counter keeps queue entry ids new.** A retried job starts again at attempt
 1, but `<jobId>_1` is still in Redis (finished entries are kept for inspection), and BullMQ would
