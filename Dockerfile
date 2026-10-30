@@ -1,5 +1,6 @@
 # One multi-stage file for the whole monorepo. Build a service with `--target <name>`:
-# job-service, job-execution-service, migrate, job-ui. docker-compose.yml does this.
+# job-service, job-execution-service, job-group-service, migrate, job-group-service-migrate, job-ui.
+# docker-compose.yml does this.
 FROM node:26-alpine AS base
 WORKDIR /app
 
@@ -39,9 +40,21 @@ WORKDIR /app/apps/job-execution-service
 USER node
 CMD ["node", "dist/main.js"]
 
+FROM runtime AS job-group-service
+COPY --from=build /app/apps/job-group-service/package.json ./apps/job-group-service/package.json
+COPY --from=build /app/apps/job-group-service/dist ./apps/job-group-service/dist
+WORKDIR /app/apps/job-group-service
+USER node
+CMD ["node", "dist/main.js"]
+
 # One-shot: applies the Prisma migrations. Needs the Prisma CLI, so it is built on the full stage.
 FROM build AS migrate
 WORKDIR /app/apps/job-service
+CMD ["npx", "prisma", "migrate", "deploy"]
+
+# One-shot: applies job-group-service's migrations to its own schema (`?schema=job_groups`).
+FROM build AS job-group-service-migrate
+WORKDIR /app/apps/job-group-service
 CMD ["npx", "prisma", "migrate", "deploy"]
 
 FROM nginx:alpine AS job-ui

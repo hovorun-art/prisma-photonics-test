@@ -1,6 +1,4 @@
-import { DomainError } from '@job-queue/kernel';
-
-import { VALIDATION_FAILED_MESSAGE } from '../../http/validation-failed.js';
+import { DomainError, VALIDATION_FAILED_MESSAGE } from '@job-queue/kernel';
 
 export interface BulkLimitExceededErrorParams {
   /** The configured maximum number of jobs per bulk submission. */

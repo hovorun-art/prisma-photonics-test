@@ -6,13 +6,13 @@
 export const ERROR_CODES = [
   /** An `/internal` route was called without the configured service token. */
   'INTERNAL_UNAUTHORIZED',
-  /** The request addressed a route job-service does not have. */
+  /** The request addressed a route the service does not have. */
   'ROUTE_NOT_FOUND',
   /** The request input failed validation; `details.issues` lists each problem with its field path. */
   'VALIDATION_FAILED',
   /** The request body is larger than the configured limit; `details.limitBytes` holds the limit. */
   'PAYLOAD_TOO_LARGE',
-  /** The request body uses a content encoding or charset job-service cannot read. */
+  /** The request body uses a content encoding or charset the service cannot read. */
   'UNSUPPORTED_MEDIA_TYPE',
   /** No job has the requested id. */
   'JOB_NOT_FOUND',
@@ -20,8 +20,12 @@ export const ERROR_CODES = [
   'JOB_STATUS_CONFLICT',
   /** The job queue could not be reached in time; callers that can carry on log it instead. */
   'QUEUE_UNAVAILABLE',
-  /** job-execution-service could not reach job-service (network error, timeout or 5xx). */
+  /** A service could not reach job-service (network error, timeout or 5xx). */
   'JOB_SERVICE_UNAVAILABLE',
+  /** No job group has the requested id (never existed or was deleted). */
+  'JOB_GROUP_NOT_FOUND',
+  /** The job group cannot be deleted because job-service has jobs with its id; `details.total` holds their number. */
+  'JOB_GROUP_NOT_EMPTY',
   /** An unexpected failure; details are logged, not returned. */
   'INTERNAL_ERROR',
 ] as const;

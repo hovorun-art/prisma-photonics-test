@@ -14,6 +14,7 @@ build/
 
 # generated code (rebuilt by `prisma generate` on install, typecheck, test and build)
 apps/job-service/src/infra/prisma/generated/
+apps/job-group-service/src/infra/prisma/generated/
 
 # tests
 coverage/

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { z } from 'zod';
 
 import { ZodBaseEnvSchema } from './zod-base-env-schema.js';
 
+/** The core variables (environment, log level, port) are tested once in `zod-core-env-schema.test.ts`. */
 describe('ZodBaseEnvSchema', () => {
   const base = new ZodBaseEnvSchema({ defaultNodeEnv: 'development', portVariable: 'APP_PORT' });
   const { schema } = base.create();
@@ -13,8 +13,10 @@ describe('ZodBaseEnvSchema', () => {
     APP_PORT: '3000',
     INTERNAL_SERVICE_TOKEN: 'a-long-random-token',
   };
+  const paths = (env: unknown): PropertyKey[][] =>
+    schema.safeParse(env).error?.issues.map((issue) => issue.path) ?? [];
 
-  it('reads the shared variables into typed settings', () => {
+  it('reads the core variables plus Redis and the service token into typed settings', () => {
     const { config } = base.toConfig({ env: schema.parse(ENV) });
 
     expect(config).toEqual({
@@ -26,60 +28,38 @@ describe('ZodBaseEnvSchema', () => {
     });
   });
 
-  it('defaults the environment from its params and the log level to info', () => {
-    const production = new ZodBaseEnvSchema({
+  it('passes its params to the core variables', () => {
+    const other = new ZodBaseEnvSchema({
       defaultNodeEnv: 'production',
-      portVariable: 'APP_PORT',
-    }).create().schema;
-    const env = {
-      REDIS_URL: ENV.REDIS_URL,
-      APP_PORT: ENV.APP_PORT,
-      INTERNAL_SERVICE_TOKEN: ENV.INTERNAL_SERVICE_TOKEN,
-    };
+      portVariable: 'OTHER_PORT',
+    });
+    const { NODE_ENV: _env, APP_PORT: _port, ...rest } = ENV;
 
-    expect(schema.parse(env)).toMatchObject({ NODE_ENV: 'development', LOG_LEVEL: 'info' });
-    expect(production.parse(env)).toMatchObject({ NODE_ENV: 'production', LOG_LEVEL: 'info' });
+    const { config } = other.toConfig({
+      env: other.create().schema.parse({ ...rest, OTHER_PORT: '0' }),
+    });
+
+    expect(config).toMatchObject({ nodeEnv: 'production', port: 0 });
   });
 
   it('requires a non-empty service token', () => {
     const { INTERNAL_SERVICE_TOKEN: _token, ...withoutToken } = ENV;
 
-    expect(schema.safeParse(withoutToken).success).toBe(false);
-    expect(schema.safeParse({ ...ENV, INTERNAL_SERVICE_TOKEN: '' }).success).toBe(false);
+    expect(paths(withoutToken)).toEqual([['INTERNAL_SERVICE_TOKEN']]);
+    expect(paths({ ...ENV, INTERNAL_SERVICE_TOKEN: '' })).toEqual([['INTERNAL_SERVICE_TOKEN']]);
   });
 
-  it('accepts the silent log level', () => {
-    expect(schema.parse({ ...ENV, LOG_LEVEL: 'silent' }).LOG_LEVEL).toBe('silent');
+  it('accepts a TLS Redis URL', () => {
+    expect(schema.parse({ ...ENV, REDIS_URL: 'rediss://cache:6380' }).REDIS_URL).toBe(
+      'rediss://cache:6380',
+    );
   });
 
-  it('rejects an unknown environment, an unknown log level and a Redis URL of another protocol', () => {
-    expect(schema.safeParse({ ...ENV, NODE_ENV: 'staging' }).success).toBe(false);
-    expect(schema.safeParse({ ...ENV, LOG_LEVEL: 'loud' }).success).toBe(false);
-    expect(schema.safeParse({ ...ENV, REDIS_URL: 'http://localhost:6379' }).success).toBe(false);
-    expect(schema.safeParse({ NODE_ENV: 'test' }).success).toBe(false);
-  });
+  it('requires a Redis URL of the redis protocol', () => {
+    const { REDIS_URL: _url, ...withoutRedis } = ENV;
 
-  it('reads the port from the variable named in its params and rejects an invalid one', () => {
-    const other = new ZodBaseEnvSchema({ defaultNodeEnv: 'test', portVariable: 'OTHER_PORT' });
-    const env = {
-      REDIS_URL: ENV.REDIS_URL,
-      OTHER_PORT: '0',
-      INTERNAL_SERVICE_TOKEN: ENV.INTERNAL_SERVICE_TOKEN,
-    };
-
-    expect(other.toConfig({ env: other.create().schema.parse(env) }).config.port).toBe(0);
-    expect(schema.safeParse({ ...ENV, APP_PORT: 'many' }).success).toBe(false);
-    expect(schema.safeParse({ ...ENV, APP_PORT: '70000' }).success).toBe(false);
-    expect(schema.safeParse({ REDIS_URL: ENV.REDIS_URL }).success).toBe(false);
-  });
-
-  it('can be extended with an app own variables', () => {
-    const extended = schema.extend({ EXTRA: z.coerce.number() });
-
-    expect(extended.parse({ ...ENV, EXTRA: '7' })).toMatchObject({
-      EXTRA: 7,
-      NODE_ENV: 'production',
-    });
-    expect(extended.safeParse(ENV).success).toBe(false);
+    expect(paths(withoutRedis)).toEqual([['REDIS_URL']]);
+    expect(paths({ ...ENV, REDIS_URL: 'not a url' })).toEqual([['REDIS_URL']]);
+    expect(paths({ ...ENV, REDIS_URL: 'http://localhost:6379' })).toEqual([['REDIS_URL']]);
   });
 });
