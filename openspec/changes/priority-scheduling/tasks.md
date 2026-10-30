@@ -13,9 +13,9 @@ Could run in parallel: group 4 with groups 2 and 3. Everything else is sequentia
 
 Owns: `packages/contracts/src/jobs/job.ts`, `packages/contracts/src/jobs/job.test.ts` · Depends on: none · Parallel with: none
 
-- [ ] 1.1 Write failing tests in `job.test.ts` for the create request's `scheduledAt` (scenarios "Execution time with a time zone offset" and "Execution time is not a timestamp" at the schema level): accepts `Z` and `+02:00`, is optional, and rejects a date only and a time without offset with an issue at `scheduledAt`; verify they fail for the missing field
-- [ ] 1.2 Add `scheduledAt: z.iso.datetime({ offset: true }).optional()` to `CreateJobOptions`, `JOB_LIMITS.scheduledAt = { maxAheadDays: 30 }` and `STARTABLE_JOB_STATUSES = ['scheduled', 'pending']`; verify the tests pass and `npm run build:packages` succeeds
-- [ ] 1.3 Run the `test-case-reviewer` subagent on `packages/contracts` unit tests (`job.test.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 1.1 Write failing tests in `job.test.ts` for the create request's `scheduledAt` (scenarios "Execution time with a time zone offset" and "Execution time is not a timestamp" at the schema level): accepts `Z` and `+02:00`, is optional, and rejects a date only and a time without offset with an issue at `scheduledAt`; verify they fail for the missing field
+- [x] 1.2 Add `scheduledAt: z.iso.datetime({ offset: true }).optional()` to `CreateJobOptions`, `JOB_LIMITS.scheduledAt = { maxAheadDays: 30 }` and `STARTABLE_JOB_STATUSES = ['scheduled', 'pending']`; verify the tests pass and `npm run build:packages` succeeds
+- [x] 1.3 Run the `test-case-reviewer` subagent on `packages/contracts` unit tests (`job.test.ts`); add the missing cases it reports or note why they belong elsewhere
 
 ## 2. job-service queue port and BullMQ adapter: priority and delay
 
