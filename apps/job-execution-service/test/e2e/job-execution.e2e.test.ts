@@ -16,10 +16,11 @@ import {
 
 const JOB_ID = randomUUID();
 const MESSAGE_ID = randomUUID();
-const ENTRY = { jobId: JOB_ID, attempt: 1 };
+const ENTRY = { jobId: JOB_ID, run: 1, attempt: 1 };
+const AT = { run: 1, attempt: 1 };
 const EMAIL = { sendMs: 150, messageId: MESSAGE_ID };
 const SIGNAL = expect.any(AbortSignal) as AbortSignal;
-const COMPLETED = { status: 'completed', result: { messageId: MESSAGE_ID } } as const;
+const COMPLETED = { status: 'completed', result: { messageId: MESSAGE_ID }, ...AT } as const;
 
 describe('job-execution-service running jobs', () => {
   let service: JobExecutionServiceUnderTest;
@@ -59,8 +60,19 @@ describe('job-execution-service running jobs', () => {
 
       expect(service.jobs.get).toHaveBeenCalledExactlyOnceWith({ id: JOB_ID, signal: SIGNAL });
       expect(service.jobs.update.mock.calls).toEqual([
-        [{ id: JOB_ID, update: { status: 'processing' }, signal: SIGNAL }],
+        [{ id: JOB_ID, update: { status: 'processing', ...AT }, signal: SIGNAL }],
         [{ id: JOB_ID, update: COMPLETED, signal: SIGNAL }],
+      ]);
+    });
+
+    it('Reports of one entry', async () => {
+      runsToCompletion();
+
+      await service.run({ jobId: JOB_ID, run: 1, attempt: 2 });
+
+      expect(service.reports()).toEqual([
+        { status: 'processing', run: 1, attempt: 2 },
+        { ...COMPLETED, attempt: 2 },
       ]);
     });
 
@@ -102,6 +114,7 @@ describe('job-execution-service running jobs', () => {
     it('Job already taken or finished', async () => {
       service.jobs.get.mockResolvedValueOnce({
         job: service.emailJob({ id: JOB_ID, status: 'completed', attempts: 1 }),
+        maxProcessingMs: TEST_CONFIG.maxProcessingMs,
       });
 
       await service.run(ENTRY);
@@ -120,12 +133,15 @@ describe('job-execution-service running jobs', () => {
     });
 
     it('Another worker started the job first', async () => {
-      service.jobs.get.mockResolvedValueOnce({ job: service.emailJob({ id: JOB_ID }) });
+      service.jobs.get.mockResolvedValueOnce({
+        job: service.emailJob({ id: JOB_ID }),
+        maxProcessingMs: TEST_CONFIG.maxProcessingMs,
+      });
       service.jobs.update.mockRejectedValueOnce(new JobStatusConflictError({ id: JOB_ID }));
 
       await service.run(ENTRY);
 
-      expect(service.reports()).toEqual([{ status: 'processing' }]);
+      expect(service.reports()).toEqual([{ status: 'processing', ...AT }]);
       expect(service.handlerRan()).toBe(false);
       const skipped = service.jobLogs(JOB_ID).filter((line) => line.msg?.includes('Skipped'));
       expect(skipped).toEqual([expect.objectContaining({ level: 30, attempt: 1 })]);
@@ -143,10 +159,11 @@ describe('job-execution-service running jobs', () => {
       await service.run(ENTRY);
 
       expect(service.reports()).toEqual([
-        { status: 'processing' },
+        { status: 'processing', ...AT },
         {
           status: 'failed',
           error: expect.objectContaining({ code: 'INVALID_PAYLOAD' }) as unknown,
+          ...AT,
         },
       ]);
       expect(service.handlerRan()).toBe(false);
@@ -160,7 +177,7 @@ describe('job-execution-service running jobs', () => {
 
       await service.run(ENTRY);
 
-      expect(service.reports()).toEqual([{ status: 'processing' }, COMPLETED, COMPLETED]);
+      expect(service.reports()).toEqual([{ status: 'processing', ...AT }, COMPLETED, COMPLETED]);
       expect(service.jobLogs(JOB_ID)).toContainEqual(
         expect.objectContaining({ msg: 'Job completed' }),
       );
@@ -179,7 +196,7 @@ describe('job-execution-service running jobs', () => {
 
       // The first try and the configured number of retries, then no more.
       expect(service.reports()).toEqual([
-        { status: 'processing' },
+        { status: 'processing', ...AT },
         ...Array.from({ length: TEST_CONFIG.reportRetries + 1 }, () => COMPLETED),
       ]);
       expect(service.jobLogs(JOB_ID).filter((line) => line.level === 50)).toEqual([
@@ -231,7 +248,7 @@ describe('job-execution-service running jobs', () => {
       service.announceCancel(JOB_ID);
 
       await expect(running).resolves.toEqual({ outcome: 'cancelled' });
-      expect(service.reports()).toEqual([{ status: 'processing' }]);
+      expect(service.reports()).toEqual([{ status: 'processing', ...AT }]);
       expect(service.jobLogs(JOB_ID)).toContainEqual(
         expect.objectContaining({
           level: 30,
@@ -251,7 +268,75 @@ describe('job-execution-service running jobs', () => {
       service.announceCancel(randomUUID());
 
       await expect(running).resolves.toEqual({ outcome: 'completed' });
-      expect(service.reports()).toEqual([{ status: 'processing' }, COMPLETED]);
+      expect(service.reports()).toEqual([{ status: 'processing', ...AT }, COMPLETED]);
+    });
+  });
+
+  describe('the maximum processing time and recovered attempts', () => {
+    /** A time limit far below the email send time; the timer is real, the send never ends. */
+    const SHORT_LIMIT_MS = 30;
+
+    it('Handler exceeds the time limit', async () => {
+      service.readAndStartWithin({
+        job: service.emailJob({ id: JOB_ID }),
+        maxProcessingMs: SHORT_LIMIT_MS,
+      });
+      service.random.int.mockReturnValueOnce({ value: EMAIL.sendMs });
+      service.sleepsUntilAborted();
+      service.acceptsReport(service.emailJob({ id: JOB_ID, status: 'failed', attempts: 1 }));
+
+      await expect(service.run(ENTRY)).resolves.toEqual({ outcome: 'failed' });
+
+      expect(service.reports()).toEqual([
+        { status: 'processing', ...AT },
+        {
+          status: 'failed',
+          error: {
+            code: 'JOB_TIMEOUT',
+            message: expect.stringContaining(String(SHORT_LIMIT_MS)) as unknown,
+            details: { maxProcessingMs: SHORT_LIMIT_MS },
+          },
+          ...AT,
+        },
+      ]);
+      expect(service.jobLogs(JOB_ID)).toContainEqual(
+        expect.objectContaining({ level: 40, code: 'JOB_TIMEOUT', attempt: 1 }),
+      );
+    });
+
+    it('Completion refused after a recovery', async () => {
+      service.readAndStart(service.emailJob({ id: JOB_ID }));
+      service.sendsEmail(EMAIL);
+      service.jobs.update.mockRejectedValueOnce(
+        new JobStatusConflictError({ id: JOB_ID, status: 'scheduled' }),
+      );
+
+      await expect(service.run(ENTRY)).resolves.toEqual({ outcome: 'skipped' });
+
+      expect(service.reports()).toEqual([{ status: 'processing', ...AT }, COMPLETED]);
+      expect(service.jobLogs(JOB_ID).filter((line) => line.level >= 40)).toEqual([
+        expect.objectContaining({
+          level: 40,
+          jobId: JOB_ID,
+          run: 1,
+          attempt: 1,
+          instanceId: INSTANCE_ID,
+          msg: expect.stringContaining('recovered') as unknown,
+        }),
+      ]);
+    });
+
+    it('Completion refused after a cancel', async () => {
+      service.readAndStart(service.emailJob({ id: JOB_ID }));
+      service.sendsEmail(EMAIL);
+      service.jobs.update.mockRejectedValueOnce(
+        new JobStatusConflictError({ id: JOB_ID, status: 'cancelled' }),
+      );
+
+      await expect(service.run(ENTRY)).resolves.toEqual({ outcome: 'skipped' });
+
+      expect(service.reports()).toEqual([{ status: 'processing', ...AT }, COMPLETED]);
+      expect(service.logs.filter((line) => line.level >= 40)).toEqual([]);
     });
   });
 
@@ -295,7 +380,7 @@ describe('job-execution-service running jobs', () => {
         ms: TEST_CONFIG.shutdownGraceMs,
         signal: SIGNAL,
       });
-      expect(app.reports()).toEqual([{ status: 'processing' }, COMPLETED]);
+      expect(app.reports()).toEqual([{ status: 'processing', ...AT }, COMPLETED]);
       expect(app.logs.filter((line) => line.level >= 40)).toEqual([]);
     });
 
@@ -325,7 +410,7 @@ describe('job-execution-service running jobs', () => {
       stopping = undefined;
 
       await expect(running).resolves.toEqual({ outcome: 'cancelled' });
-      expect(app.reports()).toEqual([{ status: 'processing' }]);
+      expect(app.reports()).toEqual([{ status: 'processing', ...AT }]);
       expect(app.cancellations.close).toHaveBeenCalledOnce();
       expect(app.consumer.close.mock.invocationCallOrder[0]).toBeLessThan(
         app.cancellations.close.mock.invocationCallOrder[0] ?? 0,
@@ -358,7 +443,7 @@ describe('job-execution-service running jobs', () => {
         ms: TEST_CONFIG.shutdownGraceMs,
         signal: SIGNAL,
       });
-      expect(app.reports()).toEqual([{ status: 'processing' }]);
+      expect(app.reports()).toEqual([{ status: 'processing', ...AT }]);
       expect(app.logs.filter((line) => line.level === 40)).toEqual([
         expect.objectContaining({
           msg: expect.stringContaining('grace period is over') as unknown,

@@ -47,6 +47,9 @@ export interface JobExecutionImplParams {
   reportRetryMaxDelayMs: number;
 }
 
+/** `Omit` applied to every member of a union, so the report variants stay apart. */
+type DistributiveOmit<T, K extends PropertyKey> = T extends unknown ? Omit<T, K> : never;
+
 /** The fields of every log line about one entry (the instance id is on every line already). */
 interface EntryFields {
   jobId: string;
@@ -56,6 +59,8 @@ interface EntryFields {
 /** One entry being run: its log fields and its own abort, by a cancel or by the shutdown. */
 interface RunningEntry {
   fields: EntryFields;
+  /** The job's run the entry belongs to; every report names it with the attempt. */
+  run: number;
   /** Aborted when job-service cancels this job. */
   cancel: AbortController;
   /** Aborted by a cancel of this job or when the worker gives up on all running jobs. */
@@ -70,18 +75,24 @@ interface EntryRequest {
  * What reading the job led to: the runnable job, a job that cannot run (it still has to be started
  * before job-service accepts its failure), or the entry's final outcome.
  */
-type ReadResponse = { job: Job } | { invalid: JobError } | ExecuteJobExecutionResponse;
+type ReadResponse =
+  { job: Job; maxProcessingMs: number } | { invalid: JobError } | ExecuteJobExecutionResponse;
 
 interface ReportRequest {
   entry: RunningEntry;
-  update: UpdateJobRequest;
+  /** The report without the entry's run and attempt, which `report` adds. */
+  update: DistributiveOmit<UpdateJobRequest, 'run' | 'attempt'>;
 }
 
 /**
  * `delivered`, refused by job-service (`refused`), given up after the last try (`abandoned`), or
  * stopped because the job was cancelled (`cancelled`).
  */
-type ReportResponse = 'delivered' | 'refused' | 'abandoned' | 'cancelled';
+interface ReportResponse {
+  result: 'delivered' | 'refused' | 'abandoned' | 'cancelled';
+  /** The job's current status, when job-service refused the report with a status conflict. */
+  conflictStatus?: string | undefined;
+}
 
 interface RunHandlerRequest {
   fields: EntryFields;
@@ -89,7 +100,15 @@ interface RunHandlerRequest {
   job: Job;
   /** Aborted when the job is cancelled or the worker gives up at shutdown. */
   signal: AbortSignal;
+  /** The handler is aborted when it has run this long. */
+  maxProcessingMs: number;
 }
+
+/** How the handler ended: with its outcome, by throwing, or by running into the time limit. */
+type RunHandlerResult =
+  | { ended: 'returned'; ran: RunJobHandlerResponse }
+  | { ended: 'threw'; error: unknown }
+  | { ended: 'timed out' };
 
 interface FailRequest {
   entry: RunningEntry;
@@ -138,6 +157,7 @@ export class JobExecutionImpl implements JobExecution {
     const cancel = new AbortController();
     const entry: RunningEntry = {
       fields,
+      run: req.run,
       cancel,
       signal: AbortSignal.any([this.running.signal, cancel.signal]),
     };
@@ -158,18 +178,35 @@ export class JobExecutionImpl implements JobExecution {
     }
   }
 
-  /** Runs the handler and logs its start and end (with the time it took, also when it throws). */
+  /**
+   * Runs the handler and logs its start and end (with the time it took, also when it throws). The
+   * handler is aborted when it has run for `maxProcessingMs`; that is told apart from a cancel and
+   * the shutdown by the caller, which looks at the entry's own signal first.
+   */
   private async runHandler({
     fields,
     handler,
     job,
     signal,
-  }: RunHandlerRequest): Promise<RunJobHandlerResponse> {
+    maxProcessingMs,
+  }: RunHandlerRequest): Promise<RunHandlerResult> {
     const startedAt = this.d.clock.now().now.getTime();
     this.d.logger.log(fields, 'Handler started');
+    const timeLimit = new AbortController();
+    const timer = setTimeout(() => {
+      timeLimit.abort(new Error(`The job ran longer than ${maxProcessingMs} ms`));
+    }, maxProcessingMs);
     try {
-      return await handler.run({ job, attempt: fields.attempt, signal });
+      const ran = await handler.run({
+        job,
+        attempt: fields.attempt,
+        signal: AbortSignal.any([signal, timeLimit.signal]),
+      });
+      return timeLimit.signal.aborted ? { ended: 'timed out' } : { ended: 'returned', ran };
+    } catch (error) {
+      return timeLimit.signal.aborted ? { ended: 'timed out' } : { ended: 'threw', error };
     } finally {
+      clearTimeout(timer);
       const durationMs = this.d.clock.now().now.getTime() - startedAt;
       this.d.logger.log({ ...fields, durationMs }, 'Handler finished');
     }
@@ -194,16 +231,16 @@ export class JobExecutionImpl implements JobExecution {
     if ('outcome' in read) return read;
 
     const started = await this.report({ entry, update: { status: 'processing' } });
-    if (started === 'refused') {
+    if (started.result === 'refused') {
       this.d.logger.log(fields, 'Skipped: job-service did not let this worker start the job');
       return { outcome: 'skipped' };
     }
-    if (started === 'cancelled') return this.stopped({ entry });
-    if (started === 'abandoned') return { outcome: 'abandoned' };
+    if (started.result === 'cancelled') return this.stopped({ entry });
+    if (started.result === 'abandoned') return { outcome: 'abandoned' };
     this.d.logger.log(fields, 'Job started');
 
     if ('invalid' in read) return await this.fail({ entry, error: read.invalid });
-    const { job } = read;
+    const { job, maxProcessingMs } = read;
     const handler = this.d.handlers[job.type];
     if (handler === undefined) {
       return await this.fail({
@@ -215,19 +252,32 @@ export class JobExecutionImpl implements JobExecution {
       });
     }
 
-    let ran: RunJobHandlerResponse;
-    try {
-      ran = await this.runHandler({ fields, handler, job, signal: entry.signal });
-    } catch (error) {
-      if (entry.signal.aborted) return this.stopped({ entry });
-      return await this.fail({ entry, error: this.toJobError(error) });
-    }
+    const ran = await this.runHandler({
+      fields,
+      handler,
+      job,
+      signal: entry.signal,
+      maxProcessingMs,
+    });
     if (entry.signal.aborted) return this.stopped({ entry });
-    if (ran.outcome === 'failed') return await this.fail({ entry, error: ran.error });
+    if (ran.ended === 'timed out') {
+      return await this.fail({
+        entry,
+        error: {
+          code: JOB_ERROR_CODES.jobTimeout,
+          message: `The job ran longer than the maximum processing time of ${maxProcessingMs} ms`,
+          details: { maxProcessingMs },
+        },
+      });
+    }
+    if (ran.ended === 'threw') {
+      return await this.fail({ entry, error: this.toJobError(ran.error) });
+    }
+    if (ran.ran.outcome === 'failed') return await this.fail({ entry, error: ran.ran.error });
 
     const reported = await this.report({
       entry,
-      update: { status: 'completed', result: ran.result },
+      update: { status: 'completed', result: ran.ran.result },
     });
     const outcome = this.outcome({ entry, status: 'completed', reported, delivered: 'completed' });
     if (outcome.outcome === 'completed') this.d.logger.log(fields, 'Job completed');
@@ -250,7 +300,7 @@ export class JobExecutionImpl implements JobExecution {
   private async read({ entry }: EntryRequest): Promise<ReadResponse> {
     const { fields } = entry;
     try {
-      const { job } = await this.withRetry({
+      const { job, maxProcessingMs } = await this.withRetry({
         entry,
         call: () => this.d.jobs.get({ id: fields.jobId, signal: entry.signal }),
       });
@@ -258,7 +308,7 @@ export class JobExecutionImpl implements JobExecution {
         this.d.logger.log({ ...fields, status: job.status }, 'Skipped: job is no longer startable');
         return { outcome: 'skipped' };
       }
-      return { job };
+      return { job, maxProcessingMs };
     } catch (error) {
       if (entry.signal.aborted) return this.stopped({ entry });
       if (error instanceof JobNotFoundError) {
@@ -295,14 +345,28 @@ export class JobExecutionImpl implements JobExecution {
     reported,
     delivered,
   }: OutcomeRequest): ExecuteJobExecutionResponse {
-    switch (reported) {
+    switch (reported.result) {
       case 'delivered':
         return { outcome: delivered };
       case 'refused':
-        this.d.logger.log(
-          { ...entry.fields, status },
-          'Report refused: the job changed meanwhile (for example it was cancelled)',
-        );
+        if (reported.conflictStatus !== undefined && reported.conflictStatus !== 'cancelled') {
+          // The job moved on without this attempt: job-service recovered it (a lost worker, a
+          // timeout) while this worker was only slow. The next attempt owns the job now.
+          this.d.logger.warn(
+            {
+              ...entry.fields,
+              run: entry.run,
+              status,
+              jobStatus: reported.conflictStatus,
+            },
+            'Report refused: the attempt was recovered',
+          );
+        } else {
+          this.d.logger.log(
+            { ...entry.fields, status },
+            'Report refused: the job changed meanwhile (for example it was cancelled)',
+          );
+        }
         return { outcome: 'skipped' };
       case 'cancelled':
         return this.stopped({ entry });
@@ -311,29 +375,39 @@ export class JobExecutionImpl implements JobExecution {
     }
   }
 
-  /** Sends one state report; job-service refusing it is an answer, not an error. */
+  /**
+   * Sends one state report for the entry's run and attempt; job-service refusing it is an answer,
+   * not an error.
+   */
   private async report({ entry, update }: ReportRequest): Promise<ReportResponse> {
     const { fields } = entry;
+    const withEntry: UpdateJobRequest = { ...update, run: entry.run, attempt: fields.attempt };
     try {
       await this.withRetry({
         entry,
-        call: () => this.d.jobs.update({ id: fields.jobId, update, signal: entry.signal }),
+        call: () =>
+          this.d.jobs.update({ id: fields.jobId, update: withEntry, signal: entry.signal }),
       });
-      return 'delivered';
+      return { result: 'delivered' };
     } catch (error) {
       if (this.running.signal.aborted) {
         this.stopped({ entry });
-        return 'abandoned';
+        return { result: 'abandoned' };
       }
-      if (entry.cancel.signal.aborted) return 'cancelled';
-      if (error instanceof JobStatusConflictError || error instanceof JobNotFoundError) {
-        return 'refused';
+      if (entry.cancel.signal.aborted) return { result: 'cancelled' };
+      if (error instanceof JobStatusConflictError) {
+        const status = error.details.status;
+        return {
+          result: 'refused',
+          conflictStatus: typeof status === 'string' ? status : undefined,
+        };
       }
+      if (error instanceof JobNotFoundError) return { result: 'refused' };
       this.d.logger.error(
         { ...fields, status: update.status, err: error },
         'Gave up reporting to job-service; the job keeps its last accepted state',
       );
-      return 'abandoned';
+      return { result: 'abandoned' };
     }
   }
 

@@ -10,7 +10,8 @@ import {
 
 const JOB_ID = randomUUID();
 const REQUEST_ID = randomUUID();
-const ENTRY = { jobId: JOB_ID, attempt: 1 };
+const ENTRY = { jobId: JOB_ID, run: 1, attempt: 1 };
+const AT = { run: 1, attempt: 1 };
 
 /**
  * How a webhook job runs in the app with the configured call time and failure rate; the failure
@@ -50,10 +51,11 @@ describe('job-execution-service running webhook jobs', () => {
       signal: expect.any(AbortSignal) as AbortSignal,
     });
     expect(service.reports()).toEqual([
-      { status: 'processing' },
+      { status: 'processing', ...AT },
       {
         status: 'completed',
         result: { statusCode: 200, responseBody: { received: true, requestId: REQUEST_ID } },
+        ...AT,
       },
     ]);
   });
@@ -68,7 +70,7 @@ describe('job-execution-service running webhook jobs', () => {
     await service.run(ENTRY);
 
     expect(service.reports()).toEqual([
-      { status: 'processing' },
+      { status: 'processing', ...AT },
       {
         status: 'failed',
         error: {
@@ -76,6 +78,7 @@ describe('job-execution-service running webhook jobs', () => {
           message: 'Webhook POST https://example.com/hook answered 503',
           details: { statusCode: 503 },
         },
+        ...AT,
       },
     ]);
     expect(service.jobLogs(JOB_ID).filter((line) => line.level === 40)).toEqual([

@@ -29,7 +29,7 @@ describe('job-execution-service running email jobs', () => {
     service.sendsEmail({ sendMs: SEND_MS, messageId: MESSAGE_ID });
     service.acceptsReport(service.emailJob({ id: JOB_ID, status: 'completed', attempts: 1 }));
 
-    await service.run({ jobId: JOB_ID, attempt: 1 });
+    await service.run({ jobId: JOB_ID, run: 1, attempt: 1 });
 
     expect(service.random.int).toHaveBeenCalledExactlyOnceWith({
       min: TEST_CONFIG.emailSendMinMs,
@@ -40,8 +40,8 @@ describe('job-execution-service running email jobs', () => {
       signal: expect.any(AbortSignal) as AbortSignal,
     });
     expect(service.reports()).toEqual([
-      { status: 'processing' },
-      { status: 'completed', result: { messageId: MESSAGE_ID } },
+      { status: 'processing', run: 1, attempt: 1 },
+      { status: 'completed', result: { messageId: MESSAGE_ID }, run: 1, attempt: 1 },
     ]);
   });
 });

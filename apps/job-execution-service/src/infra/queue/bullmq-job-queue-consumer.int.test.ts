@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { JOB_QUEUE_NAME, JobQueueEntryId } from '@job-queue/contracts';
 import { CONTAINER_IMAGES } from '@job-queue/test-support';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
-import { Queue } from 'bullmq';
+import { Queue, Worker } from 'bullmq';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { JobQueueEntry } from '../../domain/queue/job-queue-consumer.js';
@@ -14,11 +14,15 @@ const FIRST_JOB_ID = randomUUID();
 const SECOND_JOB_ID = randomUUID();
 
 const POLL = { timeout: 10_000, interval: 50 };
+/** Long enough that a healthy test never sees a hold expire. */
+const LONG_MS = 30_000;
 
 describe('BullMqJobQueueConsumer against Redis', () => {
   let container: StartedRedisContainer;
   let producer: Queue;
-  let consumer: BullMqJobQueueConsumer | undefined;
+  let consumers: BullMqJobQueueConsumer[] = [];
+  /** Workers a test plays other instances with, closed after it. */
+  let workers: Worker[] = [];
 
   /** Adds an entry the way job-service does: data `{ jobId }`, id `<jobId>_<run>_<attempt>`. */
   const enqueue = async (jobId: string, attempt = 1, run = 1): Promise<void> => {
@@ -26,15 +30,24 @@ describe('BullMqJobQueueConsumer against Redis', () => {
     await producer.add(entryId, { jobId }, { jobId: entryId });
   };
 
-  const startConsumer = (
-    concurrency: number,
-    execute: (entry: JobQueueEntry) => Promise<unknown>,
-  ): BullMqJobQueueConsumer => {
-    consumer = new BullMqJobQueueConsumer(
-      { logger: { warn: vi.fn(), error: vi.fn() } },
-      { redisUrl: container.getConnectionUrl(), concurrency },
+  const startConsumer = (req: {
+    concurrency: number;
+    execute: (entry: JobQueueEntry) => Promise<unknown>;
+    error?: (message: unknown, context?: string) => void;
+    lockDurationMs?: number;
+    stalledIntervalMs?: number;
+  }): BullMqJobQueueConsumer => {
+    const consumer = new BullMqJobQueueConsumer(
+      { logger: { warn: vi.fn(), error: req.error ?? vi.fn() } },
+      {
+        redisUrl: container.getConnectionUrl(),
+        concurrency: req.concurrency,
+        lockDurationMs: req.lockDurationMs ?? LONG_MS,
+        stalledIntervalMs: req.stalledIntervalMs ?? LONG_MS,
+      },
     );
-    consumer.start({ execute });
+    consumers.push(consumer);
+    consumer.start({ execute: req.execute });
     return consumer;
   };
 
@@ -43,8 +56,9 @@ describe('BullMqJobQueueConsumer against Redis', () => {
     producer = new Queue(JOB_QUEUE_NAME, { connection: { url: container.getConnectionUrl() } });
   });
   afterEach(async () => {
-    await consumer?.close();
-    consumer = undefined;
+    await Promise.all([...consumers.map((c) => c.close()), ...workers.map((w) => w.close(true))]);
+    consumers = [];
+    workers = [];
     await producer.obliterate({ force: true });
   });
   afterAll(async () => {
@@ -52,38 +66,42 @@ describe('BullMqJobQueueConsumer against Redis', () => {
     await container.stop();
   });
 
-  it('hands each entry to execute with its job id and attempt', async () => {
+  it('hands each entry to execute with its job id, run and attempt', async () => {
     const seen: JobQueueEntry[] = [];
-    startConsumer(1, (entry) => {
-      seen.push(entry);
-      return Promise.resolve();
+    startConsumer({
+      concurrency: 1,
+      execute: (entry) => {
+        seen.push(entry);
+        return Promise.resolve();
+      },
     });
 
     await enqueue(JOB_ID, 2, 3);
 
-    await expect.poll(() => seen, POLL).toEqual([{ jobId: JOB_ID, attempt: 2 }]);
+    await expect.poll(() => seen, POLL).toEqual([{ jobId: JOB_ID, run: 3, attempt: 2 }]);
   });
 
   it('takes an entry queued before runs existed (`<jobId>_<attempt>`)', async () => {
     const seen: JobQueueEntry[] = [];
-    startConsumer(1, (entry) => {
-      seen.push(entry);
-      return Promise.resolve();
+    startConsumer({
+      concurrency: 1,
+      execute: (entry) => {
+        seen.push(entry);
+        return Promise.resolve();
+      },
     });
 
     await producer.add(`${JOB_ID}_2`, { jobId: JOB_ID }, { jobId: `${JOB_ID}_2` });
 
-    await expect.poll(() => seen, POLL).toEqual([{ jobId: JOB_ID, attempt: 2 }]);
+    await expect.poll(() => seen, POLL).toEqual([{ jobId: JOB_ID, run: 1, attempt: 2 }]);
   });
 
   it('drops a malformed entry with an error log and does not run it', async () => {
     const error = vi.fn<(message: unknown, context?: string) => void>();
     const seen: JobQueueEntry[] = [];
-    consumer = new BullMqJobQueueConsumer(
-      { logger: { warn: vi.fn(), error } },
-      { redisUrl: container.getConnectionUrl(), concurrency: 1 },
-    );
-    consumer.start({
+    startConsumer({
+      concurrency: 1,
+      error,
       execute: (entry) => {
         seen.push(entry);
         return Promise.resolve();
@@ -96,7 +114,7 @@ describe('BullMqJobQueueConsumer against Redis', () => {
     await producer.add('mismatch', { jobId: JOB_ID }, { jobId: otherId });
     await enqueue(SECOND_JOB_ID);
 
-    await expect.poll(() => seen, POLL).toEqual([{ jobId: SECOND_JOB_ID, attempt: 1 }]);
+    await expect.poll(() => seen, POLL).toEqual([{ jobId: SECOND_JOB_ID, run: 1, attempt: 1 }]);
     expect(error.mock.calls).toEqual([
       [{ entryId: 'not-an-entry-id' }, 'Dropped a malformed queue entry'],
       [{ entryId: otherId }, 'Dropped a malformed queue entry'],
@@ -105,9 +123,12 @@ describe('BullMqJobQueueConsumer against Redis', () => {
 
   it('Failed attempt is not redelivered', async () => {
     let calls = 0;
-    startConsumer(1, () => {
-      calls += 1;
-      return Promise.resolve({ outcome: 'failed' });
+    startConsumer({
+      concurrency: 1,
+      execute: () => {
+        calls += 1;
+        return Promise.resolve({ outcome: 'failed' });
+      },
     });
 
     await enqueue(JOB_ID);
@@ -121,12 +142,15 @@ describe('BullMqJobQueueConsumer against Redis', () => {
     let running = 0;
     let maxRunning = 0;
     let done = 0;
-    startConsumer(2, async () => {
-      running += 1;
-      maxRunning = Math.max(maxRunning, running);
-      await new Promise((resolve) => setTimeout(resolve, 200));
-      running -= 1;
-      done += 1;
+    startConsumer({
+      concurrency: 2,
+      execute: async () => {
+        running += 1;
+        maxRunning = Math.max(maxRunning, running);
+        await new Promise((resolve) => setTimeout(resolve, 200));
+        running -= 1;
+        done += 1;
+      },
     });
 
     for (let i = 0; i < 5; i += 1) await enqueue(randomUUID());
@@ -138,11 +162,14 @@ describe('BullMqJobQueueConsumer against Redis', () => {
   it('stops taking entries on close and waits for running ones', async () => {
     let release: () => void = () => undefined;
     const started: string[] = [];
-    const running = startConsumer(1, (entry) => {
-      started.push(entry.jobId);
-      return new Promise<void>((resolve) => {
-        release = resolve;
-      });
+    const running = startConsumer({
+      concurrency: 1,
+      execute: (entry) => {
+        started.push(entry.jobId);
+        return new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      },
     });
     await enqueue(FIRST_JOB_ID);
     await expect.poll(() => started.length, POLL).toBe(1);
@@ -157,7 +184,70 @@ describe('BullMqJobQueueConsumer against Redis', () => {
 
     release();
     await closing;
-    consumer = undefined;
     expect(started).toEqual([FIRST_JOB_ID]);
+  });
+
+  it('Each entry goes to one consumer', async () => {
+    const ENTRIES = 40;
+    const seenBy: Record<'first' | 'second', string[]> = { first: [], second: [] };
+    const take =
+      (who: 'first' | 'second') =>
+      async (entry: JobQueueEntry): Promise<void> => {
+        seenBy[who].push(entry.jobId);
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      };
+    startConsumer({ concurrency: 3, execute: take('first') });
+    startConsumer({ concurrency: 3, execute: take('second') });
+    const jobIds = Array.from({ length: ENTRIES }, () => randomUUID());
+
+    for (const jobId of jobIds) await enqueue(jobId);
+
+    await expect
+      .poll(() => seenBy.first.length + seenBy.second.length, POLL)
+      .toBeGreaterThanOrEqual(ENTRIES);
+    // Let a wrongly doubled delivery show up before counting.
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect([...seenBy.first, ...seenBy.second].sort()).toEqual([...jobIds].sort());
+  });
+
+  it('Stalled entry is not run again', async () => {
+    // A worker that lost its hold: it takes the entry, never renews its lock and never finishes
+    // (as a crashed process would leave it). It does not check for stalled entries itself.
+    const holding: string[] = [];
+    workers.push(
+      new Worker(
+        JOB_QUEUE_NAME,
+        (entry) => {
+          holding.push(entry.id ?? '');
+          return new Promise<void>(() => undefined);
+        },
+        {
+          connection: { url: container.getConnectionUrl() },
+          concurrency: 1,
+          lockDuration: 500,
+          skipLockRenewal: true,
+          skipStalledCheck: true,
+          maxStalledCount: 0,
+        },
+      ),
+    );
+    await enqueue(JOB_ID);
+    await expect.poll(() => holding.length, POLL).toBe(1);
+
+    const executed: JobQueueEntry[] = [];
+    startConsumer({
+      concurrency: 1,
+      lockDurationMs: 500,
+      stalledIntervalMs: 200,
+      execute: (entry) => {
+        executed.push(entry);
+        return Promise.resolve();
+      },
+    });
+
+    const entryId = JobQueueEntryId.encode({ jobId: JOB_ID, run: 1, attempt: 1 });
+    await expect.poll(() => producer.getJobState(entryId), POLL).toBe('failed');
+    expect(executed).toEqual([]);
+    expect(holding).toEqual([entryId]);
   });
 });
