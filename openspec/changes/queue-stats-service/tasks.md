@@ -10,10 +10,10 @@ group 4 runs last, alone.
 
 Owns: `packages/contracts/src/jobs/queue-stats.ts`, `packages/contracts/src/jobs/queue-stats.test.ts`, `packages/contracts/src/jobs/index.ts`, `apps/job-ui/src/locales/en.ts` · Depends on: none · Parallel with: none
 
-- [ ] 1.1 Write failing tests in `queue-stats.test.ts` for `QueueStats`: a full valid body parses; a negative count, a non-integer count, a negative `perMinute` and a zero or missing `windowMinutes` are rejected. Run `npm run test:unit -w packages/contracts` and see them fail
-- [ ] 1.2 Add `STATS_ROUTE` (`/v1/stats`) and the `QueueStats` schema and type (design "Contract"), export them from `jobs/index.ts`; verify 1.1 passes
-- [ ] 1.3 Add the locale strings `frame.apiOnline` ("API online"), `frame.apiOffline` ("API offline") and `list.stats.perMinute` ("/min"); verify `npm run typecheck` passes
-- [ ] 1.4 Run the `test-case-reviewer` subagent on `packages/contracts` unit tests (`src/jobs/queue-stats.test.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 1.1 Write failing tests in `queue-stats.test.ts` for `QueueStats`: a full valid body parses; a negative count, a non-integer count, a negative `perMinute` and a zero or missing `windowMinutes` are rejected. Run `npm run test:unit -w packages/contracts` and see them fail
+- [x] 1.2 Add `STATS_ROUTE` (`/v1/stats`) and the `QueueStats` schema and type (design "Contract"), export them from `jobs/index.ts`; verify 1.1 passes
+- [x] 1.3 Add the locale strings `frame.apiOnline` ("API online"), `frame.apiOffline` ("API offline") and `list.stats.perMinute` ("/min"); verify `npm run typecheck` passes
+- [x] 1.4 Run the `test-case-reviewer` subagent on `packages/contracts` unit tests (`src/jobs/queue-stats.test.ts`); add the missing cases it reports or note why they belong elsewhere
 
 ## 2. Statistics route in job-service
 
