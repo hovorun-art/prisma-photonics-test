@@ -147,6 +147,25 @@ the matches and sort them, and `COUNT` reads every match. Fine at this task's vo
 was added, the demo seed's volume mode measures it, and sort order and cursor paging are planned
 as optional polish changes that will redesign the indexes around the sort key.
 
+**Queue statistics: a separate route, counted from Postgres.** The task asks for a "health check
+with queue statistics". `GET /health` stays a plain liveness answer of its own process, so the
+container healthchecks never depend on Postgres; the statistics are a separate public route,
+`GET /v1/stats`. They count job state in Postgres, the source of truth, not BullMQ's queue counts
+in Redis: the numbers then agree with the jobs list, and "failed" means failed for good (a failed
+attempt that will be retried is back in `pending`). The answer holds the jobs pending, processing
+and scheduled now; the jobs completed and failed within a rolling recent window (default 24 h);
+and the throughput, jobs completed within a short window (default 5 min) divided by its minutes.
+Both windows are config and are part of the answer, so a client can label them. One `SELECT` of
+`count(*) FILTER (...)` columns gives every number from the same snapshot in one round trip; a new
+`(status, completed_at)` index keeps the windowed counts from scanning every finished job, since
+the table only grows until jobs are deleted. job-ui polls the route at the jobs list's interval,
+and the header's "API online / offline" pill reads the same request. *Alternatives:* adding the
+counts to `/health` (couples healthchecks to the database); BullMQ's `getJobCounts` (cheap, but
+knows only queue entries, not final failures or history); a server-side cache of the counts.
+*Trade-off:* one counting query per open UI per poll interval, with no cache; a short window makes
+the throughput jumpy. The demo seed's volume mode measures the query, and a few seconds of cache is
+the next step if it matters.
+
 **Limits in the shared contract, page sizes in config.** Priority and max-attempts ranges and
 defaults and the email field lengths are constants in the shared Zod schemas, so the API and the
 UI form validate with the same rules. Values that operators tune (page sizes, enqueue timeout) are
@@ -161,7 +180,8 @@ and one request per open page per interval; SSE is the planned upgrade if time a
 
 **job-ui: the whole design laid out now, unbuilt parts disabled.** Filters, search, Cancel/Retry,
 queue statistics, the health pill, scheduling and idempotency fields are in place but disabled with
-a "Coming soon" tooltip; each later change enables its part. *Why:* reviewers see the target UI,
+a "Coming soon" tooltip; each later change enables its part (the statistics cards and the API
+status pill are live since `queue-stats-service`). *Why:* reviewers see the target UI,
 and later changes only wire behaviour. *Trade-off:* visible controls that do nothing yet.
 
 **job-ui: the form validates with the API's own schema.** The submit form uses `react-hook-form`

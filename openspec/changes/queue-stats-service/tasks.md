@@ -51,10 +51,10 @@ Owns: `apps/job-ui/src/features/jobs/api/jobs-api.ts`, `apps/job-ui/src/features
 
 Owns: `.env.example`, `DECISIONS.md`, `README.md`, `tests/system-e2e/jobs.spec.ts` · Depends on: 2, 3 · Parallel with: none
 
-- [ ] 4.1 Document `JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES` and `JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES` with their defaults in `.env.example`; verify `npm run dev` starts job-service with them commented out
-- [ ] 4.2 Write a system e2e check in `tests/system-e2e/jobs.spec.ts`: `GET /v1/stats` through the stack answers a body matching `QueueStats`; on the jobs list the header pill reads "API online" and the cards show numbers; after an email job is submitted and completes, the Completed card value grows. Verify `npm run test:e2e` passes
-- [ ] 4.3 Record in `DECISIONS.md`: separate `GET /v1/stats` instead of extending `/health` (healthchecks stay independent of Postgres), Postgres as the only source, the window definitions and their config, the `(status, completed_at)` index, no server-side cache; add a `GET /v1/stats` example to `README.md`. Verify the text matches decisions.md
-- [ ] 4.4 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run format:check`) and verify they all pass
+- [x] 4.1 Document `JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES` and `JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES` with their defaults in `.env.example`; verify `npm run dev` starts job-service with them commented out
+- [x] 4.2 Write a system e2e check in `tests/system-e2e/jobs.spec.ts`: `GET /v1/stats` through the stack answers a body matching `QueueStats`; on the jobs list the header pill reads "API online" and the cards show numbers; after an email job is submitted and completes, the Completed card value grows. Verify `npm run test:e2e` passes
+- [x] 4.3 Record in `DECISIONS.md`: separate `GET /v1/stats` instead of extending `/health` (healthchecks stay independent of Postgres), Postgres as the only source, the window definitions and their config, the `(status, completed_at)` index, no server-side cache; add a `GET /v1/stats` example to `README.md`. Verify the text matches decisions.md
+- [x] 4.4 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run format:check`) and verify they all pass
 
 ## Workflow follow-up
 
