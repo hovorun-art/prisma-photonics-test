@@ -1,0 +1,2 @@
+PARTIAL
+- Duplicate number formatting: IntlStatsFormat.count() in apps/job-ui/src/features/jobs/model/intl-stats-format.ts re-implements the shared IntlWholeNumberFormat in apps/job-ui/src/lib/whole-number-format.ts (en-US vs en-GB Intl.NumberFormat, accidental difference); make count() delegate to IntlWholeNumberFormat and keep only the one-decimal throughput formatter local
