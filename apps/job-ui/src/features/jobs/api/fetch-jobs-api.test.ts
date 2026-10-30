@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
@@ -72,6 +74,25 @@ describe('FetchJobsApi', () => {
     });
   });
 
+  it('query sends the group id and the page size when given', async () => {
+    const groupId = randomUUID();
+    let search = '';
+    server.use(
+      http.get(`${BASE}/v1/jobs`, ({ request }) => {
+        search = new URL(request.url).search;
+        return HttpResponse.json({ items: [], total: 0 });
+      }),
+    );
+
+    await api.query({ offset: 100, groupId, limit: 100 });
+
+    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({
+      offset: '100',
+      groupId,
+      limit: '100',
+    });
+  });
+
   it('get returns the job of the id', async () => {
     const job = jobFixtures.build();
     server.use(http.get(`${BASE}/v1/jobs/${job.id}`, () => HttpResponse.json(job)));
@@ -82,9 +103,11 @@ describe('FetchJobsApi', () => {
   it('create posts the request and returns the created job', async () => {
     const job = jobFixtures.build();
     let body: unknown = null;
+    let contentType: string | null = null;
     server.use(
       http.post(`${BASE}/v1/jobs`, async ({ request }) => {
         body = await request.json();
+        contentType = request.headers.get('content-type');
         return HttpResponse.json(job, { status: 201 });
       }),
     );
@@ -97,6 +120,7 @@ describe('FetchJobsApi', () => {
 
     await expect(api.create({ request })).resolves.toEqual({ job });
     expect(body).toEqual(request);
+    expect(contentType).toBe('application/json');
   });
 
   it('delete calls the job route and returns the id', async () => {
@@ -159,60 +183,5 @@ describe('FetchJobsApi', () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 200, code: null, message: 'API unreachable' });
-  });
-
-  it('stats turns an error answer into an ApiError with its code', async () => {
-    server.use(
-      http.get(`${BASE}/v1/stats`, () =>
-        HttpResponse.json(
-          { code: 'INTERNAL_ERROR', message: 'Internal server error', details: {} },
-          { status: 500 },
-        ),
-      ),
-    );
-
-    const error: unknown = await api.stats({}).catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(ApiError);
-    expect(error).toMatchObject({ status: 500, code: 'INTERNAL_ERROR' });
-  });
-
-  it('an error body becomes an ApiError with its status, code, message and details', async () => {
-    const id = jobFixtures.build().id;
-    server.use(
-      http.get(`${BASE}/v1/jobs/${id}`, () =>
-        HttpResponse.json(
-          { code: 'JOB_NOT_FOUND', message: 'Job not found', details: { id } },
-          { status: 404 },
-        ),
-      ),
-    );
-
-    const error = await api.get({ id }).catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(ApiError);
-    expect(error).toMatchObject({
-      status: 404,
-      code: 'JOB_NOT_FOUND',
-      message: 'Job not found',
-      details: { id },
-    });
-  });
-
-  it('a network failure becomes an ApiError without a status or code', async () => {
-    server.use(http.get(`${BASE}/v1/jobs`, () => HttpResponse.error()));
-
-    const error = await api.query({ offset: 0 }).catch((e: unknown) => e);
-
-    expect(error).toBeInstanceOf(ApiError);
-    expect(error).toMatchObject({ status: null, code: null, message: 'API unreachable' });
-  });
-
-  it('an answer without an error body becomes an ApiError with the status but no code', async () => {
-    server.use(http.get(`${BASE}/v1/jobs`, () => new HttpResponse('Bad gateway', { status: 502 })));
-
-    const error = await api.query({ offset: 0 }).catch((e: unknown) => e);
-
-    expect(error).toMatchObject({ status: 502, code: null, message: 'API unreachable' });
   });
 });

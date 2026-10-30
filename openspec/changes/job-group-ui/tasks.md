@@ -17,38 +17,40 @@ Groups 2 and 3 could run in parallel; everything else is sequential. Paths below
 Owns: `nginx.conf`, `vite.config.ts`, root `.env.example`, root `docker-compose.yml` (job-ui
 service only), `src/config/ui-config.ts`, `src/locales/en.ts`, `src/features/jobs/api/jobs-api.ts`,
 `src/features/jobs/api/fetch-jobs-api.ts`, `src/features/jobs/api/fetch-jobs-api.test.ts`,
+`src/features/jobs/api/json-api-client.ts`, `src/features/jobs/api/fetch-json-api-client.ts`, `src/features/jobs/api/fetch-json-api-client.test.ts` (the
+fetch, error-body and parse logic both feature APIs share),
 `src/features/jobs/model/status-style.ts`, `src/features/jobs/list/status-badge.tsx`,
 `src/features/jobs/testing/test-providers.tsx`, `src/features/groups/api/*`,
 `src/features/groups/model/*`, `src/features/groups/testing/*` · Depends on: none · Parallel with:
 none
 
-- [ ] 1.1 Route `/api/v1/groups*` to job-group-service: a `location /api/v1/groups` in
+- [x] 1.1 Route `/api/v1/groups*` to job-group-service: a `location /api/v1/groups` in
   `nginx.conf` (port from `JOB_GROUP_SERVICE_PORT`, passed to the job-ui container in
   `docker-compose.yml`), a second Vite proxy key listed before `/api` with target
   `JOB_UI_GROUPS_API_PROXY_TARGET` (`http://localhost:3002` in `.env.example`); verify with
   `npm run dev` that `curl localhost:5173/api/v1/groups` answers job-group-service's page and
   `curl localhost:5173/api/v1/jobs` still answers job-service
-- [ ] 1.2 Write failing `fetch-jobs-api.test.ts` cases: `query` sends `groupId` and `limit` when
+- [x] 1.2 Write failing `fetch-jobs-api.test.ts` cases: `query` sends `groupId` and `limit` when
   given and leaves them out otherwise
-- [ ] 1.3 Add optional `groupId` and `limit` to `QueryJobsApiRequest` and send them in
+- [x] 1.3 Add optional `groupId` and `limit` to `QueryJobsApiRequest` and send them in
   `FetchJobsApi.query`; verify 1.2 passes
-- [ ] 1.4 Write failing `fetch-groups-api.test.ts` (MSW): `query({ offset })` returns the parsed
+- [x] 1.4 Write failing `fetch-groups-api.test.ts` (MSW): `query({ offset })` returns the parsed
   page; `get({ id })` returns the parsed group; a 404 throws `ApiError` with
   `JOB_GROUP_NOT_FOUND`; a network failure throws `ApiError` without a code
-- [ ] 1.5 Add `GroupsApi` (`groups-api.ts`, Request/Response types), `FetchGroupsApi`,
+- [x] 1.5 Add `GroupsApi` (`groups-api.ts`, Request/Response types), `FetchGroupsApi`,
   `GroupsApiContext` and `useGroupsApi`; provide a groups API in `test-providers.tsx`; add
   `groupFixtures` in `src/features/groups/testing/`; verify 1.4 passes
-- [ ] 1.6 Write failing `group-progress.test.ts` for scenarios "Progress of a running group"
+- [x] 1.6 Write failing `group-progress.impl.test.ts` for scenarios "Progress of a running group"
   (3 jobs, 1 completed, 1 failed → 66%, 2 finished, 1 remaining), "Group without jobs" (0%) and
   "Cell colours" (completed → completed, failed and cancelled → failed, every other status →
   remaining)
-- [ ] 1.7 Implement `GroupProgress` (interface + `GroupProgressImpl`) in
+- [x] 1.7 Implement `GroupProgress` (interface + `GroupProgressImpl`) in
   `src/features/groups/model/`; verify 1.6 passes
-- [ ] 1.8 Add `GROUP_STATUS_STYLE` next to `STATUS_STYLE` and let `StatusBadge` show a group
+- [x] 1.8 Add `GROUP_STATUS_STYLE` next to `STATUS_STYLE` and let `StatusBadge` show a group
   status; add `groupJobsPageSize` (100) to `UiConfig`; add the `groups` strings and the "Groups" nav
   label to `locales/en.ts`; verify `npm run typecheck -w @job-queue/job-ui` and the existing
   job-ui tests pass
-- [ ] 1.9 Run the `test-case-reviewer` subagent on job-ui unit tests `fetch-jobs-api.test.ts`,
+- [x] 1.9 Run the `test-case-reviewer` subagent on job-ui unit tests `fetch-jobs-api.test.ts`, `fetch-json-api-client.test.ts`,
   `fetch-groups-api.test.ts` and `group-progress.test.ts`; add the missing cases it reports or note
   why they belong elsewhere
 
