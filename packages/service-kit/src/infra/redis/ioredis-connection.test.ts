@@ -31,10 +31,10 @@ describe('IoRedisConnection', () => {
   it('names the connection and fails each command after one retry', () => {
     create(false);
 
-    expect(Redis.mock.calls[0]).toEqual([
-      params.redisUrl,
-      { connectionName: 'a-service', maxRetriesPerRequest: 1 },
-    ]);
+    expect(Redis).toHaveBeenCalledExactlyOnceWith(params.redisUrl, {
+      connectionName: 'a-service',
+      maxRetriesPerRequest: 1,
+    });
   });
 
   it('logs a connection error instead of throwing it', () => {
@@ -46,7 +46,7 @@ describe('IoRedisConnection', () => {
 
     listener(err);
 
-    expect(logger.warn).toHaveBeenCalledWith({ err }, 'Redis connection error');
+    expect(logger.warn).toHaveBeenCalledExactlyOnceWith({ err }, 'Redis connection error');
   });
 
   it('waits for the first answer when asked to', async () => {
@@ -70,7 +70,7 @@ describe('IoRedisConnection', () => {
     expect(client.disconnect).toHaveBeenCalledOnce();
   });
 
-  it('sends QUIT when connected, so pending replies arrive first', async () => {
+  it('closes through the shared client: QUIT when connected', async () => {
     client.quit.mockResolvedValueOnce('OK');
 
     await create(false).close();
@@ -79,12 +79,11 @@ describe('IoRedisConnection', () => {
     expect(client.disconnect).not.toHaveBeenCalled();
   });
 
-  it('stops reconnecting when it is not connected', async () => {
-    client.status = 'reconnecting';
+  it('a ping that fails alone rejects with that error and keeps the connection', async () => {
+    const failure = new Error('timed out');
+    client.ping.mockRejectedValueOnce(failure);
 
-    await create(false).close();
-
-    expect(client.disconnect).toHaveBeenCalledOnce();
-    expect(client.quit).not.toHaveBeenCalled();
+    await expect(create(false).ping()).rejects.toBe(failure);
+    expect(client.disconnect).not.toHaveBeenCalled();
   });
 });

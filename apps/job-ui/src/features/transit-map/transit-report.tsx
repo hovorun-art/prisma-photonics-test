@@ -8,6 +8,7 @@ import { en } from '@/locales';
 
 import { ComingSoon } from '../app-frame/coming-soon';
 import { JobActions, JobBadges } from '../jobs/details/job-header';
+import { JobLogCard } from '../jobs/details/job-log-card';
 import { JsonCard } from '../jobs/details/json-card';
 import { KeyValueList } from '../jobs/details/key-value-list';
 import { useJobFields } from '../jobs/hooks/use-job-fields';
@@ -165,6 +166,7 @@ export function TransitReport({
           </InfoCard>
         </aside>
       </div>
+      <JobLogCard jobId={job.id} />
     </>
   );
 }

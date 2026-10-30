@@ -1,7 +1,7 @@
 # Job Queue Service
 
 A background job processing system: an API accepts jobs, workers take them from a queue and run
-them, Postgres keeps their state and a web UI shows them. Built as an interview task; design
+them, Postgres keeps their state, ClickHouse keeps each job's log and a web UI shows them. Built as an interview task; design
 trade-offs are in [DECISIONS.md](DECISIONS.md), AI usage in `AI_USAGE.md`.
 
 > Status: email jobs run end to end: submit from the UI or the API, a job-execution-service
@@ -27,19 +27,20 @@ docker compose up --build --wait
 | job-group-service API | http://localhost:3002 |
 | job-group-service docs | http://localhost:3002/docs |
 | job-ui | http://localhost:8080 |
+| ClickHouse (job log store) | http://localhost:8123 |
 
 Scale the workers: `docker compose up --wait --scale job-execution-service=3`.
 Stop and remove everything: `docker compose down -v`.
 
-Local development (Postgres and Redis in Docker, the apps on the host with hot reload):
+Local development (Postgres, Redis and ClickHouse in Docker, the apps on the host with hot reload):
 
 ```bash
 npm ci
 npm run dev        # reads .env.example; a .env next to it overrides any value
 ```
 
-`npm run dev` leaves Postgres and Redis running in Docker; stop them with
-`docker compose stop postgres redis`.
+`npm run dev` leaves Postgres, Redis and ClickHouse running in Docker; stop them with
+`docker compose stop postgres redis clickhouse`.
 
 ## Try it
 
@@ -56,6 +57,15 @@ curl -s -X POST http://localhost:3000/v1/jobs \
 
 # Read it back: within a few seconds it is "completed" with a result {"messageId":"<uuid>"}
 curl -s http://localhost:3000/v1/jobs/<uuid>
+
+# Its log, oldest first: each step from job-service and the worker (entries arrive in batches,
+# about a second after their step). Pass nextCursor as `after` for newer entries only; filter
+# with level (repeat for several); 503 LOG_STORE_UNAVAILABLE while ClickHouse is down
+curl -s 'http://localhost:3000/v1/jobs/<uuid>/logs'
+# {"items":[{"message":"Job submitted","level":"info","attempt":null,"source":"job-service",...},
+#           {"message":"Attempt picked up","attempt":1,"source":"job-execution-service",...},...],
+#  "nextCursor":"<cursor>"}
+curl -s 'http://localhost:3000/v1/jobs/<uuid>/logs?after=<cursor>&level=warning&level=error'
 
 # Query the newest jobs
 curl -s 'http://localhost:3000/v1/jobs?limit=20&offset=0'

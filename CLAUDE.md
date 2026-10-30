@@ -158,6 +158,8 @@ apps/job-service            Job bounded context (owns the Job aggregate and job 
                             Swagger at /docs, the shared error filter, the /internal guard, the job API
                             (/v1/jobs: create, get, query, delete; /internal/v1/jobs: get, update)
                             over one JobService; jobs table via Prisma, BullMQ queue behind JobQueue.
+                            Job log: GET /v1/jobs/:id/logs (JobLogService); a JobLogWriter moves
+                            entries from the Redis Stream `job-log` into ClickHouse (JobLogStore).
                             src/{domain,infra,app}/ + main.ts; prisma/ (schema, migrations)
 apps/job-execution-service  Job Execution context: takes queued attempts (BullMQ behind JobQueueConsumer),
                             reads and reports jobs through job-service's internal API (JobRepository),
@@ -187,7 +189,9 @@ packages/contracts          Zod schemas and inferred types: health response, err
                             job group (groups/job-group.ts)
 packages/service-kit        shared NestJS pieces for the backends: NestServiceBootstrap, core config
                             (NODE_ENV, LOG_LEVEL, port) and base config (+ REDIS_URL,
-                            INTERNAL_SERVICE_TOKEN), logging with redaction, Redis module, health
+                            INTERNAL_SERVICE_TOKEN, JOB_LOG_STREAM_MAX_LENGTH), logging with
+                            redaction and the job log destination (pino lines naming a job go to
+                            the Redis Stream `job-log`), Redis module, health
                             module, config module, the ErrorResponseFilter, the Swagger setup step and
                             DatabaseShutdown
 tests/support               test-only helpers for the integration and e2e tests (Redis and Postgres
@@ -197,13 +201,14 @@ tests/system-e2e            Playwright suite against the full compose stack
 tooling/                    shared tsconfig, ESLint (layer and class rules) and Vitest presets
 Dockerfile                  one multi-stage file: job-service, job-execution-service, job-group-service,
                             migrate, job-group-service-migrate, job-ui (nginx)
-docker-compose.yml          postgres, redis, migrate and job-group-service-migrate (one-shot),
-                            job-service, job-execution-service, job-group-service, job-ui
+docker-compose.yml          postgres, redis, clickhouse, migrate and job-group-service-migrate
+                            (one-shot), job-service, job-execution-service, job-group-service, job-ui
 ```
 - Postgres is the source of truth for job state and only job-service touches the jobs table
   (job-group-service has its own schema and reads jobs only through job-service's public API);
   job-execution-service has no database access and will change job state only through
-  job-service's `/internal` API (service token). Redis only holds the queue. BullMQ is used only
+  job-service's `/internal` API (service token). Redis holds the queue and the job log stream;
+  ClickHouse holds job log entries (owned by job-service). BullMQ is used only
   through our queue interface; how it maps to Postgres state is in `DECISIONS.md` (queue entries
   carry only the job id, one entry per attempt).
 - Health checks report only their own process (`GET /health` → 200 `{ "status": "ok" }`), never
@@ -272,7 +277,7 @@ validated at the edge (HTTP and queue consumers); inner layers trust their types
 closed list `ERROR_CODES` in `packages/kernel` (a code outside it does not compile; contracts build
 the `ErrorCode` schema from the same list), plus structured `details`. A new failure adds its code to
 `ERROR_CODES` first (today: `INTERNAL_UNAUTHORIZED`, `ROUTE_NOT_FOUND`, `VALIDATION_FAILED`,
-`PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `JOB_NOT_FOUND`, `JOB_STATUS_CONFLICT`, `QUEUE_UNAVAILABLE`, `JOB_SERVICE_UNAVAILABLE`, `JOB_GROUP_NOT_FOUND`, `JOB_GROUP_NOT_EMPTY`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table (shared, in service-kit). Code handles errors by class or `code`, never by
+`PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `JOB_NOT_FOUND`, `JOB_STATUS_CONFLICT`, `QUEUE_UNAVAILABLE`, `JOB_SERVICE_UNAVAILABLE`, `JOB_GROUP_NOT_FOUND`, `JOB_GROUP_NOT_EMPTY`, `LOG_STORE_UNAVAILABLE`, `JOB_LOG_STREAM_UNAVAILABLE`, `JOB_LOG_STREAM_GROUP_MISSING`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table (shared, in service-kit). Code handles errors by class or `code`, never by
 message text. `domain/` interfaces declare these errors and `infra/` code throws them; one exception filter per app maps
 codes to HTTP status and a uniform response body (`code`, `message`, `details`). Never throw strings
 or bare `Error` for expected failures; unknown errors, including framework errors with no code of

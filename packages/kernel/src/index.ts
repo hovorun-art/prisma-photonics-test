@@ -61,6 +61,16 @@ export type {
   TodayDepartureDayResponse,
 } from './domain/jobs/departure-day.js';
 export { UtcDepartureDay, type UtcDepartureDayDeps } from './infra/utc-departure-day.js';
+export type {
+  CheckScheduleLimitRequest,
+  CheckScheduleLimitResponse,
+  ScheduleLimit,
+} from './domain/jobs/schedule-limit.js';
+export {
+  DaysAheadScheduleLimit,
+  type DaysAheadScheduleLimitDeps,
+  type DaysAheadScheduleLimitParams,
+} from './infra/days-ahead-schedule-limit.js';
 export { SystemClock } from './infra/system-clock.js';
 export { UniformRandom } from './infra/uniform-random.js';
 export { SystemRandom } from './infra/system-random.js';

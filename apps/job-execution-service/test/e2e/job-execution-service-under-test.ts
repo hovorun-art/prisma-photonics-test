@@ -9,7 +9,11 @@ import {
   SLEEPER,
   type Sleeper,
 } from '@job-queue/kernel';
-import { REDIS_CONNECTION, type RedisConnection } from '@job-queue/service-kit';
+import {
+  type JobLogDestination,
+  REDIS_CONNECTION,
+  type RedisConnection,
+} from '@job-queue/service-kit';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Logger as PinoLogger } from 'nestjs-pino';
@@ -75,6 +79,7 @@ interface JobExecutionServiceUnderTestDeps {
   jobs: DeepMockProxy<JobRepository>;
   random: DeepMockProxy<Random>;
   sleeper: DeepMockProxy<Sleeper>;
+  jobLog: DeepMockProxy<JobLogDestination>;
 }
 
 /**
@@ -100,6 +105,7 @@ export class JobExecutionServiceUnderTest implements Closable {
   readonly jobs: DeepMockProxy<JobRepository>;
   readonly random: DeepMockProxy<Random>;
   readonly sleeper: DeepMockProxy<Sleeper>;
+  readonly jobLog: DeepMockProxy<JobLogDestination>;
 
   private constructor(private readonly d: JobExecutionServiceUnderTestDeps) {
     this.app = d.app;
@@ -110,6 +116,7 @@ export class JobExecutionServiceUnderTest implements Closable {
     this.jobs = d.jobs;
     this.random = d.random;
     this.sleeper = d.sleeper;
+    this.jobLog = d.jobLog;
   }
 
   static async start(req: StartRequest = {}): Promise<JobExecutionServiceUnderTest> {
@@ -143,11 +150,13 @@ export class JobExecutionServiceUnderTest implements Closable {
     const jobs = mockDeep<JobRepository>();
     const random = mockDeep<Random>();
     const sleeper = mockDeep<Sleeper>();
+    const jobLog = mockDeep<JobLogDestination>();
     const moduleRef = await Test.createTestingModule({
       imports: [
         AppModule.forRoot({
           config: parsed.config,
           instanceId: INSTANCE_ID,
+          jobLog,
           logDestination: { write: (line: string) => logs.push(JSON.parse(line) as LogLine) },
         }),
       ],
@@ -188,6 +197,7 @@ export class JobExecutionServiceUnderTest implements Closable {
       jobs,
       random,
       sleeper,
+      jobLog,
     });
   }
 
@@ -205,6 +215,7 @@ export class JobExecutionServiceUnderTest implements Closable {
     mockReset(this.jobs);
     mockReset(this.random);
     mockReset(this.sleeper);
+    mockReset(this.jobLog);
   }
 
   /** Closes the app, as a shutdown would; stub the consumer's close and the grace period first. */

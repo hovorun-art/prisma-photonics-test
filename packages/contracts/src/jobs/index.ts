@@ -53,6 +53,18 @@ export {
 } from './job.js';
 export { JOB_ERROR_CODES } from './job-error-codes.js';
 export {
+  JOB_LOG_LEVELS,
+  JOB_LOG_ROUTE,
+  JOB_LOG_STREAM_NAME,
+  JobLogCursor,
+  JobLogEntry,
+  JobLogLevel,
+  JobLogSource,
+  JobLogStreamMessage,
+  QueryJobLogRequest,
+  QueryJobLogResponse,
+} from './job-log.js';
+export {
   JOB_CANCELLATIONS_CHANNEL,
   JOB_QUEUE_NAME,
   JobCancellationMessage,

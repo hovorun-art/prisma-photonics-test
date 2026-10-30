@@ -86,6 +86,7 @@ import { StatsController } from './stats.controller.js';
       inject: [JOB_COUNTS, CLOCK, JOB_SERVICE_CONFIG],
     },
   ],
+  exports: [JOB_REPOSITORY],
 })
 export class JobsModule implements OnApplicationShutdown {
   constructor(@Inject(JOB_QUEUE) private readonly queue: JobQueue) {}

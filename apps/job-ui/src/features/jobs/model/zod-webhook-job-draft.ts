@@ -22,12 +22,18 @@ import type {
   SchemaJobFormDraftResponse,
 } from './job-form-draft';
 import { LocaleExecutionFieldMessages } from './execution-field-messages';
+import type { RunSchedule, RunScheduleValues } from './run-schedule';
 import { ValidationIssueMapper } from './validation-issue-mapper';
 import {
   WEBHOOK_FORM_FIELDS,
   type WebhookFormField,
   type WebhookFormValues,
 } from './webhook-form-values';
+import { ZodRunScheduleForm } from './zod-run-schedule-form';
+
+export interface ZodWebhookJobDraftDeps {
+  readonly runSchedule: RunSchedule;
+}
 
 /**
  * The webhook job's submit form for the shared Zod schemas, with the strings from `locales/en.ts`.
@@ -37,7 +43,13 @@ export class ZodWebhookJobDraft implements JobFormDraft<WebhookFormValues, Webho
   readonly fields = WEBHOOK_FORM_FIELDS;
   private readonly execution = new LocaleExecutionFieldMessages();
   private readonly issues = new ValidationIssueMapper({ fields: WEBHOOK_FORM_FIELDS });
-  private readonly form = this.formSchema();
+  private readonly runScheduleForm: ZodRunScheduleForm;
+  private readonly form: SchemaJobFormDraftResponse<WebhookFormValues>['schema'];
+
+  constructor(private readonly d: ZodWebhookJobDraftDeps) {
+    this.runScheduleForm = new ZodRunScheduleForm({ runSchedule: d.runSchedule });
+    this.form = this.runScheduleForm.schema({ request: this.formSchema() }).schema;
+  }
 
   emptyValues({
     execution,
@@ -78,6 +90,8 @@ export class ZodWebhookJobDraft implements JobFormDraft<WebhookFormValues, Webho
       case 'priority':
       case 'maxAttempts':
         return this.execution.message({ field });
+      case 'scheduledAt':
+        return this.d.runSchedule.message({ run: values.run, scheduledAt: values.scheduledAt });
     }
   }
 
@@ -88,15 +102,19 @@ export class ZodWebhookJobDraft implements JobFormDraft<WebhookFormValues, Webho
   previewRequest({
     values,
   }: PreviewRequestJobFormDraftRequest<WebhookFormValues>): PreviewRequestJobFormDraftResponse {
-    const { body, ...payload } = values.payload;
-    if (this.isBlank(body)) return { request: { ...values, payload } };
+    const request = this.runScheduleForm.preview({ values }).values;
+    const { body, ...payload } = request.payload;
+    if (this.isBlank(body)) return { request: { ...request, payload } };
     const parsed = this.parse(body);
     const shown = this.isObject(parsed) ? parsed : body;
-    return { request: { ...values, payload: { ...payload, body: shown } } };
+    return { request: { ...request, payload: { ...payload, body: shown } } };
   }
 
   /** The contract's webhook request, with the body parsed from the typed text first. */
-  private formSchema(): z.ZodType<z.output<typeof CreateWebhookJobRequest>, WebhookFormValues> {
+  private formSchema(): z.ZodType<
+    z.output<typeof CreateWebhookJobRequest>,
+    Omit<WebhookFormValues, keyof RunScheduleValues>
+  > {
     const body = z
       .string()
       .transform((text, ctx) => {

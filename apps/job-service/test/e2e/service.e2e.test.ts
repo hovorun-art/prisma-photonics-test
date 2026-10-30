@@ -54,6 +54,7 @@ describe('job-service health, docs and shutdown', () => {
 
     it('job-service stopped', async () => {
       const stopping = await JobServiceUnderTest.start();
+      expect(stopping.jobLogDestination.open).toHaveBeenCalledOnce();
       const databaseClose = vi.spyOn(stopping.app.get(PrismaDatabase), 'close');
       const health = stopping.url(HEALTH_ROUTE.path);
       expect((await fetch(health)).status).toBe(200);
@@ -63,6 +64,16 @@ describe('job-service health, docs and shutdown', () => {
       expect(databaseClose).toHaveBeenCalledOnce();
       expect(stopping.queue.close).toHaveBeenCalledOnce();
       expect(stopping.redis.close).toHaveBeenCalledOnce();
+      expect(stopping.jobLogDestination.close).toHaveBeenCalledOnce();
+      expect(stopping.jobLogStoreMock?.close).toHaveBeenCalledOnce();
+      expect(stopping.jobLogStream.close).toHaveBeenCalledOnce();
+      const destinationClosed = stopping.jobLogDestination.close.mock.invocationCallOrder[0];
+      expect(stopping.jobLogStoreMock?.close.mock.invocationCallOrder[0]).toBeLessThan(
+        destinationClosed ?? 0,
+      );
+      expect(stopping.jobLogStream.close.mock.invocationCallOrder[0]).toBeLessThan(
+        destinationClosed ?? 0,
+      );
       await expect(fetch(health)).rejects.toThrow();
     }, 180_000);
   });
@@ -137,6 +148,24 @@ describe('job-service health, docs and shutdown', () => {
         (match) => match[1] ?? '',
       );
       expect(refs.filter((name) => !Object.hasOwn(components?.schemas ?? {}, name))).toEqual([]);
+    });
+
+    it('Log route in the API docs', async () => {
+      const { paths, components } = await docs();
+      const log = paths[`${JOBS_ROUTE}/{id}/logs`]?.get;
+      const schema = log?.responses['200']?.content?.['application/json']?.schema as
+        { $ref?: string } | undefined;
+      const name = schema?.$ref?.replace('#/components/schemas/', '') ?? '';
+      const resolved = components?.schemas?.[name] as
+        { properties: Record<string, unknown> } | undefined;
+
+      expect(log?.parameters?.map((parameter) => parameter.name).sort()).toEqual([
+        'after',
+        'id',
+        'level',
+        'limit',
+      ]);
+      expect(Object.keys(resolved?.properties ?? {}).sort()).toEqual(['items', 'nextCursor']);
     });
 
     it('Docs list the statistics route', async () => {

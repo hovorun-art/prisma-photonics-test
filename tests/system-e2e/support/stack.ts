@@ -8,6 +8,10 @@ export interface Stack {
   containers(req: ContainersStackRequest): Promise<ContainersStackResponse>;
   /** The log lines of one service, one entry per line, without the compose prefix. */
   logs(req: LogsStackRequest): Promise<LogsStackResponse>;
+  /** Stops one service's containers, keeping their data. */
+  stop(req: StopStackRequest): Promise<StopStackResponse>;
+  /** Starts a stopped service again, returning once it is healthy. */
+  start(req: StartStackRequest): Promise<StartStackResponse>;
 }
 
 export interface UpStackRequest {
@@ -41,3 +45,13 @@ export interface LogsStackRequest {
 export interface LogsStackResponse {
   lines: string[];
 }
+
+export interface StopStackRequest {
+  service: string;
+}
+export type StopStackResponse = Record<string, never>;
+
+export interface StartStackRequest {
+  service: string;
+}
+export type StartStackResponse = Record<string, never>;

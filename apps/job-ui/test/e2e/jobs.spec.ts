@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto';
 
-import type { ChangeJobStatusRequest, CreateJobRequest, Job } from '@job-queue/contracts';
+import type {
+  ChangeJobStatusRequest,
+  CreateJobRequest,
+  Job,
+  JobLogEntry,
+} from '@job-queue/contracts';
 import { expect, type Page, test } from '@playwright/test';
 
 import { API_BASE_PATH } from '../../src/config/api-base-path';
+import { jobLogEntryFixtures } from '../../src/features/jobs/testing/job-fixtures';
 import { en } from '../../src/locales/en';
 import { type E2eJobs, PendingEmailE2eJobs } from './e2e-jobs';
 
@@ -14,8 +20,8 @@ interface MockJobServiceCalls {
 }
 
 interface MockJobService {
-  /** Answers job-ui's API calls from `jobs`; returns what it was asked to change. */
-  install(req: { page: Page; jobs: Job[] }): Promise<MockJobServiceCalls>;
+  /** Answers job-ui's API calls from `jobs` (and job logs from `logs`); returns what it was asked to change. */
+  install(req: { page: Page; jobs: Job[]; logs?: JobLogEntry[] }): Promise<MockJobServiceCalls>;
   job(req: Partial<Job>): Job;
 }
 
@@ -26,7 +32,11 @@ interface MockJobService {
 class RoutedJobService implements MockJobService {
   private readonly jobs: E2eJobs = new PendingEmailE2eJobs();
 
-  async install(req: { page: Page; jobs: Job[] }): Promise<MockJobServiceCalls> {
+  async install(req: {
+    page: Page;
+    jobs: Job[];
+    logs?: JobLogEntry[];
+  }): Promise<MockJobServiceCalls> {
     const { jobs } = req;
     const deleted: string[] = [];
     const statusChanges: MockJobServiceCalls['statusChanges'] = [];
@@ -37,7 +47,9 @@ class RoutedJobService implements MockJobService {
       const id = new URL(request.url()).pathname.split('/v1/jobs/')[1];
       if (request.method() === 'POST') {
         const body = request.postDataJSON() as CreateJobRequest;
-        const job = this.job({ id: CREATED_ID, ...body });
+        // Like job-service: a job submitted with a time to run waits as `scheduled`.
+        const status = body.scheduledAt === undefined ? 'pending' : 'scheduled';
+        const job = this.job({ id: CREATED_ID, status, ...body });
         jobs.unshift(job);
         return route.fulfill({ status: 201, json: job });
       }
@@ -84,6 +96,20 @@ class RoutedJobService implements MockJobService {
         (j) => (status === null || j.status === status) && (type === null || j.type === type),
       );
       return route.fulfill({ json: { items: matching, total: matching.length } });
+    });
+    // Registered after the jobs route, so it wins for `/logs`: the entries of every job, by level.
+    await req.page.route(`**${API_BASE_PATH}/v1/jobs/*/logs**`, (route) => {
+      const params = new URL(route.request().url()).searchParams;
+      const levels = params.getAll('level');
+      const after = params.get('after');
+      // The cursor is the index of an entry: only later entries are new.
+      const all = req.logs ?? [];
+      const items = all
+        .filter((_, index) => after === null || index > Number(after))
+        .filter((entry) => levels.length === 0 || levels.includes(entry.level));
+      return route.fulfill({
+        json: { items, nextCursor: all.length === 0 ? after : String(all.length - 1) },
+      });
     });
     return { deleted, statusChanges };
   }
@@ -134,6 +160,37 @@ test('Submit a valid email job: the new job page opens', async ({ page }) => {
 
   await expect(page).toHaveURL(new RegExp(`/jobs/${CREATED_ID}$`));
   await expect(page.getByRole('heading', { level: 1, name: CREATED_ID })).toBeVisible();
+});
+
+test.describe('in a time zone east of UTC', () => {
+  // Tokyo is UTC+9, so a local time and its UTC instant differ.
+  test.use({ timezoneId: 'Asia/Tokyo' });
+
+  test('Submit a scheduled job: the local time is sent in UTC and the job page shows it', async ({
+    page,
+  }) => {
+    await page.clock.setFixedTime(new Date('2026-10-30T10:00:00.000Z'));
+    await api.install({ page, jobs: [] });
+
+    await page.goto('/jobs/new');
+    await page.getByLabel(en.submit.to, { exact: true }).fill('ops@acme.test');
+    await page.getByLabel(en.submit.subject, { exact: true }).fill('Weekly digest');
+    await page.getByLabel(en.submit.body, { exact: true }).fill('Hi team');
+    await page.getByRole('button', { name: en.submit.runLater }).click();
+    await expect(page.getByText(en.submit.scheduleHint('Asia/Tokyo'))).toBeVisible();
+    await page.getByLabel(en.submit.scheduledAt, { exact: true }).fill('2026-10-31T09:30');
+    const posted = page.waitForRequest((request) => request.method() === 'POST');
+    await page.getByRole('button', { name: en.submit.submit }).click();
+
+    expect((await posted).postDataJSON()).toMatchObject({
+      scheduledAt: '2026-10-31T00:30:00.000Z',
+    });
+    await expect(page).toHaveURL(new RegExp(`/jobs/${CREATED_ID}$`));
+    const details = page.getByRole('region', { name: en.job.details });
+    await expect(details).toContainText(`${en.job.fields.scheduledFor}31 Oct, 09:30:00`);
+    const lifecycle = page.getByRole('region', { name: en.job.lifecycle });
+    await expect(lifecycle.getByRole('listitem').first()).toContainText(en.statuses.scheduled);
+  });
 });
 
 test('Delete a finished job: confirming deletes it and opens the jobs list', async ({ page }) => {
@@ -268,4 +325,42 @@ test('Back restores the previous filter: Failed, then Completed, then Back shows
   );
   await expect(page.getByRole('link', { name: FAILED_ID.slice(0, 8) })).toBeVisible();
   await expect(page.getByRole('link', { name: COMPLETED_ID.slice(0, 8) })).toHaveCount(0);
+});
+
+test('Log on the job page: rows stay after a follow-up poll and the level filter works', async ({
+  page,
+}) => {
+  const job = api.job({
+    status: 'completed',
+    attempts: 1,
+    result: { messageId: 'msg_1' },
+  });
+  const logs = [
+    jobLogEntryFixtures.build({ jobId: job.id, message: 'Job submitted', attempt: null }),
+    jobLogEntryFixtures.build({
+      jobId: job.id,
+      message: 'Handler finished',
+      metadata: { durationMs: 42 },
+    }),
+    jobLogEntryFixtures.build({
+      jobId: job.id,
+      message: 'Attempt failed',
+      level: 'error',
+      metadata: { code: 'SEND_FAILED' },
+    }),
+  ];
+  await api.install({ page, jobs: [job], logs });
+
+  const followUp = page.waitForResponse(
+    (response) => response.url().includes('/logs') && response.url().includes('after='),
+  );
+
+  await page.goto(`/jobs/${job.id}`);
+  await followUp;
+  const log = page.getByRole('region', { name: en.log.title });
+
+  await expect(log.getByRole('listitem')).toHaveCount(3);
+  await log.getByRole('button', { name: en.log.levels.error }).click();
+  await expect(log.getByRole('listitem')).toHaveCount(1);
+  await expect(log).toContainText('Attempt failed');
 });

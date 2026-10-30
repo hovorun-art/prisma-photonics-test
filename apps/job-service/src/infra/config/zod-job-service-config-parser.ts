@@ -12,6 +12,14 @@ const DEFAULT_STATS_THROUGHPUT_WINDOW_MINUTES = 5;
 const DEFAULT_RETRY_DELAY_MS = { min: 5_000, max: 30_000, cap: 300_000 };
 const DEFAULT_RECOVERY = { intervalMs: 30_000, minAgeMs: 30_000, batchSize: 100 };
 const DEFAULT_MAX_PROCESSING_MS = { email: 30_000, webhook: 30_000, flightTransit: 60_000 };
+const DEFAULT_JOB_LOG_RETENTION_DAYS = 30;
+const DEFAULT_JOB_LOG_QUERY_DEFAULT_LIMIT = 100;
+const DEFAULT_JOB_LOG_QUERY_MAX_LIMIT = 1_000;
+const DEFAULT_JOB_LOG_BATCH_SIZE = 1_000;
+const DEFAULT_JOB_LOG_FLUSH_INTERVAL_MS = 1_000;
+const DEFAULT_JOB_LOG_STORE_RETRY_DELAY_MS = 500;
+const DEFAULT_JOB_LOG_STORE_RETRY_MAX_DELAY_MS = 30_000;
+const DEFAULT_JOB_LOG_WRITER_LEASE_MS = 60_000;
 
 const baseEnv = new ZodBaseEnvSchema({
   defaultNodeEnv: 'development',
@@ -91,6 +99,43 @@ const JobServiceEnv = baseEnv
       .int()
       .positive()
       .default(DEFAULT_MAX_PROCESSING_MS.flightTransit),
+    CLICKHOUSE_URL: z.url({ protocol: /^https?$/ }),
+    JOB_LOG_RETENTION_DAYS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_JOB_LOG_RETENTION_DAYS),
+    JOB_LOG_QUERY_DEFAULT_LIMIT: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_JOB_LOG_QUERY_DEFAULT_LIMIT),
+    JOB_LOG_QUERY_MAX_LIMIT: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_JOB_LOG_QUERY_MAX_LIMIT),
+    JOB_LOG_BATCH_SIZE: z.coerce.number().int().positive().default(DEFAULT_JOB_LOG_BATCH_SIZE),
+    JOB_LOG_FLUSH_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_JOB_LOG_FLUSH_INTERVAL_MS),
+    JOB_LOG_STORE_RETRY_DELAY_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_JOB_LOG_STORE_RETRY_DELAY_MS),
+    JOB_LOG_STORE_RETRY_MAX_DELAY_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_JOB_LOG_STORE_RETRY_MAX_DELAY_MS),
+    JOB_LOG_WRITER_LEASE_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_JOB_LOG_WRITER_LEASE_MS),
   })
   .superRefine((env, ctx) => {
     paging.check({ env, ctx });
@@ -108,6 +153,19 @@ const JobServiceEnv = baseEnv
         message: 'must not be above JOB_SERVICE_RETRY_CAP_DELAY_MS',
       });
     }
+  })
+  .refine((env) => env.JOB_LOG_QUERY_DEFAULT_LIMIT <= env.JOB_LOG_QUERY_MAX_LIMIT, {
+    path: ['JOB_LOG_QUERY_DEFAULT_LIMIT'],
+    message: 'must not be above JOB_LOG_QUERY_MAX_LIMIT',
+  })
+  .refine((env) => env.JOB_LOG_STORE_RETRY_DELAY_MS <= env.JOB_LOG_STORE_RETRY_MAX_DELAY_MS, {
+    path: ['JOB_LOG_STORE_RETRY_DELAY_MS'],
+    message: 'must not be above JOB_LOG_STORE_RETRY_MAX_DELAY_MS',
+  })
+  // The writer renews its lease between tries; it must outlast the longest wait.
+  .refine((env) => env.JOB_LOG_WRITER_LEASE_MS > env.JOB_LOG_STORE_RETRY_MAX_DELAY_MS, {
+    path: ['JOB_LOG_WRITER_LEASE_MS'],
+    message: 'must be above JOB_LOG_STORE_RETRY_MAX_DELAY_MS',
   })
   .transform((env): JobServiceConfig => ({
     ...baseEnv.toConfig({ env }).config,
@@ -133,6 +191,15 @@ const JobServiceEnv = baseEnv
       webhook: env.JOB_SERVICE_MAX_PROCESSING_MS_WEBHOOK,
       'flight-transit': env.JOB_SERVICE_MAX_PROCESSING_MS_FLIGHT_TRANSIT,
     },
+    clickhouseUrl: env.CLICKHOUSE_URL,
+    jobLogRetentionDays: env.JOB_LOG_RETENTION_DAYS,
+    jobLogQueryDefaultLimit: env.JOB_LOG_QUERY_DEFAULT_LIMIT,
+    jobLogQueryMaxLimit: env.JOB_LOG_QUERY_MAX_LIMIT,
+    jobLogBatchSize: env.JOB_LOG_BATCH_SIZE,
+    jobLogFlushIntervalMs: env.JOB_LOG_FLUSH_INTERVAL_MS,
+    jobLogStoreRetryDelayMs: env.JOB_LOG_STORE_RETRY_DELAY_MS,
+    jobLogStoreRetryMaxDelayMs: env.JOB_LOG_STORE_RETRY_MAX_DELAY_MS,
+    jobLogWriterLeaseMs: env.JOB_LOG_WRITER_LEASE_MS,
   }));
 
 /** Validates the environment with the shared base schema extended by job-service's own fields. */

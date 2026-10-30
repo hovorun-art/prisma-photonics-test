@@ -27,7 +27,7 @@ describe('JobServiceImpl', () => {
   let repository: DeepMockProxy<JobRepository>;
   let queue: DeepMockProxy<JobQueue>;
   let clock: DeepMockProxy<Clock>;
-  let logger: DeepMockProxy<Pick<LoggerService, 'warn'>>;
+  let logger: DeepMockProxy<Pick<LoggerService, 'log' | 'warn' | 'error'>>;
   let pageLimit: DeepMockProxy<PageLimit>;
   let service: JobServiceImpl;
 
@@ -57,7 +57,7 @@ describe('JobServiceImpl', () => {
     repository = mockDeep<JobRepository>();
     queue = mockDeep<JobQueue>();
     clock = mockDeep<Clock>();
-    logger = mockDeep<Pick<LoggerService, 'warn'>>();
+    logger = mockDeep<Pick<LoggerService, 'log' | 'warn' | 'error'>>();
     pageLimit = mockDeep<PageLimit>();
     clock.now.mockReturnValueOnce({ now: new Date(NOW) });
     repository.create.mockImplementationOnce((req) =>
@@ -73,6 +73,15 @@ describe('JobServiceImpl', () => {
     );
     service = new JobServiceImpl({ repository, queue, clock, logger, pageLimit }, PARAMS);
   });
+
+  const error = { code: 'SEND_FAILED', message: 'Mailbox unavailable' };
+
+  /** The repository accepts the next write and returns the job with the changes applied. */
+  const acceptsWrite = (): void => {
+    repository.update.mockImplementationOnce((req) =>
+      Promise.resolve({ job: { ...storedJob(), ...req.changes } as Job }),
+    );
+  };
 
   describe('create', () => {
     const request = {
@@ -92,7 +101,7 @@ describe('JobServiceImpl', () => {
         updatedAt: _updatedAt,
         ...expected
       } = storedJob({ priority: 7, maxAttempts: 4 });
-      expect(repository.create).toHaveBeenCalledWith({ job: expected });
+      expect(repository.create).toHaveBeenCalledExactlyOnceWith({ job: expected });
       expect(job).toEqual({ ...expected, id: JOB_ID, createdAt: NOW, updatedAt: NOW });
     });
 
@@ -118,10 +127,6 @@ describe('JobServiceImpl', () => {
 
       expect(job.status).toBe('pending');
       expect(repository.update).not.toHaveBeenCalled();
-      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
-        expect.any(String),
-      );
     });
 
     it('Job with a future execution time is scheduled', async () => {
@@ -391,9 +396,20 @@ describe('JobServiceImpl', () => {
         [ids[0], 'pending'],
         [ids[1], 'pending'],
       ]);
-      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ jobIds: [ids[0], ids[1]] }),
-        expect.any(String),
+      expect(logger.log.mock.calls).toEqual([
+        [{ jobId: ids[0] }, 'Job submitted'],
+        [{ jobId: ids[1] }, 'Job submitted'],
+      ]);
+      expect(logger.warn).toHaveBeenCalledTimes(2);
+      expect(logger.warn).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ jobId: ids[0], attempt: 1 }),
+        'Job keeps its status: it could not be queued',
+      );
+      expect(logger.warn).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({ jobId: ids[1], attempt: 1 }),
+        'Job keeps its status: it could not be queued',
       );
     });
 
@@ -404,6 +420,8 @@ describe('JobServiceImpl', () => {
 
       await expect(service.createMany({ jobs: [email, webhook] })).rejects.toBe(failure);
       expect(queue.enqueueMany).not.toHaveBeenCalled();
+      expect(logger.log).not.toHaveBeenCalled();
+      expect(logger.log).not.toHaveBeenCalled();
     });
 
     it('Largest allowed bulk', async () => {
@@ -445,6 +463,7 @@ describe('JobServiceImpl', () => {
       });
       expect(repository.createMany).not.toHaveBeenCalled();
       expect(queue.enqueueMany).not.toHaveBeenCalled();
+      expect(logger.log).not.toHaveBeenCalled();
     });
 
     it('Bulk items with and without an execution time', async () => {
@@ -548,6 +567,7 @@ describe('JobServiceImpl', () => {
       });
       expect(repository.create).not.toHaveBeenCalled();
       expect(queue.enqueue).not.toHaveBeenCalled();
+      expect(logger.log).not.toHaveBeenCalled();
     });
   });
 
@@ -624,15 +644,6 @@ describe('JobServiceImpl', () => {
   });
 
   describe('update', () => {
-    const error = { code: 'SEND_FAILED', message: 'Mailbox unavailable' };
-
-    /** The repository accepts the next write and returns the job with the changes applied. */
-    const acceptsWrite = (): void => {
-      repository.update.mockImplementationOnce((req) =>
-        Promise.resolve({ job: { ...storedJob(), ...req.changes } as Job }),
-      );
-    };
-
     it('Start a pending job', async () => {
       acceptsWrite();
       repository.get.mockResolvedValueOnce({
@@ -642,7 +653,7 @@ describe('JobServiceImpl', () => {
 
       const { job } = await service.update({ id: JOB_ID, update: { status: 'processing' } });
 
-      expect(repository.update).toHaveBeenCalledWith({
+      expect(repository.update).toHaveBeenCalledExactlyOnceWith({
         id: JOB_ID,
         expected: { status: 'pending', attempts: 0 },
         changes: { status: 'processing', attempts: 1, startedAt: NOW },
@@ -709,7 +720,7 @@ describe('JobServiceImpl', () => {
         update: { status: 'completed', result: { messageId: 'm-1' } },
       });
 
-      expect(repository.update).toHaveBeenCalledWith({
+      expect(repository.update).toHaveBeenCalledExactlyOnceWith({
         id: JOB_ID,
         expected: { status: 'processing', attempts: 1 },
         changes: {
@@ -737,6 +748,7 @@ describe('JobServiceImpl', () => {
         details: { issues: [expect.objectContaining({ path: ['result', 'messageId'] })] },
       });
       expect(repository.update).not.toHaveBeenCalled();
+      expect(logger.log).not.toHaveBeenCalled();
     });
 
     it('Complete a job that is not processing', async () => {
@@ -763,7 +775,7 @@ describe('JobServiceImpl', () => {
 
       const { job } = await service.update({ id: JOB_ID, update: { status: 'failed', error } });
 
-      expect(repository.update).toHaveBeenCalledWith({
+      expect(repository.update).toHaveBeenCalledExactlyOnceWith({
         id: JOB_ID,
         expected: { status: 'processing', attempts: 1 },
         changes: { status: 'pending', error, completedAt: null },
@@ -835,10 +847,17 @@ describe('JobServiceImpl', () => {
       const { job } = await service.update({ id: JOB_ID, update: { status: 'failed', error } });
 
       expect(job.status).toBe('pending');
-      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
-        expect.objectContaining({ jobId: JOB_ID, attempt: 2 }),
-        expect.any(String),
-      );
+      expect(logger.warn.mock.calls).toEqual([
+        [
+          { jobId: JOB_ID, attempt: 1, code: error.code, message: error.message },
+          'Attempt failed, retry scheduled',
+        ],
+        [
+          expect.objectContaining({ jobId: JOB_ID, attempt: 2 }),
+          'Job keeps its status: it could not be queued',
+        ],
+      ]);
+      expect(logger.log).not.toHaveBeenCalledWith(expect.anything(), 'Attempt queued');
     });
 
     it('Failure on the last attempt', async () => {
@@ -850,7 +869,7 @@ describe('JobServiceImpl', () => {
 
       const { job } = await service.update({ id: JOB_ID, update: { status: 'failed', error } });
 
-      expect(repository.update).toHaveBeenCalledWith({
+      expect(repository.update).toHaveBeenCalledExactlyOnceWith({
         id: JOB_ID,
         expected: { status: 'processing', attempts: 3 },
         changes: { status: 'failed', error, completedAt: NOW },
@@ -1082,10 +1101,172 @@ describe('JobServiceImpl', () => {
       repository.delete.mockResolvedValueOnce({});
 
       await expect(service.delete({ id: JOB_ID })).resolves.toEqual({});
-      expect(repository.delete).toHaveBeenCalledWith({
+      expect(repository.delete).toHaveBeenCalledExactlyOnceWith({
         id: JOB_ID,
         allowedStatuses: FINISHED_JOB_STATUSES,
       });
+    });
+  });
+  describe('job log lines', () => {
+    const request = {
+      type: 'email',
+      payload: { to: 'ada@example.com', subject: 'Hello', body: 'Hi' },
+      priority: 7,
+      maxAttempts: 4,
+    } as const;
+
+    it('Submitted and queued job is logged', async () => {
+      queue.enqueue.mockResolvedValueOnce({});
+
+      await service.create({ job: request });
+
+      expect(logger.log).toHaveBeenCalledTimes(2);
+      expect(logger.log).toHaveBeenNthCalledWith(1, { jobId: JOB_ID }, 'Job submitted');
+      expect(logger.log).toHaveBeenNthCalledWith(
+        2,
+        { jobId: JOB_ID, attempt: 1 },
+        'Attempt queued',
+      );
+    });
+
+    it('Submitted and queued job is logged for each item of a bulk', async () => {
+      const ids = [randomUUID(), randomUUID()];
+      repository.createMany.mockImplementationOnce((req) =>
+        Promise.resolve({
+          jobs: req.jobs.map((job, index) => ({
+            ...job,
+            id: ids[index]!,
+            groupId: null,
+            createdAt: NOW,
+            updatedAt: NOW,
+          })),
+        }),
+      );
+      queue.enqueueMany.mockResolvedValueOnce({});
+
+      await service.createMany({ jobs: [request, request] });
+
+      expect(logger.log.mock.calls).toEqual([
+        [{ jobId: ids[0] }, 'Job submitted'],
+        [{ jobId: ids[1] }, 'Job submitted'],
+        [{ jobId: ids[0], attempt: 1 }, 'Attempt queued'],
+        [{ jobId: ids[1], attempt: 1 }, 'Attempt queued'],
+      ]);
+    });
+
+    it('Queueing failure is logged', async () => {
+      queue.enqueue.mockRejectedValueOnce(
+        new JobQueueUnavailableError({ jobId: JOB_ID, run: 1, attempt: 1 }),
+      );
+
+      await service.create({ job: request });
+
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
+        'Job keeps its status: it could not be queued',
+      );
+      expect(logger.log).not.toHaveBeenCalledWith(expect.anything(), 'Attempt queued');
+    });
+
+    it('Started and completed job is logged', async () => {
+      clock.now.mockReturnValueOnce({ now: new Date(NOW) });
+      acceptsWrite();
+      acceptsWrite();
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({ status: 'pending', attempts: 1 }),
+        run: 1,
+      });
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({ status: 'processing', attempts: 2 }),
+        run: 1,
+      });
+
+      await service.update({ id: JOB_ID, update: { status: 'processing' } });
+      await service.update({
+        id: JOB_ID,
+        update: { status: 'completed', result: { messageId: 'm-1' } },
+      });
+
+      expect(logger.log.mock.calls).toEqual([
+        [{ jobId: JOB_ID, attempt: 2 }, 'Attempt started'],
+        [{ jobId: JOB_ID, attempt: 2 }, 'Job completed'],
+      ]);
+    });
+
+    it('Failed attempt with a retry is logged', async () => {
+      acceptsWrite();
+      queue.enqueue.mockResolvedValueOnce({});
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({ status: 'processing', attempts: 1, maxAttempts: 3 }),
+        run: 1,
+      });
+
+      await service.update({ id: JOB_ID, update: { status: 'failed', error } });
+
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+        { jobId: JOB_ID, attempt: 1, code: error.code, message: error.message },
+        'Attempt failed, retry scheduled',
+      );
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(logger.log).toHaveBeenCalledExactlyOnceWith(
+        { jobId: JOB_ID, attempt: 2 },
+        'Attempt queued',
+      );
+    });
+
+    it('Job failed for good is logged', async () => {
+      acceptsWrite();
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({ status: 'processing', attempts: 3, maxAttempts: 3 }),
+        run: 1,
+      });
+
+      await service.update({ id: JOB_ID, update: { status: 'failed', error } });
+
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        { jobId: JOB_ID, attempt: 3, code: error.code, message: error.message },
+        'Job failed for good',
+      );
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.log).not.toHaveBeenCalledWith(expect.anything(), 'Attempt queued');
+    });
+
+    it('logs nothing when the report is refused', async () => {
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({ status: 'completed', attempts: 1 }),
+        run: 1,
+      });
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({ status: 'pending', attempts: 0 }),
+        run: 1,
+      });
+
+      await expect(
+        service.update({ id: JOB_ID, update: { status: 'processing' } }),
+      ).rejects.toMatchObject({ code: 'JOB_STATUS_CONFLICT' });
+      await expect(
+        service.update({ id: JOB_ID, update: { status: 'failed', error } }),
+      ).rejects.toMatchObject({ code: 'JOB_STATUS_CONFLICT' });
+
+      expect(logger.log).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('logs nothing when another worker won the race', async () => {
+      repository.get.mockResolvedValueOnce({ job: storedJob(), run: 1 });
+      repository.update.mockRejectedValueOnce(
+        new JobStatusConflictError({ id: JOB_ID, status: 'processing' }),
+      );
+
+      await expect(
+        service.update({ id: JOB_ID, update: { status: 'processing' } }),
+      ).rejects.toBeInstanceOf(JobStatusConflictError);
+
+      expect(logger.log).not.toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
+      expect(logger.error).not.toHaveBeenCalled();
+      expect(queue.enqueue).not.toHaveBeenCalled();
     });
   });
 });

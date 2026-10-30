@@ -4,11 +4,16 @@ import { userEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { Route, Routes } from 'react-router';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { en } from '@/locales';
 
-import { jobFixtures, transitJobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
+import {
+  jobFixtures,
+  jobLogEntryFixtures,
+  transitJobFixtures,
+  webhookJobFixtures,
+} from '../testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../testing/test-providers';
 import { JobPage } from './job-page';
 
@@ -22,6 +27,13 @@ beforeAll(() => {
   server.events.on('request:start', ({ request }) => {
     requests.push(`${request.method} ${new URL(request.url).pathname}`);
   });
+});
+beforeEach(() => {
+  server.use(
+    http.get(`${TEST_API_BASE}/v1/jobs/:id/logs`, () =>
+      HttpResponse.json({ items: [], nextCursor: null }),
+    ),
+  );
 });
 afterEach(() => {
   server.resetHandlers();
@@ -84,6 +96,48 @@ function detail(name: string) {
 }
 
 describe('JobPage', () => {
+  it('Log of a completed job: the Log card below the Lifecycle shows the job entries', async () => {
+    answerJob(completed.id, completed);
+    server.use(
+      http.get(`${TEST_API_BASE}/v1/jobs/${completed.id}/logs`, ({ request }) => {
+        const after = new URL(request.url).searchParams.get('after');
+        return HttpResponse.json({
+          items:
+            after === null
+              ? [jobLogEntryFixtures.build({ jobId: completed.id, message: 'Job submitted' })]
+              : [],
+          nextCursor: 'c1',
+        });
+      }),
+    );
+
+    renderJob(completed.id);
+
+    const log = await screen.findByRole('region', { name: en.log.title }, POLL_WAIT);
+    expect(await within(log).findByText('Job submitted', {}, POLL_WAIT)).toBeVisible();
+    const lifecycle = screen.getByRole('region', { name: en.job.lifecycle });
+    expect(lifecycle.compareDocumentPosition(log) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('Log unavailable: the card says so while payload, details and Lifecycle stay shown', async () => {
+    answerJob(completed.id, completed);
+    server.use(
+      http.get(`${TEST_API_BASE}/v1/jobs/${completed.id}/logs`, () =>
+        HttpResponse.json(
+          { code: 'LOG_STORE_UNAVAILABLE', message: 'down', details: {} },
+          { status: 503 },
+        ),
+      ),
+    );
+
+    renderJob(completed.id);
+
+    expect(await screen.findByText(en.log.unavailable, {}, POLL_WAIT)).toBeVisible();
+    expect(screen.getByRole('region', { name: en.job.payload })).toBeVisible();
+    expect(screen.getByRole('region', { name: en.job.details })).toBeVisible();
+    expect(screen.getByRole('region', { name: en.job.lifecycle })).toBeVisible();
+  });
+
   it('Completed job: id, badges, payload, result and details', async () => {
     answerJob(completed.id, completed);
 
@@ -164,6 +218,39 @@ describe('JobPage', () => {
     const lifecycle = await screen.findByRole('region', { name: en.job.lifecycle });
     const steps = within(lifecycle).getAllByRole('listitem');
     expect(steps.map((s) => s.dataset.reached)).toEqual(['true', 'false', 'false']);
+  });
+
+  it('Scheduled time on the job page: "Scheduled for" shows the local date and time, formatted like Created', async () => {
+    const job = jobFixtures.build({ status: 'scheduled', scheduledAt: '2026-10-30T08:00:00.000Z' });
+    answerJob(job.id, job);
+
+    renderJob(job.id);
+
+    await screen.findByRole('heading', { level: 1, name: job.id });
+    expect(detail(en.job.fields.scheduledFor)).toHaveTextContent('30 Oct, 08:00:00');
+    expect(detail(en.job.fields.created)).toHaveTextContent('29 Oct, 21:02:09');
+  });
+
+  it('No scheduled time on the job page: the Details list has no "Scheduled for" row', async () => {
+    answerJob(pending.id, pending);
+
+    renderJob(pending.id);
+
+    const list = await screen.findByRole('region', { name: en.job.details });
+    expect(within(list).queryByText(en.job.fields.scheduledFor)).toBeNull();
+  });
+
+  it('Lifecycle of a scheduled job: scheduled reached at the creation time, then processing and completed not yet', async () => {
+    const job = jobFixtures.build({ status: 'scheduled', scheduledAt: '2026-10-30T08:00:00.000Z' });
+    answerJob(job.id, job);
+
+    renderJob(job.id);
+
+    const lifecycle = await screen.findByRole('region', { name: en.job.lifecycle });
+    const steps = within(lifecycle).getAllByRole('listitem');
+    expect(steps.map((s) => s.dataset.reached)).toEqual(['true', 'false', 'false']);
+    expect(steps[0]).toHaveTextContent(`${en.statuses.scheduled}21:02:09`);
+    expect(lifecycle).not.toHaveTextContent(en.statuses.pending);
   });
 
   it('Loading a job: skeleton cards while the job loads', () => {

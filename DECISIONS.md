@@ -22,8 +22,9 @@ REST API described by OpenAPI (Swagger). *Trade-off:* request/response types for
 shared through a workspace package or generated from the OpenAPI spec instead of being inferred
 automatically.
 
-**Postgres (state) + Redis (queue).** Postgres is the source of truth for job state, results, logs
-and idempotency keys: durable, queryable, with constraints and transactions. Redis holds the queue.
+**Postgres (state) + Redis (queue).** Postgres is the source of truth for job state, results and
+idempotency keys: durable, queryable, with constraints and transactions. Redis holds the queue (and
+carries the job log stream). Job log entries live in ClickHouse, see "Job log" below.
 *Trade-off:* two stores to keep consistent; how we do that is described in the sections below.
 
 **BullMQ behind our own queue interface.** The task allows any queue technology. Our goal was a
@@ -594,6 +595,76 @@ The great-circle distance and the points along the route come from `@turf/distan
 antimeridian, and still needs `@turf/distance`) and `geolib` (~0.86M, CJS, no point-along-route helper).
 Turf measures in radians here so the spec's 6371 km radius holds (its own kilometres use 6371.0088).
 
+**Job log: a store made for logs (ClickHouse).** Every step of a job's life and every attempt gets
+log entries (job id, attempt, level, message, metadata, time, source and worker instance), readable
+at `GET /v1/jobs/:id/logs` and shown on the job page. Logs are a different kind of data from job
+state: append-only, written far more often than read, read per job in time order, and removed by
+age. So they are stored in ClickHouse, not Postgres: column storage with high compression, fast
+batch inserts, `ORDER BY (job_id, position)` makes "one job's entries in order" a primary-key range
+read, and a `TTL` clause removes entries after the configured retention (`JOB_LOG_RETENTION_DAYS`,
+30); reads also skip entries past it, since the TTL only applies when ClickHouse merges. Deleting a job leaves its entries to that retention (the route answers 404 once the job is
+gone), since deleting rows is costly in a store built for appends. *Honestly:* at this task's volume a Postgres table would do; ClickHouse is here to show how the
+log would scale beyond it. *Alternatives:* a Postgres table partitioned by time (no new technology,
+partitions by hand), TimescaleDB (Postgres with retention policies), Loki (cheap, but a job id as a
+label has far too many values for it), Elasticsearch (full-text search we do not need, heavy).
+*Trade-off:* one more container (~0.5-1 GB RAM) and a second client library. The client is
+`@clickhouse/client` (1.24.1, Oct 2026, ~4.55M weekly downloads, own types, CJS and ESM), the
+official one; chosen over `clickhouse` (2.6.0, last release 2022, ~49k) and
+`@depyronick/clickhouse-client` (2.1.0, ~1.4k). Its tests use `@testcontainers/clickhouse` (12.2.1,
+~349k).
+
+**Job log: owned by job-service, for now.** The log is its own feature (`domain/job-log`,
+`infra/job-log`, `app/job-log`) behind `JobLogStore`, `JobLogWriter` and `JobLogService`, but it runs
+inside job-service, and job-ui reads it through job-service's API. *Trade-off:* this saves
+scaffolding a fourth service. The better design is a separate log service with its own API and
+store; the producers would not change, since they only append to a stream.
+
+**Job log: entries come from the existing log lines.** There is no second logging API. Every pino
+line at info or above that names a job (`jobId`) also becomes a job log entry: pino writes to its
+normal output and, through its built-in `multistream`, to a destination that appends the entry to a
+Redis Stream. Level and message come from the line, `attempt` and `instanceId` become entry fields,
+and the other fields become metadata after the usual redaction. An error keeps only its type and
+code, never its message or stack, since those can carry internal details such as a host; the full
+error stays in the service's own log. *Why:* one call per step, so the job log and the operator log
+never disagree. *Trade-off:* a log line written for operators is now also something API clients
+read, so lines that name a job were reviewed for what they carry.
+
+**Job log: written asynchronously, in batches, once.** Writing an entry never blocks or fails a
+job: the destination appends to the stream without waiting (its own Redis connection, no offline
+queue, no retries). job-service reads the stream through a consumer group and stores up to
+`JOB_LOG_BATCH_SIZE` (1000) entries or what arrived within `JOB_LOG_FLUSH_INTERVAL_MS` (1 s) in one
+insert, and confirms them on the stream only after the insert. While ClickHouse is down the writer
+retries the same batch with a growing wait (`JOB_LOG_STORE_RETRY_DELAY_MS` 500 up to
+`..._MAX_DELAY_MS` 30000; both the batch retry and the retry of a failed round are `p-retry`
+without a limit, as in job-execution-service, and stopping the writer ends a wait) and reads nothing new, so entries wait in Redis; the log route answers 503
+`LOG_STORE_UNAVAILABLE` meanwhile, and every other route keeps working. A ClickHouse that is down at
+startup delays the log, not the service: the writer creates the table itself, with the same retry,
+and the consumer group starts at the beginning of the stream, so entries written before it existed
+are still stored. Only connection errors and timeouts count as "store unavailable"; an SQL error
+is a bug and surfaces as a logged 500, not a 503. Two exceptions to "errors are handled by class
+or code, never by message", both because the library gives no class or code: the ClickHouse client
+raises its request timeout as a plain `Error('Timeout error.')`, so that exact text (one constant)
+marks a timeout as "store unavailable"; and `RedisJobLogStream` recognises the Redis replies
+`BUSYGROUP` (the group exists) and `NOGROUP` (the group is gone) by the error code word that starts
+the reply, which is Redis's own error code (ioredis exposes no `code` field).
+*No duplicates:* a batch read again after a writer crash is the same rows, and the table is a
+`ReplacingMergeTree` keyed by job, position and entry id, read with `FINAL`, so each entry appears
+once. *Order:* entries are ordered by their stream id, which Redis assigns on arrival, not by the
+producers' clocks; the cursor of the log route is that id, so a client polling for newer entries
+never skips one. That holds because one writer stores at a time: a lease in Redis
+(`JOB_LOG_WRITER_LEASE_MS`) makes other job-service instances wait. *Where it can lose entries:*
+when Redis is down while a line is written (the entry is dropped and a warning goes to the normal
+log), and when the stream is trimmed past entries not stored yet (`JOB_LOG_STREAM_MAX_LENGTH`,
+100000, trimmed approximately). *Scaling path:* several streams sharded by job id, each with its own
+writer, instead of the single lease.
+*Main-thread cost:* writing and storing never wait on I/O (the Redis append is fire and forget; the
+writer's reads, inserts and retry waits are async). The synchronous work is the producer's parse,
+Zod check and stringify of each line inside pino's write (tens of microseconds per job log line, on
+the logging call in both services) and the writer's parse and validation of each batch (a few
+milliseconds per batch of up to 1000, on job-service's thread). At this task's volume that is not
+worth a worker thread; the ways out are pino's worker-thread transport for the producer, or the
+writer in its own process (the separate log service).
+
 ---
 
 ## 1. Job Pickup Strategy
@@ -690,6 +761,18 @@ re-queues such jobs from Postgres, the same way it handles `pending` jobs whose 
 Clock skew between job-service and Redis only shifts the start by that skew; a worker does not
 check the time again, because a second check could drop a due entry over a few milliseconds and
 leave the job stuck.
+*In job-ui:* the submit page's "At a specific time" is a native `<input type="datetime-local">`,
+read in the browser's time zone (named in a hint under it) and sent as the same instant in UTC.
+We chose it over a calendar picker (shadcn's Calendar on react-day-picker 10.0.2, ~45M weekly
+npm downloads, TypeScript types, ESM) because it adds no dependency, is keyboard-accessible and is
+local time by definition; it looks slightly different per browser and has minute precision, which
+is enough for a schedule. The form checks the time with the API's rules before sending (set, later
+than now, at most 30 days ahead), on submit, so a time that passed while the page was open is
+caught. *Trade-off:* the form checks against the browser's clock, the API against job-service's;
+a time a few seconds ahead can pass the form and still be created `pending` by the API (it then
+runs at once). The API stays the authority. The jobs list shows a `scheduled` job's run time under
+its status badge, and the job page shows "Scheduled for" and a Lifecycle that starts at
+`scheduled` instead of `pending` for a job created to wait.
 
 ---
 

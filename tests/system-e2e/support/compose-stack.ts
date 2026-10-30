@@ -9,6 +9,10 @@ import type {
   LogsStackResponse,
   Stack,
   StackContainer,
+  StartStackRequest,
+  StartStackResponse,
+  StopStackRequest,
+  StopStackResponse,
   UpStackRequest,
   UpStackResponse,
 } from './stack.js';
@@ -63,6 +67,16 @@ export class ComposeStack implements Stack {
   async logs(req: LogsStackRequest): Promise<LogsStackResponse> {
     const stdout = await this.compose(['logs', '--no-log-prefix', req.service]);
     return { lines: stdout.split('\n').filter((line) => line.trim() !== '') };
+  }
+
+  async stop(req: StopStackRequest): Promise<StopStackResponse> {
+    await this.compose(['stop', req.service]);
+    return {};
+  }
+
+  async start(req: StartStackRequest): Promise<StartStackResponse> {
+    await this.compose(['start', '--wait', req.service]);
+    return {};
   }
 
   private async compose(args: string[]): Promise<string> {
