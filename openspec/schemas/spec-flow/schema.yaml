@@ -377,6 +377,8 @@ apply:
     tests are written, run the `test-case-reviewer` subagent on each test area
     it touched (give it only the area, not your reasoning) and act on its
     report before the group counts as done, even if tasks.md has no review
-    task for it. Pause if you hit
+    task for it. Each group is its own commit: when a group is done, propose
+    its commit (files and a Conventional Commits message) and wait for the
+    user's approval before starting the next group. Pause if you hit
     blockers or need clarification; a new behaviour question goes into
     decisions.md and to the user, never into the code as an assumption.
