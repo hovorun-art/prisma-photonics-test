@@ -21,10 +21,10 @@ Owns: `packages/contracts/src/jobs/job.ts`, `packages/contracts/src/jobs/job.tes
 
 Owns: `apps/job-service/src/domain/jobs/job-queue.ts`, `apps/job-service/src/infra/jobs/queue/bullmq-job-queue.ts`, `apps/job-service/src/infra/jobs/queue/bullmq-job-queue.int.test.ts`, `apps/job-service/src/app/jobs/jobs.module.ts` · Depends on: 1 · Parallel with: 4
 
-- [ ] 2.1 Extend `EnqueueJobQueueRequest` with `priority` and `runAt: string | null` and document the ordering rules on the port; update the existing callers' types only as far as needed to compile (the behaviour comes in group 3), and verify `npm run typecheck` passes
-- [ ] 2.2 Write failing integration tests in `bullmq-job-queue.int.test.ts` (real Redis, a plain BullMQ `Worker` in the test taking entries one at a time) for "High priority overtakes earlier low priority", "Priorities are taken highest first", "Same priority, first in first out", "Scheduled job is queued for its time" (a delayed entry is not handed out before `runAt`, then is) and "Due scheduled job competes by priority", for both `enqueue` and `enqueueMany`; verify they fail for the expected reason
-- [ ] 2.3 Implement in `BullMqJobQueue`: `clock` in its deps, priority mapping `JOB_LIMITS.priority.max + 1 - priority` on every entry, `delay = max(0, runAt - now)`; wire `SystemClock` in `jobs.module.ts`; verify the integration tests pass
-- [ ] 2.4 Run the `test-case-reviewer` subagent on job-service integration tests (`bullmq-job-queue.int.test.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 2.1 Extend `EnqueueJobQueueRequest` with `priority` and `runAt: string | null` and document the ordering rules on the port; update the existing callers' types only as far as needed to compile (the behaviour comes in group 3), and verify `npm run typecheck` passes
+- [x] 2.2 Write failing integration tests in `bullmq-job-queue.int.test.ts` (real Redis, a plain BullMQ `Worker` in the test taking entries one at a time) for "High priority overtakes earlier low priority", "Priorities are taken highest first", "Same priority, first in first out", "Scheduled job is queued for its time" (a delayed entry is not handed out before `runAt`, then is) and "Due scheduled job competes by priority", for both `enqueue` and `enqueueMany`; verify they fail for the expected reason
+- [x] 2.3 Implement in `BullMqJobQueue`: `clock` in its deps, priority mapping `JOB_LIMITS.priority.max + 1 - priority` on every entry, `delay = max(0, runAt - now)`; wire `SystemClock` in `jobs.module.ts`; verify the integration tests pass
+- [x] 2.4 Run the `test-case-reviewer` subagent on job-service integration tests (`bullmq-job-queue.int.test.ts`); add the missing cases it reports or note why they belong elsewhere
 
 ## 3. job-service lifecycle: scheduled submit, horizon, retry priority, scheduled start
 

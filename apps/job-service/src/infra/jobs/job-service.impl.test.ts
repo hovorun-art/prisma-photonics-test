@@ -92,7 +92,12 @@ describe('JobServiceImpl', () => {
       queue.enqueue.mockResolvedValueOnce({});
       await service.create({ job: request });
 
-      expect(queue.enqueue).toHaveBeenCalledWith({ jobId: JOB_ID, attempt: 1 });
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: JOB_ID,
+        attempt: 1,
+        priority: 7,
+        runAt: null,
+      });
     });
 
     it('Queue unavailable during submit', async () => {
@@ -223,8 +228,8 @@ describe('JobServiceImpl', () => {
 
       expect(queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
         entries: [
-          { jobId: ids[0], attempt: 1 },
-          { jobId: ids[1], attempt: 1 },
+          { jobId: ids[0], attempt: 1, priority: 7, runAt: null },
+          { jobId: ids[1], attempt: 1, priority: 5, runAt: null },
         ],
       });
       expect(queue.enqueue).not.toHaveBeenCalled();
@@ -329,7 +334,12 @@ describe('JobServiceImpl', () => {
 
       expect(job).toMatchObject({ type: 'flight-transit', status: 'pending' });
       expect(repository.create).toHaveBeenCalledOnce();
-      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: JOB_ID, attempt: 1 });
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: JOB_ID,
+        attempt: 1,
+        priority: 5,
+        runAt: null,
+      });
     });
 
     it('accepts a departure on a later day', async () => {
@@ -552,7 +562,12 @@ describe('JobServiceImpl', () => {
         changes: { status: 'pending', error, completedAt: null },
       });
       expect(job.status).toBe('pending');
-      expect(queue.enqueue).toHaveBeenCalledWith({ jobId: JOB_ID, attempt: 2 });
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: JOB_ID,
+        attempt: 2,
+        priority: 5,
+        runAt: null,
+      });
     });
 
     it('Retry survives an unavailable queue', async () => {

@@ -1,7 +1,12 @@
-import { JOB_QUEUE_NAME, JobQueueEntryId, type JobQueueMessage } from '@job-queue/contracts';
-import type { CloseClosableResponse } from '@job-queue/kernel';
+import {
+  JOB_LIMITS,
+  JOB_QUEUE_NAME,
+  JobQueueEntryId,
+  type JobQueueMessage,
+} from '@job-queue/contracts';
+import type { Clock, CloseClosableResponse } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
-import { Queue } from 'bullmq';
+import { type JobsOptions, Queue } from 'bullmq';
 
 import { JobQueueUnavailableError } from '../../../domain/jobs/errors/job-queue-unavailable.error.js';
 import type {
@@ -14,6 +19,13 @@ import type {
 
 export interface BullMqJobQueueDeps {
   logger: Pick<LoggerService, 'warn'>;
+  /** The time an entry's delay is counted from. */
+  clock: Clock;
+}
+
+interface OptionsRequest {
+  entry: EnqueueJobQueueRequest;
+  now: Date | null;
 }
 
 export interface BullMqJobQueueParams {
@@ -25,8 +37,11 @@ export interface BullMqJobQueueParams {
 /**
  * The job queue on BullMQ. Each attempt is one entry whose BullMQ id is `<jobId>_<attempt>`
  * (BullMQ rejects `:` in custom ids), so a repeated enqueue of the same attempt is ignored. The
- * entry carries only the job id. Commands are not buffered while Redis is down
- * (`enableOfflineQueue: false`), and every enqueue is bounded by the configured timeout.
+ * entry carries only the job id. Order and time are BullMQ's: every entry gets a BullMQ priority
+ * (1 is its most urgent, so our scale is turned around; an entry without one would overtake all
+ * prioritised entries), and an entry with a future `runAt` is a delayed entry until then. Commands
+ * are not buffered while Redis is down (`enableOfflineQueue: false`), and every enqueue is bounded
+ * by the configured timeout.
  */
 export class BullMqJobQueue implements JobQueue {
   private readonly queue: Queue<JobQueueMessage>;
@@ -51,7 +66,13 @@ export class BullMqJobQueue implements JobQueue {
   async enqueue(req: EnqueueJobQueueRequest): Promise<EnqueueJobQueueResponse> {
     const entryId = JobQueueEntryId.encode({ jobId: req.jobId, attempt: req.attempt });
     try {
-      await this.withinTimeout(this.queue.add(entryId, { jobId: req.jobId }, { jobId: entryId }));
+      await this.withinTimeout(
+        this.queue.add(
+          entryId,
+          { jobId: req.jobId },
+          this.options({ entry: req, now: this.now(req) }),
+        ),
+      );
     } catch (err) {
       this.d.logger.warn({ err, jobId: req.jobId, attempt: req.attempt }, 'Enqueue failed');
       throw new JobQueueUnavailableError({ jobId: req.jobId, attempt: req.attempt });
@@ -61,10 +82,12 @@ export class BullMqJobQueue implements JobQueue {
 
   /** One `addBulk`: BullMQ sends all entries in one Redis transaction, so all are added or none. */
   async enqueueMany(req: EnqueueManyJobQueueRequest): Promise<EnqueueManyJobQueueResponse> {
-    const entries = req.entries.map((entry) => {
-      const entryId = JobQueueEntryId.encode({ jobId: entry.jobId, attempt: entry.attempt });
-      return { name: entryId, data: { jobId: entry.jobId }, opts: { jobId: entryId } };
-    });
+    const now = req.entries.some((entry) => entry.runAt !== null) ? this.d.clock.now().now : null;
+    const entries = req.entries.map((entry) => ({
+      name: JobQueueEntryId.encode({ jobId: entry.jobId, attempt: entry.attempt }),
+      data: { jobId: entry.jobId },
+      opts: this.options({ entry, now }),
+    }));
     try {
       await this.withinTimeout(this.queue.addBulk(entries));
     } catch (err) {
@@ -72,7 +95,9 @@ export class BullMqJobQueue implements JobQueue {
         { err, jobIds: req.entries.map((entry) => entry.jobId) },
         'Bulk enqueue failed',
       );
-      throw new JobQueueUnavailableError({ entries: req.entries });
+      throw new JobQueueUnavailableError({
+        entries: req.entries.map(({ jobId, attempt }) => ({ jobId, attempt })),
+      });
     }
     return {};
   }
@@ -80,6 +105,24 @@ export class BullMqJobQueue implements JobQueue {
   async close(): Promise<CloseClosableResponse> {
     await this.queue.close();
     return {};
+  }
+
+  /** BullMQ's id, priority and delay for one entry; `now` is only needed for a `runAt`. */
+  private options({ entry, now }: OptionsRequest): JobsOptions {
+    const delay =
+      entry.runAt === null || now === null
+        ? 0
+        : Math.max(0, new Date(entry.runAt).getTime() - now.getTime());
+    return {
+      jobId: JobQueueEntryId.encode({ jobId: entry.jobId, attempt: entry.attempt }),
+      priority: JOB_LIMITS.priority.max + 1 - entry.priority,
+      ...(delay > 0 ? { delay } : {}),
+    };
+  }
+
+  /** The clock is read only for an entry with a `runAt`. */
+  private now(entry: EnqueueJobQueueRequest): Date | null {
+    return entry.runAt === null ? null : this.d.clock.now().now;
   }
 
   /** Rejects when `work` has not settled within the configured enqueue timeout. */

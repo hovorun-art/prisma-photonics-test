@@ -189,7 +189,12 @@ describe('job-service internal job routes', () => {
         completedAt: null,
       });
       expect(await service.stored(job.id)).toEqual(failed);
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 2 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 2,
+        priority: job.priority,
+        runAt: null,
+      });
     });
 
     it('A completion and a failure race on the same job', async () => {
@@ -209,6 +214,8 @@ describe('job-service internal job routes', () => {
         expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
           jobId: job.id,
           attempt: 2,
+          priority: job.priority,
+          runAt: null,
         });
       }
     });
@@ -223,7 +230,12 @@ describe('job-service internal job routes', () => {
         attempts: 1,
         error: ERROR,
       });
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 2 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 2,
+        priority: job.priority,
+        runAt: null,
+      });
     });
 
     it('Retry survives an unavailable queue', async () => {
@@ -236,7 +248,12 @@ describe('job-service internal job routes', () => {
 
       expect(response.status).toBe(200);
       expect(Job.parse(await response.json())).toMatchObject({ status: 'pending', error: ERROR });
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 2 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 2,
+        priority: job.priority,
+        runAt: null,
+      });
       expect(await service.stored(job.id)).toMatchObject({
         status: 'pending',
         attempts: 1,
@@ -271,8 +288,8 @@ describe('job-service internal job routes', () => {
       expect(retried).toMatchObject({ status: 'processing', attempts: 2 });
       expect(failed).toMatchObject({ status: 'failed', attempts: 2, maxAttempts: 2 });
       expect(service.queue.enqueue.mock.calls.map(([entry]) => entry)).toEqual([
-        { jobId: job.id, attempt: 1 },
-        { jobId: job.id, attempt: 2 },
+        { jobId: job.id, attempt: 1, priority: job.priority, runAt: null },
+        { jobId: job.id, attempt: 2, priority: job.priority, runAt: null },
       ]);
     });
 

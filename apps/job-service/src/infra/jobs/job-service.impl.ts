@@ -75,6 +75,7 @@ interface RequireValidResultRequest {
 interface EnqueueRequest {
   jobId: string;
   attempt: number;
+  priority: number;
 }
 
 interface NewPendingJobRequest {
@@ -110,7 +111,7 @@ export class JobServiceImpl implements JobService {
     const issues = this.departureDayIssues({ job: req.job, departureDay: this.departureDay });
     if (issues.length > 0) throw new InvalidJobPayloadError({ issues });
     const { job } = await this.d.repository.create({ job: this.newPendingJob({ job: req.job }) });
-    await this.enqueue({ jobId: job.id, attempt: 1 });
+    await this.enqueue({ jobId: job.id, attempt: 1, priority: job.priority });
     return { job };
   }
 
@@ -196,7 +197,7 @@ export class JobServiceImpl implements JobService {
     });
     // A failure does not change attempts, so the retry is the attempt after the loaded one.
     if (job.status === 'pending')
-      await this.enqueue({ jobId: job.id, attempt: current.attempts + 1 });
+      await this.enqueue({ jobId: job.id, attempt: current.attempts + 1, priority: job.priority });
     return { job };
   }
 
@@ -257,9 +258,9 @@ export class JobServiceImpl implements JobService {
   }
 
   /** The job stays pending when this fails; the sweep in `crash-recovery` queues it later. */
-  private async enqueue({ jobId, attempt }: EnqueueRequest): Promise<void> {
+  private async enqueue({ jobId, attempt, priority }: EnqueueRequest): Promise<void> {
     try {
-      await this.d.queue.enqueue({ jobId, attempt });
+      await this.d.queue.enqueue({ jobId, attempt, priority, runAt: null });
     } catch (err) {
       this.d.logger.warn({ err, jobId, attempt }, 'Job stays pending: it could not be queued');
     }
@@ -269,7 +270,12 @@ export class JobServiceImpl implements JobService {
   private async enqueueFirstAttempts(jobs: readonly Job[]): Promise<void> {
     try {
       await this.d.queue.enqueueMany({
-        entries: jobs.map((job) => ({ jobId: job.id, attempt: 1 })),
+        entries: jobs.map((job) => ({
+          jobId: job.id,
+          attempt: 1,
+          priority: job.priority,
+          runAt: null,
+        })),
       });
     } catch (err) {
       this.d.logger.warn(

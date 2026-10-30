@@ -94,7 +94,12 @@ describe('job-service public job routes', () => {
     it.each([EMAIL_JOB, WEBHOOK_JOB])('Submitted job is queued ($type)', async (body) => {
       const job = await service.submitted(body);
 
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 1,
+        priority: job.priority,
+        runAt: null,
+      });
     });
 
     it('Queue unavailable during submit', async () => {
@@ -107,7 +112,12 @@ describe('job-service public job routes', () => {
       expect(response.status).toBe(201);
       const job = Job.parse(await response.json());
       expect(job.status).toBe('pending');
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 1,
+        priority: job.priority,
+        runAt: null,
+      });
       expect(await service.stored(job.id)).toEqual(job);
     });
 
@@ -121,7 +131,12 @@ describe('job-service public job routes', () => {
       expect(new Set(jobs.map((job) => job.id)).size).toBe(3);
       expect(service.queue.enqueue).toHaveBeenCalledTimes(3);
       for (const job of jobs) {
-        expect(service.queue.enqueue).toHaveBeenCalledWith({ jobId: job.id, attempt: 1 });
+        expect(service.queue.enqueue).toHaveBeenCalledWith({
+          jobId: job.id,
+          attempt: 1,
+          priority: job.priority,
+          runAt: null,
+        });
       }
       expect(await service.total()).toBe(3);
     });
@@ -159,7 +174,12 @@ describe('job-service public job routes', () => {
         error: null,
         startedAt: null,
       });
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 1,
+        priority: job.priority,
+        runAt: null,
+      });
     });
   });
 
@@ -244,7 +264,12 @@ describe('job-service public job routes', () => {
       const jobs = await service.submittedBulk([EMAIL_JOB, WEBHOOK_JOB]);
 
       expect(service.queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
-        entries: jobs.map((job) => ({ jobId: job.id, attempt: 1 })),
+        entries: jobs.map((job) => ({
+          jobId: job.id,
+          attempt: 1,
+          priority: job.priority,
+          runAt: null,
+        })),
       });
       expect(service.queue.enqueue).not.toHaveBeenCalled();
     });
@@ -257,7 +282,12 @@ describe('job-service public job routes', () => {
       const jobs = await service.submittedBulk([EMAIL_JOB, WEBHOOK_JOB]);
 
       expect(service.queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
-        entries: jobs.map((job) => ({ jobId: job.id, attempt: 1 })),
+        entries: jobs.map((job) => ({
+          jobId: job.id,
+          attempt: 1,
+          priority: job.priority,
+          runAt: null,
+        })),
       });
       expect(jobs.map((job) => job.status)).toEqual(['pending', 'pending']);
       for (const job of jobs) expect(await service.stored(job.id)).toEqual(job);
@@ -420,7 +450,12 @@ describe('job-service public job routes', () => {
         result: null,
         error: null,
       });
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 1,
+        priority: job.priority,
+        runAt: null,
+      });
     });
 
     it('Flight transit job is read and listed like any job', async () => {

@@ -38,12 +38,12 @@ import { StatsController } from './stats.controller.js';
     },
     {
       provide: JOB_QUEUE,
-      useFactory: (config: JobServiceConfig): JobQueue =>
+      useFactory: (config: JobServiceConfig, clock: Clock): JobQueue =>
         new BullMqJobQueue(
-          { logger: new Logger('JobQueue') },
+          { logger: new Logger('JobQueue'), clock },
           { redisUrl: config.redisUrl, enqueueTimeoutMs: config.enqueueTimeoutMs },
         ),
-      inject: [JOB_SERVICE_CONFIG],
+      inject: [JOB_SERVICE_CONFIG, CLOCK],
     },
     {
       provide: JOB_SERVICE,
