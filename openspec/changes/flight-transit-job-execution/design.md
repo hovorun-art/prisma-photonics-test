@@ -40,7 +40,9 @@ every Nest `Logger` line carries the instance id from the root logger. Handlers 
   `failureRate` return `failed` with `FLIGHT_TRANSIT_DATA_UNAVAILABLE`, message `Flight data for
   ${origin}-${destination} is unavailable`, details `{ origin, destination }`; otherwise generate,
   log `Transit report generated` with `{ jobId, attempt, flight, distanceKm, durationMin }` and
-  return `completed`. The warn line for a failure is the existing "Job failed" line of
+  return `completed`. Found during apply: the job a handler gets was read before job-service counts
+  the attempt on start, so `job.attempts` is one low; `RunJobHandlerRequest` gains `attempt` (from
+  the queue entry, the same number every other log line uses). The warn line for a failure is the existing "Job failed" line of
   `JobExecutionImpl` (job id, attempt, instance id, code); the handler does not log it twice.
 - `infra/flight-transit/turf-transit-report-generator.ts`: `TurfTransitReportGenerator implements
   TransitReportGenerator`, `d: { random }`, `p: { pathPoints, cruiseWaypoints, longHaulKm, climbKm,

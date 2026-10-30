@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { EmailJob, WebhookJob } from '@job-queue/contracts';
+import type { EmailJob, FlightTransitJob, WebhookJob } from '@job-queue/contracts';
 import { DomainError, JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -65,14 +65,18 @@ describe('JobExecutionImpl', () => {
     email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
     jobs.update.mockResolvedValueOnce({ job: job({ status: 'completed' }) });
 
-    await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'completed' });
+    // The queue's attempt is passed on, not one derived from the job read before start.
+    const entry = { ...ENTRY, attempt: 3 };
+
+    await expect(execution.execute(entry)).resolves.toEqual({ outcome: 'completed' });
 
     expect(jobs.update.mock.calls.map(([request]) => request.update)).toEqual([
       { status: 'processing' },
       { status: 'completed', result: RESULT },
     ]);
-    expect(email.run).toHaveBeenCalledWith({
+    expect(email.run).toHaveBeenCalledExactlyOnceWith({
       job: job(),
+      attempt: 3,
       signal: expect.any(AbortSignal) as AbortSignal,
     });
   });
@@ -261,6 +265,44 @@ describe('JobExecutionImpl', () => {
         expect.any(String),
       );
     });
+  });
+
+  it('Failed transit attempt is logged as a warning', async () => {
+    const transit = mockDeep<JobHandler>();
+    const withTransit = new JobExecutionImpl(
+      { jobs, handlers: { 'flight-transit': transit }, logger },
+      PARAMS,
+    );
+    const transitJob = (overrides: Partial<FlightTransitJob> = {}): FlightTransitJob => ({
+      ...job(),
+      type: 'flight-transit',
+      payload: { origin: 'LHR', destination: 'JFK', departureDate: '2026-11-02' },
+      result: null,
+      ...overrides,
+    });
+    const error = {
+      code: 'FLIGHT_TRANSIT_DATA_UNAVAILABLE',
+      message: 'Flight data for LHR-JFK is unavailable',
+      details: { origin: 'LHR', destination: 'JFK' },
+    };
+    jobs.get.mockResolvedValueOnce({ job: transitJob() });
+    jobs.update
+      .mockResolvedValueOnce({ job: transitJob({ status: 'processing', attempts: 1 }) })
+      .mockResolvedValueOnce({ job: transitJob({ status: 'pending', attempts: 1 }) });
+    transit.run.mockResolvedValueOnce({ outcome: 'failed', error });
+
+    await expect(withTransit.execute(ENTRY)).resolves.toEqual({ outcome: 'failed' });
+
+    // The instance id is added to every line by the logger itself.
+    expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({
+        jobId: JOB_ID,
+        attempt: 1,
+        code: 'FLIGHT_TRANSIT_DATA_UNAVAILABLE',
+        details: { origin: 'LHR', destination: 'JFK' },
+      }),
+      expect.any(String),
+    );
   });
 
   it('Grace period runs out', async () => {
