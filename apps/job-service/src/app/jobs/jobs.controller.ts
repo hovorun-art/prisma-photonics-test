@@ -1,4 +1,5 @@
 import {
+  ChangeJobStatusRequest,
   CreateJobRequest,
   CreateJobsBulkRequest,
   type CreateJobsBulkResponse,
@@ -15,6 +16,7 @@ import {
   HttpStatus,
   Inject,
   Param,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -34,6 +36,7 @@ import { ZodValidationPipe } from 'nestjs-zod';
 
 import { JOB_SERVICE, type JobService } from '../../domain/jobs/job-service.js';
 import {
+  ChangeJobStatusDto,
   CreateJobDto,
   CreateJobsBulkDto,
   CreateJobsBulkResponseDto,
@@ -43,7 +46,7 @@ import {
   QueryJobsResponseDto,
 } from './job.dto.js';
 
-/** The public job routes: submit (one or in bulk), get, query and delete. */
+/** The public job routes: submit (one or in bulk), get, query, status change and delete. */
 @ApiTags('jobs')
 @Controller(JOBS_ROUTE)
 export class JobsController {
@@ -113,6 +116,28 @@ export class JobsController {
       types: query.type,
       groupId: query.groupId,
     });
+  }
+
+  @Patch(':id')
+  @ApiOperation({
+    summary: 'Cancel or retry a job',
+    description:
+      '`{ "status": "cancelled" }` cancels a scheduled, pending or processing job; a running job ' +
+      'is stopped by its worker. `{ "status": "pending" }` retries a failed job: back to pending ' +
+      'with zero attempts and its error, result and times cleared, and queued again.',
+  })
+  @ApiOkResponse({ type: JobDto, description: 'The updated job' })
+  @ApiBody({ type: ChangeJobStatusDto })
+  @ApiBadRequestResponse({ description: 'VALIDATION_FAILED: a status other than the two above' })
+  @ApiNotFoundResponse({ description: 'JOB_NOT_FOUND' })
+  @ApiConflictResponse({
+    description: "JOB_STATUS_CONFLICT: the job's current status does not allow the change",
+  })
+  async changeStatus(
+    @Param() params: JobIdParamsDto,
+    @Body(new ZodValidationPipe(ChangeJobStatusRequest)) body: ChangeJobStatusRequest,
+  ): Promise<Job> {
+    return (await this.jobs.changeStatus({ id: params.id, change: body })).job;
   }
 
   @Delete(':id')

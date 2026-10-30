@@ -94,12 +94,16 @@ describe('job-service public job routes', () => {
     it.each([EMAIL_JOB, WEBHOOK_JOB])('Submitted job is queued ($type)', async (body) => {
       const job = await service.submitted(body);
 
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        run: 1,
+        attempt: 1,
+      });
     });
 
     it('Queue unavailable during submit', async () => {
-      service.queue.enqueue.mockImplementationOnce(({ jobId, attempt }) =>
-        Promise.reject(new JobQueueUnavailableError({ jobId, attempt })),
+      service.queue.enqueue.mockImplementationOnce(({ jobId, run, attempt }) =>
+        Promise.reject(new JobQueueUnavailableError({ jobId, run, attempt })),
       );
 
       const response = await service.submit(EMAIL_JOB);
@@ -107,7 +111,11 @@ describe('job-service public job routes', () => {
       expect(response.status).toBe(201);
       const job = Job.parse(await response.json());
       expect(job.status).toBe('pending');
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        run: 1,
+        attempt: 1,
+      });
       expect(await service.stored(job.id)).toEqual(job);
     });
 
@@ -121,7 +129,7 @@ describe('job-service public job routes', () => {
       expect(new Set(jobs.map((job) => job.id)).size).toBe(3);
       expect(service.queue.enqueue).toHaveBeenCalledTimes(3);
       for (const job of jobs) {
-        expect(service.queue.enqueue).toHaveBeenCalledWith({ jobId: job.id, attempt: 1 });
+        expect(service.queue.enqueue).toHaveBeenCalledWith({ jobId: job.id, run: 1, attempt: 1 });
       }
       expect(await service.total()).toBe(3);
     });
@@ -159,7 +167,11 @@ describe('job-service public job routes', () => {
         error: null,
         startedAt: null,
       });
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        run: 1,
+        attempt: 1,
+      });
     });
   });
 
@@ -244,7 +256,7 @@ describe('job-service public job routes', () => {
       const jobs = await service.submittedBulk([EMAIL_JOB, WEBHOOK_JOB]);
 
       expect(service.queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
-        entries: jobs.map((job) => ({ jobId: job.id, attempt: 1 })),
+        entries: jobs.map((job) => ({ jobId: job.id, run: 1, attempt: 1 })),
       });
       expect(service.queue.enqueue).not.toHaveBeenCalled();
     });
@@ -257,7 +269,7 @@ describe('job-service public job routes', () => {
       const jobs = await service.submittedBulk([EMAIL_JOB, WEBHOOK_JOB]);
 
       expect(service.queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
-        entries: jobs.map((job) => ({ jobId: job.id, attempt: 1 })),
+        entries: jobs.map((job) => ({ jobId: job.id, run: 1, attempt: 1 })),
       });
       expect(jobs.map((job) => job.status)).toEqual(['pending', 'pending']);
       for (const job of jobs) expect(await service.stored(job.id)).toEqual(job);
@@ -420,7 +432,11 @@ describe('job-service public job routes', () => {
         result: null,
         error: null,
       });
-      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        run: 1,
+        attempt: 1,
+      });
     });
 
     it('Flight transit job is read and listed like any job', async () => {
@@ -716,6 +732,261 @@ describe('job-service public job routes', () => {
             ['status', 'done'],
           ]),
         ).toContain('status');
+      });
+    });
+  });
+
+  describe('status change', () => {
+    const CANCEL = { status: 'cancelled' } as const;
+    const RETRY = { status: 'pending' } as const;
+
+    /** The job a successful status change answered with. */
+    const changed = async (response: Response): Promise<Job> => {
+      expect(response.status).toBe(200);
+      return Job.parse(await response.json());
+    };
+
+    it('Unsupported target status', async () => {
+      const job = await service.seed({ status: 'pending' });
+
+      const response = await service.changeStatus({ id: job.id, body: { status: 'completed' } });
+
+      expect(await service.issuePaths(response)).toEqual([['status']]);
+      expect(await service.stored(job.id)).toEqual(job);
+    });
+
+    it('Missing status', async () => {
+      const job = await service.seed({ status: 'failed' });
+
+      const response = await service.changeStatus({ id: job.id, body: {} });
+
+      expect(await service.issuePaths(response)).toEqual([['status']]);
+      expect(await service.stored(job.id)).toEqual(job);
+    });
+
+    it('Status change for an unknown job', async () => {
+      await expectNotFound(await service.changeStatus({ id: UNKNOWN_ID, body: CANCEL }));
+      expect(service.queue.cancel).not.toHaveBeenCalled();
+    });
+
+    it('Status change with a malformed id', async () => {
+      const response = await service.changeStatus({ id: 'abc', body: CANCEL });
+
+      expect(await service.issuePaths(response)).toEqual([['id']]);
+    });
+
+    describe('cancel', () => {
+      it.each([
+        ['Cancel a pending job', 'pending'],
+        ['Cancel a scheduled job', 'scheduled'],
+        ['Cancel a processing job', 'processing'],
+      ] as const)('%s', async (_name, status) => {
+        service.queue.cancel.mockResolvedValueOnce({});
+        const job = await service.seed({ status, error: ERROR });
+
+        const cancelled = await changed(await service.changeStatus({ id: job.id, body: CANCEL }));
+
+        expect(cancelled).toEqual({
+          ...job,
+          status: 'cancelled',
+          completedAt: expect.any(String) as string,
+          updatedAt: cancelled.updatedAt,
+        });
+        expect(Date.parse(cancelled.completedAt ?? '')).not.toBeNaN();
+        expect(await service.stored(job.id)).toEqual(cancelled);
+        const later = await service.get(job.id);
+        expect(later.status).toBe(200);
+        expect(Job.parse(await later.json())).toEqual(cancelled);
+        expect(service.queue.cancel).toHaveBeenCalledExactlyOnceWith({ jobId: job.id });
+        expect(service.queue.enqueue).not.toHaveBeenCalled();
+      });
+
+      it('A cancel still succeeds when the workers cannot be told', async () => {
+        service.queue.cancel.mockImplementationOnce(({ jobId }) =>
+          Promise.reject(new JobQueueUnavailableError({ cancelledJobId: jobId })),
+        );
+        const job = await service.seed({ status: 'processing' });
+
+        const cancelled = await changed(await service.changeStatus({ id: job.id, body: CANCEL }));
+
+        expect(cancelled.status).toBe('cancelled');
+        expect((await service.stored(job.id)).status).toBe('cancelled');
+        expect(service.queue.cancel).toHaveBeenCalledExactlyOnceWith({ jobId: job.id });
+      });
+
+      it('Cancel a finished job', async () => {
+        const status = 'completed';
+        const job = await service.seed({ status });
+
+        const response = await service.changeStatus({ id: job.id, body: CANCEL });
+
+        await service.expectConflict({ response, status });
+        expect(await service.stored(job.id)).toEqual(job);
+        expect(service.queue.cancel).not.toHaveBeenCalled();
+      });
+
+      it('Two cancels at the same time', async () => {
+        service.queue.cancel.mockResolvedValueOnce({});
+        const job = await service.seed({ status: 'pending' });
+
+        const responses = await Promise.all([
+          service.changeStatus({ id: job.id, body: CANCEL }),
+          service.changeStatus({ id: job.id, body: CANCEL }),
+        ]);
+
+        expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+        await service.expectConflict({
+          response: responses.find((response) => response.status === 409)!,
+          status: 'cancelled',
+        });
+        expect((await service.stored(job.id)).status).toBe('cancelled');
+        expect(service.queue.cancel).toHaveBeenCalledExactlyOnceWith({ jobId: job.id });
+      });
+
+      it('A cancel and a completion report at the same time', async () => {
+        service.queue.cancel.mockResolvedValueOnce({});
+        const job = await service.seed({ status: 'processing' });
+        const result = { messageId: 'm-1' };
+
+        const responses = await Promise.all([
+          service.changeStatus({ id: job.id, body: CANCEL }),
+          service.report({ id: job.id, body: { status: 'completed', result } }),
+        ]);
+
+        expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+        const loser = responses.find((response) => response.status === 409)!;
+        await service.errorBody({ response: loser, status: 409, code: 'JOB_STATUS_CONFLICT' });
+        const stored = await service.stored(job.id);
+        if (stored.status === 'cancelled') {
+          expect(stored.result).toBeNull();
+          expect(service.queue.cancel).toHaveBeenCalledExactlyOnceWith({ jobId: job.id });
+        } else {
+          expect(stored).toMatchObject({ status: 'completed', result });
+          expect(service.queue.cancel).not.toHaveBeenCalled();
+        }
+      });
+    });
+
+    describe('retry', () => {
+      it('Retry a failed job', async () => {
+        service.queue.enqueue.mockResolvedValueOnce({});
+        const job = await service.seed({
+          status: 'failed',
+          attempts: 3,
+          maxAttempts: 3,
+          error: ERROR,
+        });
+
+        const retried = await changed(await service.changeStatus({ id: job.id, body: RETRY }));
+
+        expect(retried).toEqual({
+          ...job,
+          status: 'pending',
+          attempts: 0,
+          error: null,
+          result: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: retried.updatedAt,
+        });
+        expect(await service.stored(job.id)).toEqual(retried);
+        expect(service.queue.cancel).not.toHaveBeenCalled();
+      });
+
+      it('Retried job is queued', async () => {
+        service.queue.enqueue.mockResolvedValueOnce({});
+        const job = await service.seed({ status: 'failed', attempts: 3, maxAttempts: 3 });
+
+        await changed(await service.changeStatus({ id: job.id, body: RETRY }));
+
+        expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+          jobId: job.id,
+          run: 2,
+          attempt: 1,
+        });
+      });
+
+      it('A retried job starts again from its first attempt', async () => {
+        service.queue.enqueue.mockResolvedValueOnce({});
+        const job = await service.seed({ status: 'failed', attempts: 3, maxAttempts: 3 });
+        await changed(await service.changeStatus({ id: job.id, body: RETRY }));
+
+        const response = await service.report({ id: job.id, body: { status: 'processing' } });
+
+        expect(response.status).toBe(200);
+        expect(Job.parse(await response.json())).toMatchObject({
+          status: 'processing',
+          attempts: 1,
+        });
+      });
+
+      it('A job retried twice is queued in a new run each time', async () => {
+        const job = await service.seed({ status: 'failed', attempts: 1, maxAttempts: 1 });
+        for (let run = 2; run <= 3; run += 1) {
+          service.queue.enqueue.mockResolvedValueOnce({});
+          await changed(await service.changeStatus({ id: job.id, body: RETRY }));
+          expect(
+            (await service.report({ id: job.id, body: { status: 'processing' } })).status,
+          ).toBe(200);
+          expect(
+            (await service.report({ id: job.id, body: { status: 'failed', error: ERROR } })).status,
+          ).toBe(200);
+        }
+
+        expect(service.queue.enqueue.mock.calls.map(([entry]) => entry)).toEqual([
+          { jobId: job.id, run: 2, attempt: 1 },
+          { jobId: job.id, run: 3, attempt: 1 },
+        ]);
+      });
+
+      it('Manual retry survives an unavailable queue', async () => {
+        service.queue.enqueue.mockImplementationOnce(({ jobId, run, attempt }) =>
+          Promise.reject(new JobQueueUnavailableError({ jobId, run, attempt })),
+        );
+        const job = await service.seed({ status: 'failed', attempts: 3, maxAttempts: 3 });
+
+        const retried = await changed(await service.changeStatus({ id: job.id, body: RETRY }));
+
+        expect(retried.status).toBe('pending');
+        expect((await service.stored(job.id)).status).toBe('pending');
+        expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+          jobId: job.id,
+          run: 2,
+          attempt: 1,
+        });
+      });
+
+      it('Retry a job that has not failed', async () => {
+        const status = 'cancelled';
+        const job = await service.seed({ status });
+
+        const response = await service.changeStatus({ id: job.id, body: RETRY });
+
+        await service.expectConflict({ response, status });
+        expect(await service.stored(job.id)).toEqual(job);
+        expect(service.queue.enqueue).not.toHaveBeenCalled();
+      });
+
+      it('Two retries at the same time', async () => {
+        service.queue.enqueue.mockResolvedValueOnce({});
+        const job = await service.seed({ status: 'failed', attempts: 3, maxAttempts: 3 });
+
+        const responses = await Promise.all([
+          service.changeStatus({ id: job.id, body: RETRY }),
+          service.changeStatus({ id: job.id, body: RETRY }),
+        ]);
+
+        expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+        await service.expectConflict({
+          response: responses.find((response) => response.status === 409)!,
+          status: 'pending',
+        });
+        expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+          jobId: job.id,
+          run: 2,
+          attempt: 1,
+        });
+        expect(await service.stored(job.id)).toMatchObject({ status: 'pending', attempts: 0 });
       });
     });
   });

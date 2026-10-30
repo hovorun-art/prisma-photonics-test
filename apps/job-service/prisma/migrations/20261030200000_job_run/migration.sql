@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "jobs" ADD COLUMN "run" INTEGER NOT NULL DEFAULT 1;

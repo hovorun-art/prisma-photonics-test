@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { type EmailJob, FINISHED_JOB_STATUSES, type Job } from '@job-queue/contracts';
-import { type Clock, JobStatusConflictError } from '@job-queue/kernel';
+import { type Clock, JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
@@ -92,19 +92,19 @@ describe('JobServiceImpl', () => {
       queue.enqueue.mockResolvedValueOnce({});
       await service.create({ job: request });
 
-      expect(queue.enqueue).toHaveBeenCalledWith({ jobId: JOB_ID, attempt: 1 });
+      expect(queue.enqueue).toHaveBeenCalledWith({ jobId: JOB_ID, run: 1, attempt: 1 });
     });
 
     it('Queue unavailable during submit', async () => {
       queue.enqueue.mockRejectedValueOnce(
-        new JobQueueUnavailableError({ jobId: JOB_ID, attempt: 1 }),
+        new JobQueueUnavailableError({ jobId: JOB_ID, run: 1, attempt: 1 }),
       );
 
       const { job } = await service.create({ job: request });
 
       expect(job.status).toBe('pending');
       expect(logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
+        expect.objectContaining({ jobId: JOB_ID, run: 1, attempt: 1 }),
         expect.any(String),
       );
     });
@@ -223,8 +223,8 @@ describe('JobServiceImpl', () => {
 
       expect(queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
         entries: [
-          { jobId: ids[0], attempt: 1 },
-          { jobId: ids[1], attempt: 1 },
+          { jobId: ids[0], run: 1, attempt: 1 },
+          { jobId: ids[1], run: 1, attempt: 1 },
         ],
       });
       expect(queue.enqueue).not.toHaveBeenCalled();
@@ -232,8 +232,8 @@ describe('JobServiceImpl', () => {
 
     it('Queue unavailable during bulk submit', async () => {
       const entries = [
-        { jobId: ids[0]!, attempt: 1 },
-        { jobId: ids[1]!, attempt: 1 },
+        { jobId: ids[0]!, run: 1, attempt: 1 },
+        { jobId: ids[1]!, run: 1, attempt: 1 },
       ];
       queue.enqueueMany.mockRejectedValueOnce(new JobQueueUnavailableError({ entries }));
 
@@ -329,7 +329,7 @@ describe('JobServiceImpl', () => {
 
       expect(job).toMatchObject({ type: 'flight-transit', status: 'pending' });
       expect(repository.create).toHaveBeenCalledOnce();
-      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: JOB_ID, attempt: 1 });
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: JOB_ID, run: 1, attempt: 1 });
     });
 
     it('accepts a departure on a later day', async () => {
@@ -358,7 +358,7 @@ describe('JobServiceImpl', () => {
 
   describe('get', () => {
     it('returns the stored job', async () => {
-      repository.get.mockResolvedValueOnce({ job: storedJob() });
+      repository.get.mockResolvedValueOnce({ job: storedJob(), run: 1 });
 
       await expect(service.get({ id: JOB_ID })).resolves.toEqual({ job: storedJob() });
     });
@@ -442,7 +442,10 @@ describe('JobServiceImpl', () => {
 
     it('Start a pending job', async () => {
       acceptsWrite();
-      repository.get.mockResolvedValueOnce({ job: storedJob({ status: 'pending', attempts: 0 }) });
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({ status: 'pending', attempts: 0 }),
+        run: 1,
+      });
 
       const { job } = await service.update({ id: JOB_ID, update: { status: 'processing' } });
 
@@ -462,7 +465,7 @@ describe('JobServiceImpl', () => {
         'failed',
         'cancelled',
       ] as const) {
-        repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }) });
+        repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }), run: 1 });
 
         const update = service.update({ id: JOB_ID, update: { status: 'processing' } });
 
@@ -473,7 +476,7 @@ describe('JobServiceImpl', () => {
     });
 
     it('Two workers start the same job', async () => {
-      repository.get.mockResolvedValueOnce({ job: storedJob() });
+      repository.get.mockResolvedValueOnce({ job: storedJob(), run: 1 });
       repository.update.mockRejectedValueOnce(
         new JobStatusConflictError({ id: JOB_ID, status: 'processing' }),
       );
@@ -487,6 +490,7 @@ describe('JobServiceImpl', () => {
       acceptsWrite();
       repository.get.mockResolvedValueOnce({
         job: storedJob({ status: 'processing', attempts: 1 }),
+        run: 1,
       });
 
       await service.update({
@@ -509,6 +513,7 @@ describe('JobServiceImpl', () => {
     it('Result does not match the job type', async () => {
       repository.get.mockResolvedValueOnce({
         job: storedJob({ status: 'processing', attempts: 1 }),
+        run: 1,
       });
 
       const update = service.update({
@@ -525,7 +530,7 @@ describe('JobServiceImpl', () => {
 
     it('Complete a job that is not processing', async () => {
       for (const status of ['scheduled', 'pending', 'completed', 'failed', 'cancelled'] as const) {
-        repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }) });
+        repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }), run: 1 });
 
         await expect(
           service.update({
@@ -542,6 +547,7 @@ describe('JobServiceImpl', () => {
       queue.enqueue.mockResolvedValueOnce({});
       repository.get.mockResolvedValueOnce({
         job: storedJob({ status: 'processing', attempts: 1, maxAttempts: 3 }),
+        run: 1,
       });
 
       const { job } = await service.update({ id: JOB_ID, update: { status: 'failed', error } });
@@ -552,23 +558,37 @@ describe('JobServiceImpl', () => {
         changes: { status: 'pending', error, completedAt: null },
       });
       expect(job.status).toBe('pending');
-      expect(queue.enqueue).toHaveBeenCalledWith({ jobId: JOB_ID, attempt: 2 });
+      expect(queue.enqueue).toHaveBeenCalledWith({ jobId: JOB_ID, run: 1, attempt: 2 });
+    });
+
+    it("queues the next attempt of a failure in the job's current run", async () => {
+      acceptsWrite();
+      queue.enqueue.mockResolvedValueOnce({});
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({ status: 'processing', attempts: 1, maxAttempts: 3 }),
+        run: 4,
+      });
+
+      await service.update({ id: JOB_ID, update: { status: 'failed', error } });
+
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: JOB_ID, run: 4, attempt: 2 });
     });
 
     it('Retry survives an unavailable queue', async () => {
       acceptsWrite();
       repository.get.mockResolvedValueOnce({
         job: storedJob({ status: 'processing', attempts: 1, maxAttempts: 3 }),
+        run: 1,
       });
       queue.enqueue.mockRejectedValueOnce(
-        new JobQueueUnavailableError({ jobId: JOB_ID, attempt: 2 }),
+        new JobQueueUnavailableError({ jobId: JOB_ID, run: 1, attempt: 2 }),
       );
 
       const { job } = await service.update({ id: JOB_ID, update: { status: 'failed', error } });
 
       expect(job.status).toBe('pending');
       expect(logger.warn).toHaveBeenCalledWith(
-        expect.objectContaining({ jobId: JOB_ID, attempt: 2 }),
+        expect.objectContaining({ jobId: JOB_ID, run: 1, attempt: 2 }),
         expect.any(String),
       );
     });
@@ -577,6 +597,7 @@ describe('JobServiceImpl', () => {
       acceptsWrite();
       repository.get.mockResolvedValueOnce({
         job: storedJob({ status: 'processing', attempts: 3, maxAttempts: 3 }),
+        run: 1,
       });
 
       const { job } = await service.update({ id: JOB_ID, update: { status: 'failed', error } });
@@ -592,12 +613,216 @@ describe('JobServiceImpl', () => {
 
     it('Fail a job that is not processing', async () => {
       for (const status of ['scheduled', 'pending', 'completed', 'failed', 'cancelled'] as const) {
-        repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }) });
+        repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }), run: 1 });
 
         await expect(
           service.update({ id: JOB_ID, update: { status: 'failed', error } }),
         ).rejects.toMatchObject({ code: 'JOB_STATUS_CONFLICT', details: { status } });
       }
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('changeStatus', () => {
+    const error = { code: 'SEND_FAILED', message: 'Mailbox unavailable' };
+
+    /** The repository accepts the next write and returns the job with the changes applied. */
+    const acceptsWrite = (base: Job): void => {
+      repository.update.mockImplementationOnce((req) => {
+        const { run: _run, ...changes } = req.changes;
+        return Promise.resolve({ job: { ...base, ...changes } as Job });
+      });
+    };
+
+    describe('cancel', () => {
+      const cancel = { id: JOB_ID, change: { status: 'cancelled' } } as const;
+
+      it.each([
+        ['Cancel a pending job', 'pending', 0],
+        ['Cancel a scheduled job', 'scheduled', 0],
+        ['Cancel a processing job', 'processing', 1],
+      ] as const)('%s', async (_name, status, attempts) => {
+        const current = storedJob({ status, attempts });
+        repository.get.mockResolvedValueOnce({ job: current, run: 1 });
+        acceptsWrite(current);
+        queue.cancel.mockResolvedValueOnce({});
+
+        const { job } = await service.changeStatus(cancel);
+
+        expect(repository.update).toHaveBeenCalledExactlyOnceWith({
+          id: JOB_ID,
+          expected: { status, attempts },
+          changes: { status: 'cancelled', completedAt: NOW },
+        });
+        expect(job).toMatchObject({ status: 'cancelled', attempts, completedAt: NOW });
+        expect(queue.cancel).toHaveBeenCalledExactlyOnceWith({ jobId: JOB_ID });
+        expect(queue.enqueue).not.toHaveBeenCalled();
+      });
+
+      it('keeps the error and result of a cancelled job', async () => {
+        const current = storedJob({ status: 'pending', attempts: 1, error });
+        repository.get.mockResolvedValueOnce({ job: current, run: 1 });
+        acceptsWrite(current);
+        queue.cancel.mockResolvedValueOnce({});
+
+        await service.changeStatus(cancel);
+
+        const changes = repository.update.mock.calls[0]?.[0].changes;
+        expect(changes).not.toHaveProperty('error');
+        expect(changes).not.toHaveProperty('result');
+        expect(changes).not.toHaveProperty('attempts');
+      });
+
+      it('returns the cancelled job and logs a warning when the cancellation cannot be announced', async () => {
+        const current = storedJob({ status: 'processing', attempts: 1 });
+        repository.get.mockResolvedValueOnce({ job: current, run: 1 });
+        acceptsWrite(current);
+        queue.cancel.mockRejectedValueOnce(
+          new JobQueueUnavailableError({ cancelledJobId: JOB_ID }),
+        );
+
+        const { job } = await service.changeStatus(cancel);
+
+        expect(job.status).toBe('cancelled');
+        expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ jobId: JOB_ID }),
+          expect.any(String),
+        );
+      });
+
+      it('Cancel a finished job', async () => {
+        for (const status of FINISHED_JOB_STATUSES) {
+          repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }), run: 1 });
+
+          const change = service.changeStatus(cancel);
+
+          await expect(change).rejects.toBeInstanceOf(JobStatusConflictError);
+          await expect(change).rejects.toMatchObject({ details: { status } });
+        }
+        expect(repository.update).not.toHaveBeenCalled();
+        expect(queue.cancel).not.toHaveBeenCalled();
+      });
+
+      it('Two cancels at the same time: the losing write is a conflict and announces nothing', async () => {
+        repository.get.mockResolvedValueOnce({ job: storedJob(), run: 1 });
+        repository.update.mockRejectedValueOnce(
+          new JobStatusConflictError({ id: JOB_ID, status: 'cancelled' }),
+        );
+
+        await expect(service.changeStatus(cancel)).rejects.toBeInstanceOf(JobStatusConflictError);
+        expect(queue.cancel).not.toHaveBeenCalled();
+      });
+    });
+
+    describe('retry', () => {
+      const retry = { id: JOB_ID, change: { status: 'pending' } } as const;
+      const failed = (): EmailJob =>
+        storedJob({
+          status: 'failed',
+          attempts: 3,
+          maxAttempts: 3,
+          error,
+          startedAt: '2026-10-29T11:30:00.000Z',
+          completedAt: '2026-10-29T11:31:00.000Z',
+        });
+
+      it('Retry a failed job', async () => {
+        repository.get.mockResolvedValueOnce({ job: failed(), run: 2 });
+        acceptsWrite(failed());
+        queue.enqueue.mockResolvedValueOnce({});
+
+        const { job } = await service.changeStatus(retry);
+
+        expect(repository.update).toHaveBeenCalledExactlyOnceWith({
+          id: JOB_ID,
+          expected: { status: 'failed', attempts: 3 },
+          changes: {
+            status: 'pending',
+            attempts: 0,
+            result: null,
+            error: null,
+            startedAt: null,
+            completedAt: null,
+            run: 3,
+          },
+        });
+        expect(job).toEqual({
+          ...failed(),
+          status: 'pending',
+          attempts: 0,
+          error: null,
+          startedAt: null,
+          completedAt: null,
+        });
+        expect(queue.cancel).not.toHaveBeenCalled();
+      });
+
+      it('Retried job is queued', async () => {
+        repository.get.mockResolvedValueOnce({ job: failed(), run: 2 });
+        acceptsWrite(failed());
+        queue.enqueue.mockResolvedValueOnce({});
+
+        await service.changeStatus(retry);
+
+        expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+          jobId: JOB_ID,
+          run: 3,
+          attempt: 1,
+        });
+      });
+
+      it('Manual retry survives an unavailable queue', async () => {
+        repository.get.mockResolvedValueOnce({ job: failed(), run: 1 });
+        acceptsWrite(failed());
+        queue.enqueue.mockRejectedValueOnce(
+          new JobQueueUnavailableError({ jobId: JOB_ID, run: 2, attempt: 1 }),
+        );
+
+        const { job } = await service.changeStatus(retry);
+
+        expect(job.status).toBe('pending');
+        expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ jobId: JOB_ID, run: 2, attempt: 1 }),
+          expect.any(String),
+        );
+      });
+
+      it('Retry a job that has not failed', async () => {
+        for (const status of [
+          'scheduled',
+          'pending',
+          'processing',
+          'completed',
+          'cancelled',
+        ] as const) {
+          repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }), run: 1 });
+
+          const change = service.changeStatus(retry);
+
+          await expect(change).rejects.toBeInstanceOf(JobStatusConflictError);
+          await expect(change).rejects.toMatchObject({ details: { status } });
+        }
+        expect(repository.update).not.toHaveBeenCalled();
+        expect(queue.enqueue).not.toHaveBeenCalled();
+      });
+
+      it('Two retries at the same time: the losing write is a conflict and queues nothing', async () => {
+        repository.get.mockResolvedValueOnce({ job: failed(), run: 1 });
+        repository.update.mockRejectedValueOnce(
+          new JobStatusConflictError({ id: JOB_ID, status: 'pending' }),
+        );
+
+        await expect(service.changeStatus(retry)).rejects.toBeInstanceOf(JobStatusConflictError);
+        expect(queue.enqueue).not.toHaveBeenCalled();
+      });
+    });
+
+    it('Status change for an unknown job', async () => {
+      repository.get.mockRejectedValueOnce(new JobNotFoundError({ id: JOB_ID }));
+
+      await expect(
+        service.changeStatus({ id: JOB_ID, change: { status: 'cancelled' } }),
+      ).rejects.toBeInstanceOf(JobNotFoundError);
       expect(repository.update).not.toHaveBeenCalled();
     });
   });

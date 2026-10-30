@@ -1,4 +1,5 @@
 import {
+  ChangeJobStatusRequest,
   CreateJobRequest,
   CreateJobsBulkRequest,
   CreateJobsBulkResponse,
@@ -19,10 +20,12 @@ import { createZodDto } from 'nestjs-zod';
  */
 const CreateJobDtoBase: new () => object = createZodDto(CreateJobRequest);
 const JobDtoBase: new () => object = createZodDto(Job);
+const ChangeJobStatusDtoBase: new () => object = createZodDto(ChangeJobStatusRequest);
 
 /** Request and response classes of the public job routes, generated from the shared Zod schemas. */
 export class CreateJobDto extends CreateJobDtoBase {}
 export class JobDto extends JobDtoBase {}
+export class ChangeJobStatusDto extends ChangeJobStatusDtoBase {}
 export class CreateJobsBulkDto extends createZodDto(CreateJobsBulkRequest) {}
 export class CreateJobsBulkResponseDto extends createZodDto(CreateJobsBulkResponse) {}
 export class JobIdParamsDto extends createZodDto(JobIdParams) {}

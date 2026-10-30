@@ -75,7 +75,7 @@ queue again, so it runs as a newly submitted job would.
 - **WHEN** a client retries a `failed` job on the full system
 - **THEN** a worker takes the job again and getting it later shows it finished again with at least one attempt
 
-#### Scenario: Retry survives an unavailable queue
+#### Scenario: Manual retry survives an unavailable queue
 - **WHEN** a client retries a `failed` job while the job queue cannot be reached
 - **THEN** the response has HTTP status 200 with the job in status `pending`, and getting the job later still shows it `pending`
 

@@ -42,6 +42,8 @@ model Job {
   /// Attempts started so far; counted when an attempt starts.
   attempts    Int
   maxAttempts Int       @map("max_attempts")
+  /// 1, plus one per manual retry; queue entry ids carry it, since a retry starts attempts again at 1.
+  run         Int       @default(1)
   result      Json?
   error       Json?
   /// The group the job was submitted in, as the client gave it; no meaning to job-service.

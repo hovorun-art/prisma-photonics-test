@@ -62,7 +62,7 @@ describe('ErrorResponseFilter', () => {
     const cases = [
       { error: new JobNotFoundError({ id }), status: 404 },
       { error: new JobStatusConflictError({ id, status: 'processing' }), status: 409 },
-      { error: new JobQueueUnavailableError({ jobId: id, attempt: 1 }), status: 503 },
+      { error: new JobQueueUnavailableError({ jobId: id, run: 1, attempt: 1 }), status: 503 },
     ];
 
     for (const { error, status } of cases) {
