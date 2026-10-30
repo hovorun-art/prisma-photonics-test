@@ -56,7 +56,7 @@ describe('WebhookJobHandler', () => {
 
     let finished = false;
     const running = handler()
-      .run({ job: JOB, signal })
+      .run({ job: JOB, attempt: 1, signal })
       .then(() => {
         finished = true;
       });
@@ -77,7 +77,7 @@ describe('WebhookJobHandler', () => {
       random.next.mockReturnValueOnce({ value });
       random.uuid.mockReturnValueOnce({ value: REQUEST_ID });
 
-      const response = await neverFails.run({ job: JOB, signal });
+      const response = await neverFails.run({ job: JOB, attempt: 1, signal });
 
       expect(response.outcome).toBe('completed');
     }
@@ -90,7 +90,7 @@ describe('WebhookJobHandler', () => {
       random.next.mockReturnValueOnce({ value });
       random.int.mockReturnValueOnce({ value: 0 });
 
-      const response = await alwaysFails.run({ job: JOB, signal });
+      const response = await alwaysFails.run({ job: JOB, attempt: 1, signal });
 
       expect(response.outcome).toBe('failed');
     }
@@ -104,8 +104,8 @@ describe('WebhookJobHandler', () => {
       random.uuid.mockReturnValueOnce({ value });
     }
 
-    const first = await succeeds.run({ job: JOB, signal });
-    const second = await succeeds.run({ job: JOB, signal });
+    const first = await succeeds.run({ job: JOB, attempt: 1, signal });
+    const second = await succeeds.run({ job: JOB, attempt: 1, signal });
 
     expect(first).toEqual({
       outcome: 'completed',
@@ -125,7 +125,7 @@ describe('WebhookJobHandler', () => {
       random.next.mockReturnValueOnce({ value: 0.1 });
       random.int.mockReturnValueOnce({ value: index });
 
-      const response = await fails.run({ job: JOB, signal });
+      const response = await fails.run({ job: JOB, attempt: 1, signal });
 
       expect(random.int).toHaveBeenLastCalledWith({ min: 0, max: statuses.length - 1 });
       expect(response).toEqual({

@@ -311,10 +311,52 @@ job's report must match `FlightTransitJobResult` (coordinates in range, no negat
 least two path points and two waypoints), but job-service does not check that it names the
 payload's airports or date. *Why:* as for webhook, job-service owns state and shape; the worker owns
 the content it generates. *Trade-off:* a buggy generator could store a report for the wrong route;
-its own tests guard that. The type was added before its handler (`flight-transit-job-execution`),
-so until then a queued transit job fails as `UNSUPPORTED_JOB_TYPE` after its attempts. Postgres
+its own tests guard that. The type was added one change before its handler
+(`flight-transit-job-execution`), so for those commits a queued transit job failed as
+`UNSUPPORTED_JOB_TYPE` after its attempts. Postgres
 stores the type as `flight-transit`; Prisma names the enum value `flight_transit` (no `-` allowed),
 so the repository maps between the two.
+
+**Flight transit: a made-up flight on the real great circle.** job-execution-service generates the
+report from the bundled airports alone. The distance is the great-circle distance on a 6371 km
+sphere; the path is the configured number of evenly spaced points on that great circle
+(`FLIGHT_TRANSIT_PATH_POINTS`, 64), with longitudes wrapped into [-180, 180] on routes across the
+antimeridian. The flight leaves at a random whole five minutes of the departure date in the origin
+airport's own time zone. The aircraft fits the distance: a narrow-body (A320neo, B737 MAX) below
+`FLIGHT_TRANSIT_LONG_HAUL_KM` (4000 km), a wide-body (A350-900, B787-9, B777-300ER) from there on,
+each with its own cruise speed and altitude; flight number and registration are drawn from small
+bundled lists. The waypoints follow a climb-cruise-descent profile (`FLIGHT_TRANSIT_CLIMB_KM` 200,
+`FLIGHT_TRANSIT_DESCENT_KM` 250, `FLIGHT_TRANSIT_CRUISE_WAYPOINTS` 4): Departure, Top of climb,
+Cruise 1..N, Top of descent, Arrival; a flight shorter than climb plus descent (LHR-CDG) gets a
+single lower `Peak` instead. Speed changes linearly on climb and descent, so `durationMin` and every
+waypoint's time come from the same profile, and the last waypoint lands exactly at `arrivalAt`.
+*Why:* the map needs a plausible route and hover details that agree with each other, not real
+schedules; all randomness goes through the `Random` port in a fixed draw order, so every scenario is
+pinned in unit tests. *Trade-off:* every attempt draws a new report (no seed), so a retried job may
+show a different flight than a failed earlier attempt would have; only the completed report is
+stored. The generator (`TurfTransitReportGenerator`) sits behind its own `TransitReportGenerator`
+port, so the simulated wait and failure are tested apart from the geometry, and a real data source
+(`flight-transit-real-data`) can replace it later.
+
+**Flight transit: simulated data-source failures.** Like webhook, a transit attempt waits a fixed
+configured time (`FLIGHT_TRANSIT_GENERATE_MS`, 2000 ms) and then fails at the configured rate
+(`FLIGHT_TRANSIT_FAILURE_RATE`, 0.1) with `FLIGHT_TRANSIT_DATA_UNAVAILABLE` ("Flight data for
+LHR-JFK is unavailable", details `{ origin, destination }`), as if an upstream flight-data source
+had nothing for the route. *Why:* retries are exercised on this type too; a lower rate than webhook
+keeps most transit jobs completing on the first try. *Trade-off:* about 0.1% of transit jobs fail for
+good with 3 attempts; set the rate to 0 for demos. Found while building it: the job a handler gets
+was read before job-service counts the attempt on start, so handlers now also receive the queue's
+attempt number for their log lines instead of reading the stale `job.attempts`.
+
+**Flight transit: libraries for time zones and geometry.** Node 26 has no native `Temporal`, so a
+local time in an IANA zone becomes a UTC instant with `@date-fns/tz` (1.5.0, May 2026, ~41.5M weekly
+downloads, own types, ESM); chosen over `temporal-polyfill` (1.0.6, ~6.7M, the standard API but
+young) and `luxon` (3.7.2, ~57.7M, but a larger library with its own date type and separate types).
+The great-circle distance and the points along the route come from `@turf/distance` and
+`@turf/along` (7.4.0, Aug 2026, ~6.3M and ~3.0M weekly downloads, own types, ESM); chosen over
+`@turf/great-circle` (~2.4M, gives the whole line at once but splits it into a MultiLineString at the
+antimeridian, and still needs `@turf/distance`) and `geolib` (~0.86M, CJS, no point-along-route helper).
+Turf measures in radians here so the spec's 6371 km radius holds (its own kilometres use 6371.0088).
 
 ---
 

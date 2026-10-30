@@ -48,8 +48,8 @@ describe('EmailJobHandler', () => {
       .mockReturnValueOnce({ value: MESSAGE_ID })
       .mockReturnValueOnce({ value: OTHER_MESSAGE_ID });
 
-    const first = await handler.run({ job: JOB, signal });
-    const second = await handler.run({ job: JOB, signal });
+    const first = await handler.run({ job: JOB, attempt: 1, signal });
+    const second = await handler.run({ job: JOB, attempt: 1, signal });
 
     expect(first).toEqual({ outcome: 'completed', result: { messageId: MESSAGE_ID } });
     expect(second).toEqual({ outcome: 'completed', result: { messageId: OTHER_MESSAGE_ID } });
@@ -70,7 +70,7 @@ describe('EmailJobHandler', () => {
     const signal = new AbortController().signal;
     let finished = false;
 
-    const running = handler.run({ job: JOB, signal }).then(() => {
+    const running = handler.run({ job: JOB, attempt: 1, signal }).then(() => {
       finished = true;
     });
     await Promise.resolve();
