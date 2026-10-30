@@ -1,5 +1,7 @@
+import { randomUUID } from 'node:crypto';
+
 import { ErrorBody } from '@job-queue/contracts';
-import { DomainError } from '@job-queue/kernel';
+import { DomainError, JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
 import { type ArgumentsHost, BadRequestException, Logger, NotFoundException } from '@nestjs/common';
 import { ZodValidationException } from 'nestjs-zod';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,9 +9,7 @@ import { z } from 'zod';
 
 import { MalformedBodyError } from '../../domain/http/malformed-body.error.js';
 import { PayloadTooLargeError } from '../../domain/http/payload-too-large.error.js';
-import { JobNotFoundError } from '../../domain/jobs/errors/job-not-found.error.js';
 import { JobQueueUnavailableError } from '../../domain/jobs/errors/job-queue-unavailable.error.js';
-import { JobStatusConflictError } from '../../domain/jobs/errors/job-status-conflict.error.js';
 import { ErrorResponseFilter } from './error-response.filter.js';
 
 class InternalAccessDenied extends DomainError<'INTERNAL_UNAUTHORIZED'> {
@@ -57,7 +57,7 @@ describe('ErrorResponseFilter', () => {
   });
 
   it('maps the job errors to 404, 409 and 503 with their details', () => {
-    const id = '7b0f5a3e-2c4d-4e8f-9a1b-3c5d7e9f1a2b';
+    const id = randomUUID();
     const cases = [
       { error: new JobNotFoundError({ id }), status: 404 },
       { error: new JobStatusConflictError({ id, status: 'processing' }), status: 409 },

@@ -13,6 +13,16 @@ describe('SystemRandom', () => {
     }
   });
 
+  it('returns a new UUID each time', () => {
+    const random = new SystemRandom();
+
+    const first = random.uuid().value;
+    const second = random.uuid().value;
+
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+    expect(second).not.toBe(first);
+  });
+
   it('returns integers within the inclusive range', () => {
     const random = new SystemRandom();
 

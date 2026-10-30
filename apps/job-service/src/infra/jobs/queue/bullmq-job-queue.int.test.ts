@@ -1,4 +1,6 @@
-import { JOB_QUEUE_NAME } from '@job-queue/contracts';
+import { randomUUID } from 'node:crypto';
+
+import { JOB_QUEUE_NAME, JobQueueEntryId } from '@job-queue/contracts';
 import { CONTAINER_IMAGES, UNREACHABLE_REDIS_URL } from '@job-queue/test-support';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { Queue } from 'bullmq';
@@ -7,7 +9,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { JobQueueUnavailableError } from '../../../domain/jobs/errors/job-queue-unavailable.error.js';
 import { BullMqJobQueue } from './bullmq-job-queue.js';
 
-const JOB_ID = '7b0f5a3e-2c4d-4e8f-9a1b-3c5d7e9f1a2b';
+const JOB_ID = randomUUID();
 const ENQUEUE_TIMEOUT_MS = 500;
 
 describe('BullMqJobQueue against Redis', () => {
@@ -35,7 +37,7 @@ describe('BullMqJobQueue against Redis', () => {
   it('Submitted job is queued', async () => {
     await expect(queue.enqueue({ jobId: JOB_ID, attempt: 1 })).resolves.toEqual({});
 
-    const entry = await observer.getJob(`${JOB_ID}_1`);
+    const entry = await observer.getJob(JobQueueEntryId.encode({ jobId: JOB_ID, attempt: 1 }));
     expect(entry?.data).toEqual({ jobId: JOB_ID });
     expect(await observer.getJobCountByTypes('waiting')).toBe(1);
   });
@@ -52,7 +54,9 @@ describe('BullMqJobQueue against Redis', () => {
     await queue.enqueue({ jobId: JOB_ID, attempt: 2 });
 
     expect(await observer.getJobCountByTypes('waiting')).toBe(2);
-    expect((await observer.getJob(`${JOB_ID}_2`))?.data).toEqual({ jobId: JOB_ID });
+    expect(
+      (await observer.getJob(JobQueueEntryId.encode({ jobId: JOB_ID, attempt: 2 })))?.data,
+    ).toEqual({ jobId: JOB_ID });
   });
 
   it('rejects within the configured timeout while Redis cannot be reached', async () => {

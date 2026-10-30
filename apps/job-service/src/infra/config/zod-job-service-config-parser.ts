@@ -24,7 +24,6 @@ const JobServiceEnv = baseEnv
       .positive()
       .default(DEFAULT_BODY_LIMIT_BYTES),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
-    INTERNAL_SERVICE_TOKEN: z.string().min(1, 'must be a non-empty service token'),
     JOB_SERVICE_QUERY_DEFAULT_LIMIT: z.coerce
       .number()
       .int()
@@ -49,7 +48,6 @@ const JobServiceEnv = baseEnv
     ...baseEnv.toConfig({ env }).config,
     bodyLimitBytes: env.JOB_SERVICE_BODY_LIMIT_BYTES,
     databaseUrl: env.DATABASE_URL,
-    internalServiceToken: env.INTERNAL_SERVICE_TOKEN,
     queryDefaultLimit: env.JOB_SERVICE_QUERY_DEFAULT_LIMIT,
     queryMaxLimit: env.JOB_SERVICE_QUERY_MAX_LIMIT,
     enqueueTimeoutMs: env.JOB_SERVICE_ENQUEUE_TIMEOUT_MS,

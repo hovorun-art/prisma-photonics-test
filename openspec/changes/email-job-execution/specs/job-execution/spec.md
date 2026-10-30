@@ -66,7 +66,8 @@ and message, or with code `HANDLER_ERROR` when the error has no code of its own.
 
 ### Requirement: Failed reports are retried, then given up
 When a state report cannot reach job-service, job-execution-service SHALL retry it the configured
-number of times with the configured delay; when every try fails, it SHALL log an error with the job
+number of times, waiting longer before each try (from the configured delay up to the configured
+maximum, varied at random so workers do not retry together); when every try fails, it SHALL log an error with the job
 id and drop the entry.
 
 #### Scenario: Report succeeds after a retry

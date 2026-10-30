@@ -5,11 +5,10 @@ import {
   type JobError,
   type JobStatus,
 } from '@job-queue/contracts';
-import type { Clock } from '@job-queue/kernel';
+import { type Clock, JobStatusConflictError } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
-import { JobStatusConflictError } from '../../domain/jobs/errors/job-status-conflict.error.js';
 import { QueryLimitExceededError } from '../../domain/jobs/errors/query-limit-exceeded.error.js';
 import type { JobQueue } from '../../domain/jobs/job-queue.js';
 import type { JobChanges, JobRepository } from '../../domain/jobs/job-repository.js';

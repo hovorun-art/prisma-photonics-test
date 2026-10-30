@@ -81,9 +81,15 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-info}
       JOB_EXECUTION_SERVICE_PORT: ${JOB_EXECUTION_SERVICE_PORT:-3001}
       REDIS_URL: redis://redis:6379
+      JOB_SERVICE_URL: http://job-service:${JOB_SERVICE_PORT:-3000}
+      INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-change-me-local-dev-token}
     depends_on:
       redis:
         condition: service_healthy
+      job-service:
+        condition: service_healthy
+    # Longer than the shutdown grace period (10 s by default), so running jobs can finish first.
+    stop_grace_period: 15s
     healthcheck:
       <<: *node-healthcheck
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:$${JOB_EXECUTION_SERVICE_PORT}/health']

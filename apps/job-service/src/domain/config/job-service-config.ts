@@ -7,8 +7,6 @@ export interface JobServiceConfig extends BaseConfig {
   readonly databaseUrl: string;
   /** The largest request body job-service accepts, in bytes. */
   readonly bodyLimitBytes: number;
-  /** The shared token job-execution-service presents on every `/internal` call. */
-  readonly internalServiceToken: string;
   /** Page size of a job query without `limit`. */
   readonly queryDefaultLimit: number;
   /** Largest `limit` a job query may ask for. */

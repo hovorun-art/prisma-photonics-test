@@ -1,18 +1,19 @@
+import { randomUUID } from 'node:crypto';
+
 import { FINISHED_JOB_STATUSES, type Job } from '@job-queue/contracts';
-import type { Clock } from '@job-queue/kernel';
+import { type Clock, JobStatusConflictError } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
 import { JobQueueUnavailableError } from '../../domain/jobs/errors/job-queue-unavailable.error.js';
-import { JobStatusConflictError } from '../../domain/jobs/errors/job-status-conflict.error.js';
 import { QueryLimitExceededError } from '../../domain/jobs/errors/query-limit-exceeded.error.js';
 import type { JobQueue } from '../../domain/jobs/job-queue.js';
 import type { JobRepository } from '../../domain/jobs/job-repository.js';
 import { JobServiceImpl } from './job-service.impl.js';
 
-const JOB_ID = '7b0f5a3e-2c4d-4e8f-9a1b-3c5d7e9f1a2b';
+const JOB_ID = randomUUID();
 const NOW = '2026-10-29T12:00:00.000Z';
 const PARAMS = { queryDefaultLimit: 20, queryMaxLimit: 100 };
 

@@ -4,9 +4,10 @@ A background job processing system: an API accepts jobs, workers take them from 
 them, Postgres keeps their state and a web UI shows them. Built as an interview task; design
 trade-offs are in [DECISIONS.md](DECISIONS.md), AI usage in `AI_USAGE.md`.
 
-> Status: the job API works (submit, get, query and delete email jobs; queued on submit).
-> Running jobs and the UI for them arrive next ([docs/roadmap/](docs/roadmap/)). The full API is
-> documented at http://localhost:3000/docs.
+> Status: email jobs run end to end: submit through the API, a job-execution-service instance
+> picks the job from the queue and runs it, and the job ends `completed` with a mock message id.
+> The UI for jobs arrives next ([docs/roadmap/](docs/roadmap/)). The full API is documented at
+> http://localhost:3000/docs.
 
 ## Run it
 
@@ -49,8 +50,10 @@ curl -s -X POST http://localhost:3000/v1/jobs \
   -d '{"type":"email","payload":{"to":"ada@example.com","subject":"Hello","body":"Hi Ada"}}'
 # {"id":"<uuid>","status":"pending","priority":5,"attempts":0,"maxAttempts":3,...,"type":"email",...}
 
-# Read it back, and query the newest jobs
+# Read it back: within a few seconds it is "completed" with a result {"messageId":"<uuid>"}
 curl -s http://localhost:3000/v1/jobs/<uuid>
+
+# Query the newest jobs
 curl -s 'http://localhost:3000/v1/jobs?limit=20&offset=0'
 # {"items":[...],"total":1}
 
@@ -97,8 +100,9 @@ of an image.
 ```
 
 - **job-service** (NestJS) owns job state; it is the only service with database access.
-- **job-execution-service** (NestJS) will take jobs from the queue (BullMQ on Redis) and run them;
-  it changes job state only through job-service's internal API. It scales horizontally.
+- **job-execution-service** (NestJS) takes jobs from the queue (BullMQ on Redis), runs them (email
+  for now) and reports each step through job-service's internal API; it has no database access.
+  It scales horizontally and runs several jobs per instance (`JOB_EXECUTION_CONCURRENCY`).
 - **job-ui** (React + Vite) is served by nginx, which forwards `/api` to job-service.
 - **Shared packages:** `packages/contracts` (Zod schemas for every request, response and error),
   `packages/kernel` (framework-free ports and base classes), `packages/service-kit` (bootstrap,

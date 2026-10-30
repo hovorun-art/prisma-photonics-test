@@ -1,28 +1,36 @@
 import type { Random } from '@job-queue/kernel';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
+import { mockDeep } from 'vitest-mock-extended';
 
 import { HostnameInstanceIdFactory } from './hostname-instance-id-factory.js';
 
+/** The id suffix has this many random characters, one `random.int` call each. */
+const SUFFIX_LENGTH = 6;
+
 describe('HostnameInstanceIdFactory', () => {
+  /** A Random whose next `int` calls return these values, in order. */
+  const randomReturning = (values: number[]): Random => {
+    const random = mockDeep<Random>();
+    for (const value of values) random.int.mockReturnValueOnce({ value });
+    return random;
+  };
+
   it('combines the host name with a random suffix', () => {
-    const digits = [0, 18, 35, 0, 18, 35];
-    const int = vi.fn<Random['int']>(() => ({ value: digits.shift() ?? 0 }));
-    const random: Random = { next: vi.fn(), int };
+    const random = randomReturning([0, 18, 35, 0, 18, 35]);
 
     const { instanceId } = new HostnameInstanceIdFactory({ random }).create({
       hostname: 'worker-host',
     });
 
     expect(instanceId).toBe('worker-host-0iz0iz');
-    expect(int).toHaveBeenCalledWith({ min: 0, max: 35 });
+    expect(random.int).toHaveBeenCalledWith({ min: 0, max: 35 });
   });
 
   it('gives two instances on the same host different ids', () => {
-    let calls = 0;
-    const random: Random = {
-      next: vi.fn(),
-      int: () => ({ value: (calls += 1) % 36 }),
-    };
+    const random = randomReturning([
+      ...Array<number>(SUFFIX_LENGTH).fill(1),
+      ...Array<number>(SUFFIX_LENGTH).fill(2),
+    ]);
     const factory = new HostnameInstanceIdFactory({ random });
 
     expect(factory.create({ hostname: 'host' }).instanceId).not.toBe(
@@ -31,7 +39,7 @@ describe('HostnameInstanceIdFactory', () => {
   });
 
   it('turns characters that are unsafe in logs and keys into dashes', () => {
-    const random: Random = { next: vi.fn(), int: () => ({ value: 0 }) };
+    const random = randomReturning(Array<number>(SUFFIX_LENGTH).fill(0));
 
     expect(
       new HostnameInstanceIdFactory({ random }).create({ hostname: ' My Host.local ' }).instanceId,
@@ -39,7 +47,7 @@ describe('HostnameInstanceIdFactory', () => {
   });
 
   it('falls back to a generic prefix when the host name is empty', () => {
-    const random: Random = { next: vi.fn(), int: () => ({ value: 0 }) };
+    const random = randomReturning(Array<number>(SUFFIX_LENGTH).fill(0));
 
     expect(new HostnameInstanceIdFactory({ random }).create({ hostname: '' }).instanceId).toBe(
       'execution-000000',

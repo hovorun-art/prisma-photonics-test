@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { fileURLToPath } from 'node:url';
 
 import { FINISHED_JOB_STATUSES, type Job } from '@job-queue/contracts';
@@ -5,14 +7,13 @@ import { CONTAINER_IMAGES, PrismaMigrateDeploy } from '@job-queue/test-support';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { JobNotFoundError } from '../../../domain/jobs/errors/job-not-found.error.js';
-import { JobStatusConflictError } from '../../../domain/jobs/errors/job-status-conflict.error.js';
+import { JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
 import type { NewJob } from '../../../domain/jobs/job-repository.js';
 import { PrismaDatabase } from '../../prisma/prisma-database.js';
 import { PrismaJobRepository } from './prisma-job-repository.js';
 
 const APP_DIR = fileURLToPath(new URL('../../../..', import.meta.url));
-const UNKNOWN_ID = '00000000-0000-4000-8000-000000000000';
+const UNKNOWN_ID = randomUUID();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 describe('PrismaJobRepository against Postgres', () => {

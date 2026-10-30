@@ -1,6 +1,8 @@
+import { randomUUID } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
-import type { NextRandomResponse } from '../domain/random.js';
+import type { NextRandomResponse, UuidRandomResponse } from '../domain/random.js';
 import { UniformRandom } from './uniform-random.js';
 
 /** Returns one fixed value, to check how UniformRandom maps it onto integer ranges. */
@@ -15,6 +17,10 @@ class FixedRandom extends UniformRandom {
 
   next(): NextRandomResponse {
     return { value: this.d.value };
+  }
+
+  uuid(): UuidRandomResponse {
+    return { value: randomUUID() };
   }
 }
 

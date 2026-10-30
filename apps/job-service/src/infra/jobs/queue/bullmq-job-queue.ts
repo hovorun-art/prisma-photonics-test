@@ -1,4 +1,4 @@
-import { JOB_QUEUE_NAME, type JobQueueMessage } from '@job-queue/contracts';
+import { JOB_QUEUE_NAME, JobQueueEntryId, type JobQueueMessage } from '@job-queue/contracts';
 import type { CloseClosableResponse } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import { Queue } from 'bullmq';
@@ -47,7 +47,7 @@ export class BullMqJobQueue implements JobQueue {
   }
 
   async enqueue(req: EnqueueJobQueueRequest): Promise<EnqueueJobQueueResponse> {
-    const entryId = `${req.jobId}_${req.attempt}`;
+    const entryId = JobQueueEntryId.encode({ jobId: req.jobId, attempt: req.attempt });
     const timeout = AbortSignal.timeout(this.p.enqueueTimeoutMs);
     const timedOut = new Promise<never>((_resolve, reject) => {
       timeout.addEventListener('abort', () => {
