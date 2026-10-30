@@ -6,8 +6,8 @@ context: |
   Job Queue Service (interview task): job-service (NestJS REST API, owns the Job aggregate and job
   logs), job-execution-service (NestJS, takes jobs from a BullMQ/Redis queue and runs them; domain
   modules notifications, webhooks, flight-transit, batch-processing), web (React + Vite, Tailwind +
-  shadcn/ui, TanStack Query, Leaflet). Postgres via Prisma is the source of truth; Redis only holds
-  the queue. Contracts are Zod schemas in packages/contracts. TypeScript strict, npm workspaces,
+  shadcn/ui, TanStack Query, Leaflet). Postgres via Prisma is the source of truth; Redis holds
+  the queue and the job log stream; ClickHouse holds job log entries (owned by job-service). Contracts are Zod schemas in packages/contracts. TypeScript strict, npm workspaces,
   Node 26, Vitest, ESLint + Prettier, Docker Compose.
   Architecture: DDD + onion, layers first: src/domain (interfaces and types only), src/infra (all
   implementations), src/app (NestJS entry points and wiring), features as subfolders inside each

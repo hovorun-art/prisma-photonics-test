@@ -19,6 +19,7 @@ export const STACK_ENV: Readonly<Record<string, string>> = {
   JOB_GROUP_SERVICE_PORT: String(JOB_GROUP_SERVICE_HOST_PORT),
   POSTGRES_PORT: '15432',
   REDIS_PORT: '16379',
+  CLICKHOUSE_HTTP_PORT: '18123',
   INTERNAL_SERVICE_TOKEN: 'system-e2e-service-token',
   LOG_LEVEL: 'info',
 };

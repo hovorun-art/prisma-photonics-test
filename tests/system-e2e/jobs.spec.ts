@@ -1,7 +1,17 @@
-import { EmailJobResult, JOBS_ROUTE, Job, QueueStats, STATS_ROUTE } from '@job-queue/contracts';
+import {
+  EmailJobResult,
+  ErrorBody,
+  JOBS_ROUTE,
+  Job,
+  type JobLogEntry,
+  QueryJobLogResponse,
+  QueueStats,
+  STATS_ROUTE,
+} from '@job-queue/contracts';
 import { expect, test } from '@playwright/test';
 
 import { en } from '../../apps/job-ui/src/locales/en.js';
+import { stack } from './support/running-stack.js';
 import { JOB_SERVICE_URL } from './support/stack-settings.js';
 
 test('Submitted email job completes end to end: API, Postgres, queue, execution, Postgres', async ({
@@ -121,4 +131,109 @@ test('Filter by type through the stack: under Webhook the jobs list shows only w
   await expect(typeFilter.getByRole('button', { name: /^Webhook [\d,]+$/ })).toHaveText(
     `Webhook ${stats.counts.type.webhook.toLocaleString('en-US')}`,
   );
+});
+
+test('Run of an attempt is logged, Entry fields: through the stack, job-service steps and the worker steps with its instance id', async ({
+  request,
+}) => {
+  const submitEmailJob = async (subject: string): Promise<string> => {
+    const submitted = await request.post(`${JOB_SERVICE_URL}${JOBS_ROUTE}`, {
+      data: { type: 'email', payload: { to: 'ada@example.com', subject, body: 'Hi Ada' } },
+    });
+    expect(submitted.status()).toBe(201);
+    return Job.parse(await submitted.json()).id;
+  };
+  const jobStatus = async (id: string): Promise<string> =>
+    Job.parse(await (await request.get(`${JOB_SERVICE_URL}${JOBS_ROUTE}/${id}`)).json()).status;
+  // One page holds a single run's entries.
+  const jobLog = async (id: string): Promise<JobLogEntry[]> => {
+    const response = await request.get(`${JOB_SERVICE_URL}${JOBS_ROUTE}/${id}/logs`);
+    expect(response.status()).toBe(200);
+    return QueryJobLogResponse.parse(await response.json()).items;
+  };
+  const messages = (entries: JobLogEntry[]): string[] => entries.map((entry) => entry.message);
+
+  const id = await submitEmailJob('Logged');
+  await expect.poll(() => jobStatus(id), { timeout: 30_000 }).toBe('completed');
+
+  // Entries reach the log in batches, so they may show up a little after the job completes.
+  await expect
+    .poll(async () => messages(await jobLog(id)), { timeout: 30_000 })
+    .toEqual(
+      expect.arrayContaining([
+        'Job submitted',
+        'Attempt queued',
+        'Attempt started',
+        'Attempt picked up',
+        'Handler started',
+        'Handler finished',
+        'Job completed',
+      ]),
+    );
+  const entries = await jobLog(id);
+  const steps = entries.map((entry) => `${entry.source}: ${entry.message}`);
+  // Each step once: two workers, the stream and the writer store nothing twice.
+  for (const step of new Set(steps)) {
+    expect(
+      steps.filter((s) => s === step),
+      step,
+    ).toHaveLength(1);
+  }
+  expect(entries.find((entry) => entry.message === 'Job submitted')).toMatchObject({
+    source: 'job-service',
+    attempt: null,
+    level: 'info',
+  });
+  const pickup = entries.find((entry) => entry.message === 'Attempt picked up');
+  expect(pickup).toMatchObject({ source: 'job-execution-service', attempt: 1 });
+  // The worker's own instance id (its container's), not a service name.
+  expect(pickup?.instanceId).toMatch(/^(?!job-(execution-)?service$)\S+$/);
+  // Oldest first: the submission, then the worker's steps in the order they happened.
+  expect(steps[0]).toBe('job-service: Job submitted');
+  const at = (step: string): number => steps.indexOf(`job-execution-service: ${step}`);
+  expect(at('Attempt picked up')).toBeLessThan(at('Handler finished'));
+  expect(at('Handler finished')).toBeLessThan(at('Job completed'));
+});
+
+test('Log store down while a job runs: the job completes, and its log appears once the store is back', async ({
+  request,
+}) => {
+  const submitEmailJob = async (subject: string): Promise<string> => {
+    const submitted = await request.post(`${JOB_SERVICE_URL}${JOBS_ROUTE}`, {
+      data: { type: 'email', payload: { to: 'ada@example.com', subject, body: 'Hi Ada' } },
+    });
+    expect(submitted.status()).toBe(201);
+    return Job.parse(await submitted.json()).id;
+  };
+  const jobStatus = async (id: string): Promise<string> =>
+    Job.parse(await (await request.get(`${JOB_SERVICE_URL}${JOBS_ROUTE}/${id}`)).json()).status;
+  // One page holds a single run's entries.
+  const jobLog = async (id: string): Promise<JobLogEntry[]> => {
+    const response = await request.get(`${JOB_SERVICE_URL}${JOBS_ROUTE}/${id}/logs`);
+    expect(response.status()).toBe(200);
+    return QueryJobLogResponse.parse(await response.json()).items;
+  };
+  const messages = (entries: JobLogEntry[]): string[] => entries.map((entry) => entry.message);
+
+  await stack.stop({ service: 'clickhouse' });
+  try {
+    const id = await submitEmailJob('Logged while the store is down');
+    await expect.poll(() => jobStatus(id), { timeout: 30_000 }).toBe('completed');
+
+    const unavailable = await request.get(`${JOB_SERVICE_URL}${JOBS_ROUTE}/${id}/logs`);
+    expect(unavailable.status()).toBe(503);
+    expect(ErrorBody.parse(await unavailable.json()).code).toBe('LOG_STORE_UNAVAILABLE');
+
+    await stack.start({ service: 'clickhouse' });
+    // The writer retries its batch with a growing wait (up to the configured maximum).
+    await expect
+      .poll(async () => messages(await jobLog(id)), { timeout: 90_000 })
+      .toEqual(expect.arrayContaining(['Job submitted', 'Attempt picked up', 'Job completed']));
+    // The batch retried while the store was down is stored once.
+    const steps = (await jobLog(id)).map((entry) => `${entry.source}: ${entry.message}`);
+    expect(steps.filter((step) => step === 'job-service: Job submitted')).toHaveLength(1);
+    expect(steps.filter((step) => step === 'job-service: Job completed')).toHaveLength(1);
+  } finally {
+    await stack.start({ service: 'clickhouse' });
+  }
 });
