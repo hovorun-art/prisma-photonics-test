@@ -1,4 +1,4 @@
-import type { Job } from '@job-queue/contracts';
+import type { CreateJobRequest, Job } from '@job-queue/contracts';
 import { expect, type Page, test } from '@playwright/test';
 
 import { API_BASE_PATH } from '../../src/config/api-base-path';
@@ -19,7 +19,7 @@ class RoutedJobService implements MockJobService {
       const request = route.request();
       const id = new URL(request.url()).pathname.split('/v1/jobs/')[1];
       if (request.method() === 'POST') {
-        const body = request.postDataJSON() as Pick<Job, 'payload' | 'priority' | 'maxAttempts'>;
+        const body = request.postDataJSON() as CreateJobRequest;
         const job = this.job({ id: '99999999-9999-4999-8999-999999999999', ...body });
         jobs.unshift(job);
         return route.fulfill({ status: 201, json: job });
@@ -47,6 +47,7 @@ class RoutedJobService implements MockJobService {
   }
 
   job(req: Partial<Job>): Job {
+    // A partial of either job type over an email job: the caller keeps type and payload in step.
     return {
       id: '7f3a9c21-4b5d-4e6f-8a7b-9c0d1e2f3a4b',
       type: 'email',
@@ -63,7 +64,7 @@ class RoutedJobService implements MockJobService {
       createdAt: '2026-10-29T21:02:09.000Z',
       updatedAt: '2026-10-29T21:02:09.000Z',
       ...req,
-    };
+    } as Job;
   }
 }
 
@@ -126,4 +127,22 @@ test('Delete a finished job: confirming deletes it and opens the jobs list', asy
   await expect(page).toHaveURL(/\/jobs$/);
   await expect(page.getByText(en.list.emptyTitle)).toBeVisible();
   expect(service.deleted).toEqual([job.id]);
+});
+
+test('Submit a valid webhook job: the new job page shows the webhook payload', async ({ page }) => {
+  await api.install({ page, jobs: [] });
+
+  await page.goto('/jobs/new');
+  await page.getByRole('button', { name: /^Webhook/ }).click();
+  await expect(page).toHaveURL(/\/jobs\/new\?type=webhook$/);
+  await page.getByLabel(en.submit.method, { exact: true }).selectOption('PUT');
+  await page.getByLabel(en.submit.url, { exact: true }).fill('https://hooks.example.com/orders');
+  await page.getByLabel(en.submit.jsonBody, { exact: true }).fill('{"orderId": "o-1"}');
+  await page.getByRole('button', { name: en.submit.submit }).click();
+
+  await expect(page).toHaveURL(/\/jobs\/99999999-9999-4999-8999-999999999999$/);
+  const payload = page.getByRole('region', { name: en.job.payload });
+  await expect(payload).toContainText('"method": "PUT"');
+  await expect(payload).toContainText('"url": "https://hooks.example.com/orders"');
+  await expect(payload).toContainText('"orderId": "o-1"');
 });

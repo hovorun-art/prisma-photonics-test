@@ -1,7 +1,8 @@
-import type { CreateJobRequest } from '@job-queue/contracts';
+import type { JobRequestPreview } from './job-form-draft';
 
 export interface SubmitCurlCommandsRequest {
-  readonly request: CreateJobRequest;
+  /** The request to send; the submit page's preview, so it may still be incomplete. */
+  readonly request: JobRequestPreview;
 }
 export interface GetCurlCommandsRequest {
   readonly id: string;

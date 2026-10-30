@@ -43,13 +43,16 @@ export class JobPresenter implements JobPresentation {
 
   details(req: DetailsJobPresentationRequest): TextJobPresentationResponse {
     const { job } = req;
-    switch (job.status) {
-      case 'completed':
-        return { text: job.result?.messageId ?? '' };
-      case 'failed':
-        return { text: job.error?.message ?? '' };
-      default:
-        return { text: en.details.emailWaiting(job.payload.to, job.payload.subject) };
+    if (job.status === 'failed') return { text: job.error?.message ?? '' };
+    switch (job.type) {
+      case 'email':
+        return job.status === 'completed'
+          ? { text: job.result?.messageId ?? '' }
+          : { text: en.details.emailWaiting(job.payload.to, job.payload.subject) };
+      case 'webhook':
+        return job.status === 'completed'
+          ? { text: job.result ? en.details.webhookCompleted(job.result.statusCode) : '' }
+          : { text: en.details.webhookWaiting(job.payload.method, job.payload.url) };
     }
   }
 

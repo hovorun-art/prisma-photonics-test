@@ -4,10 +4,10 @@ import { en } from '@/locales';
 
 import { CopyButton } from '../details/copy-button';
 import { useCurl } from '../hooks/use-curl';
-import type { EmailFormValues } from '../model/email-form-values';
+import type { JobRequestPreview } from '../model/job-form-draft';
 
 /** The request the form will send as a curl command, and an example of the API's answer. */
-export function RequestPreview({ request }: { request: EmailFormValues }) {
+export function RequestPreview({ request }: { request: JobRequestPreview }) {
   const curl = useCurl();
   // The schema fills in priority and attempts when they are missing; the preview does the same.
   const command = curl.submit({

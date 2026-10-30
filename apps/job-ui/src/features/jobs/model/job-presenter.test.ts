@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { jobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
 import { JobPresenter } from './job-presenter';
 
 const presenter = new JobPresenter({ shortIdLength: 8 });
@@ -34,6 +34,39 @@ describe('JobPresenter', () => {
     });
 
     expect(presenter.details({ job }).text).toBe('SMTP timeout');
+  });
+
+  it.each(['scheduled', 'pending', 'processing'] as const)(
+    'Waiting or running webhook job: a %s job shows method and URL',
+    (status) => {
+      const job = webhookJobFixtures.build({ status });
+
+      expect(presenter.details({ job }).text).toBe('POST https://hooks.example.com/orders');
+    },
+  );
+
+  it('Completed webhook job: shows the HTTP status of the result', () => {
+    const job = webhookJobFixtures.build({
+      status: 'completed',
+      result: { statusCode: 200, responseBody: { received: true } },
+    });
+
+    expect(presenter.details({ job }).text).toBe('HTTP 200');
+  });
+
+  it('Failed webhook job: shows the error message', () => {
+    const job = webhookJobFixtures.build({
+      status: 'failed',
+      error: {
+        code: 'WEBHOOK_HTTP_ERROR',
+        message: 'Webhook POST https://hooks.example.com/orders answered 503',
+        details: { statusCode: 503 },
+      },
+    });
+
+    expect(presenter.details({ job }).text).toBe(
+      'Webhook POST https://hooks.example.com/orders answered 503',
+    );
   });
 
   it('listTime: local time of day', () => {

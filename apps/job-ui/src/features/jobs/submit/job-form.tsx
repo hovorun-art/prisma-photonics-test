@@ -1,41 +1,58 @@
 import { type CreateJobRequest, type Job, JOB_LIMITS } from '@job-queue/contracts';
 import type { ReactNode } from 'react';
-import { useFormContext } from 'react-hook-form';
+import { type FieldValues, type Path, useFormContext } from 'react-hook-form';
 import { Link } from 'react-router';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import { en } from '@/locales';
 
 import { ComingSoon } from '../../app-frame/coming-soon';
 import { ApiError } from '../api/api-error';
 import { useCreateJob } from '../hooks/use-create-job';
-import { useEmailJobDraft } from '../hooks/use-email-job-draft';
-import type { EmailFormField, EmailFormValues } from '../model/email-form-values';
-import { JobTypePicker } from './job-type-picker';
+import type { JobFormDraft } from '../model/job-form-draft';
 
 /** Error type of a message the API sent, shown as it is (not replaced by job-ui's own message). */
 const API_ERROR = 'api';
 
-/** The email form (design "SubmitJob"): checked with the shared schema before it is sent. */
-export function EmailJobForm({ onCreated }: { onCreated: (job: Job) => void }) {
-  const draft = useEmailJobDraft();
-  const form = useFormContext<EmailFormValues, unknown, CreateJobRequest>();
+/** What a type's payload fields need from the form: input props and the error of a field. */
+export interface JobFormFields<Field extends string> {
+  /** Props for the field's input: id, ARIA state and the form registration. */
+  input(name: Field): Record<string, unknown>;
+  error(name: Field): string | undefined;
+}
+
+/**
+ * The submit form of any job type (designs "SubmitJob", "SubmitWebhook"): job type, the type's
+ * payload fields, execution settings and buttons. Checked with the type's form schema before it
+ * is sent; an API `VALIDATION_FAILED` answer is shown on the fields it names.
+ */
+export function JobForm<Values extends FieldValues, Field extends Path<Values>>({
+  draft,
+  picker,
+  payload,
+  onCreated,
+}: {
+  draft: JobFormDraft<Values, Field>;
+  picker: ReactNode;
+  payload: (fields: JobFormFields<Field>) => ReactNode;
+  onCreated: (job: Job) => void;
+}) {
+  const form = useFormContext<Values, unknown, CreateJobRequest>();
   const { errors } = form.formState;
   const create = useCreateJob();
 
   /** The message to show under a field: the API's own, or job-ui's for a schema rejection. */
-  const errorOf = (name: EmailFormField): string | undefined => {
+  const errorOf = (name: Field): string | undefined => {
     const error = form.getFieldState(name, form.formState).error;
     if (!error) return undefined;
     return error.type === API_ERROR
       ? error.message
       : draft.fieldMessage({ field: name, values: form.getValues() }).message;
   };
-  const field = (name: EmailFormField, options?: { valueAsNumber: true }) => ({
+  const input = (name: Field, options?: { valueAsNumber: true }) => ({
     id: `field-${name}`,
     'aria-invalid': errorOf(name) ? true : undefined,
     'aria-describedby': errorOf(name) ? `field-${name}-error` : undefined,
@@ -47,7 +64,7 @@ export function EmailJobForm({ onCreated }: { onCreated: (job: Job) => void }) {
     !(create.error instanceof ApiError && create.error.code === 'VALIDATION_FAILED')
       ? create.error.message
       : null);
-  // Runs only when the shared schema accepts the values.
+  // Runs only when the form schema accepts the values.
   const submit = form.handleSubmit((request) => {
     create.mutate(request, {
       onSuccess: onCreated,
@@ -55,7 +72,7 @@ export function EmailJobForm({ onCreated }: { onCreated: (job: Job) => void }) {
         if (!(error instanceof ApiError) || error.code !== 'VALIDATION_FAILED') return;
         const mapped = draft.apiErrors({ details: error.details });
         for (const [name, message] of Object.entries(mapped.errors)) {
-          form.setError(name as EmailFormField, { type: API_ERROR, message });
+          form.setError(name as Field, { type: API_ERROR, message: message as string });
         }
         // API issues that match no field, or a rejection with no issues at all: shown in the
         // alert so the user always learns why nothing was created.
@@ -67,6 +84,9 @@ export function EmailJobForm({ onCreated }: { onCreated: (job: Job) => void }) {
       },
     });
   });
+  // The execution fields are on every form; typed through the draft's own field names.
+  const priority = 'priority' as Field;
+  const maxAttempts = 'maxAttempts' as Field;
 
   return (
     <form
@@ -74,27 +94,16 @@ export function EmailJobForm({ onCreated }: { onCreated: (job: Job) => void }) {
       className="flex min-w-0 flex-[999_1_560px] flex-col rounded-xl border border-border bg-card"
       onSubmit={(event) => void submit(event)}
     >
-      <Section legend={en.submit.typeSection}>
-        <JobTypePicker />
-      </Section>
+      <Section legend={en.submit.typeSection}>{picker}</Section>
       <Section legend={en.submit.payloadSection}>
-        <Field label={en.submit.to} name="payload.to" error={errorOf('payload.to')}>
-          <Input type="email" autoComplete="off" {...field('payload.to')} />
-        </Field>
-        <Field label={en.submit.subject} name="payload.subject" error={errorOf('payload.subject')}>
-          <Input type="text" {...field('payload.subject')} />
-        </Field>
-        <Field label={en.submit.body} name="payload.body" error={errorOf('payload.body')}>
-          <Textarea rows={6} {...field('payload.body')} />
-        </Field>
-        <p className="m-0 text-[13px] text-muted-foreground">{en.submit.emailHint}</p>
+        {payload({ input: (name) => input(name), error: errorOf })}
       </Section>
       <Section legend={en.submit.executionSection} last>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
-          <Field
+          <FormField
             label={en.submit.priority}
-            name="priority"
-            error={errorOf('priority')}
+            name={priority}
+            error={errorOf(priority)}
             hint={en.submit.priorityHint(JOB_LIMITS.priority.min, JOB_LIMITS.priority.max)}
           >
             <Input
@@ -102,13 +111,13 @@ export function EmailJobForm({ onCreated }: { onCreated: (job: Job) => void }) {
               min={JOB_LIMITS.priority.min}
               max={JOB_LIMITS.priority.max}
               className="font-mono"
-              {...field('priority', { valueAsNumber: true })}
+              {...input(priority, { valueAsNumber: true })}
             />
-          </Field>
-          <Field
+          </FormField>
+          <FormField
             label={en.submit.maxAttempts}
-            name="maxAttempts"
-            error={errorOf('maxAttempts')}
+            name={maxAttempts}
+            error={errorOf(maxAttempts)}
             hint={en.submit.maxAttemptsHint(JOB_LIMITS.maxAttempts.min, JOB_LIMITS.maxAttempts.max)}
           >
             <Input
@@ -116,9 +125,9 @@ export function EmailJobForm({ onCreated }: { onCreated: (job: Job) => void }) {
               min={JOB_LIMITS.maxAttempts.min}
               max={JOB_LIMITS.maxAttempts.max}
               className="font-mono"
-              {...field('maxAttempts', { valueAsNumber: true })}
+              {...input(maxAttempts, { valueAsNumber: true })}
             />
-          </Field>
+          </FormField>
         </div>
         <div className="flex flex-col gap-2">
           <span className="text-[13px] font-medium">{en.submit.run}</span>
@@ -198,7 +207,8 @@ function Section({
   );
 }
 
-function Field({
+/** A labelled form field with its error (red, under it) or else its hint. */
+export function FormField({
   label,
   name,
   error,
@@ -206,7 +216,7 @@ function Field({
   children,
 }: {
   label: string;
-  name: EmailFormField;
+  name: string;
   error: string | undefined;
   hint?: string;
   children: ReactNode;

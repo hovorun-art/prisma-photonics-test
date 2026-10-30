@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { en } from '@/locales';
 
-import { jobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../testing/test-providers';
 import { JobPage } from './job-page';
 
@@ -335,5 +335,50 @@ describe('JobPage', () => {
         '/jobs',
       );
     });
+  });
+
+  it('Completed webhook job page: type badge, webhook payload and the result', async () => {
+    const job = webhookJobFixtures.build({
+      status: 'completed',
+      attempts: 1,
+      startedAt: '2026-10-29T21:02:10.000Z',
+      completedAt: '2026-10-29T21:02:11.500Z',
+      result: { statusCode: 200, responseBody: { received: true } },
+    });
+    answerJob(job.id, job);
+
+    renderJob(job.id);
+
+    const heading = await screen.findByRole('heading', { level: 1, name: job.id });
+    expect(heading.parentElement).toHaveTextContent(en.jobTypes.webhook);
+    const payload = screen.getByRole('region', { name: en.job.payload });
+    expect(payload).toHaveTextContent('"method": "POST"');
+    expect(payload).toHaveTextContent('"url": "https://hooks.example.com/orders"');
+    expect(payload).toHaveTextContent('"orderId": "ord_4821"');
+    const result = screen.getByRole('region', { name: en.job.result });
+    expect(result).toHaveTextContent('"statusCode": 200');
+    expect(result).toHaveTextContent('"received": true');
+    expect(detail(en.job.fields.type)).toHaveTextContent('webhook');
+  });
+
+  it('Failed webhook job page: the alert shows the message, the Error card the status code', async () => {
+    const message = 'Webhook POST https://hooks.example.com/orders answered 503';
+    const job = webhookJobFixtures.build({
+      status: 'failed',
+      attempts: 3,
+      startedAt: '2026-10-29T21:02:10.000Z',
+      completedAt: '2026-10-29T21:02:11.500Z',
+      error: { code: 'WEBHOOK_HTTP_ERROR', message, details: { statusCode: 503 } },
+    });
+    answerJob(job.id, job);
+
+    renderJob(job.id);
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(message);
+    const error = screen.getByRole('region', { name: en.job.error });
+    expect(error).toHaveTextContent('"code": "WEBHOOK_HTTP_ERROR"');
+    expect(error).toHaveTextContent(`"message": "${message}"`);
+    expect(error).toHaveTextContent('"statusCode": 503');
   });
 });

@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { en } from '@/locales';
 
-import { jobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../testing/test-providers';
 import { JobsListPage } from './jobs-list-page';
 
@@ -273,5 +273,54 @@ describe('JobsListPage', () => {
     expect(within(pendingRow!).getByRole('button', { name: en.list.cancel })).toBeDisabled();
     expect(within(failedRow!).getByRole('button', { name: en.list.retry })).toBeDisabled();
     expect(within(completedRow!).getByLabelText(en.list.noActions)).toBeVisible();
+  });
+
+  it.each(['scheduled', 'pending', 'processing'] as const)(
+    'Waiting or running webhook job: a %s job\'s Details read "<METHOD> <url>"',
+    async (status) => {
+      const job = webhookJobFixtures.build({ status });
+      answerPages({ items: [job], total: 1 });
+
+      renderList();
+
+      await screen.findByRole('link', { name: job.id.slice(0, 8) });
+      const [, row] = screen.getAllByRole('row');
+      expect(row).toHaveTextContent('webhook');
+      expect(row).toHaveTextContent('POST https://hooks.example.com/orders');
+    },
+  );
+
+  it('Completed webhook job: Details read "HTTP <status code>"', async () => {
+    const job = webhookJobFixtures.build({
+      status: 'completed',
+      attempts: 1,
+      result: { statusCode: 200, responseBody: { received: true } },
+    });
+    answerPages({ items: [job], total: 1 });
+
+    renderList();
+
+    await screen.findByRole('link', { name: job.id.slice(0, 8) });
+    const [, row] = screen.getAllByRole('row');
+    expect(row).toHaveTextContent('HTTP 200');
+  });
+
+  it('Failed webhook job: Details show the error message', async () => {
+    const job = webhookJobFixtures.build({
+      status: 'failed',
+      attempts: 3,
+      error: {
+        code: 'WEBHOOK_HTTP_ERROR',
+        message: 'Webhook POST https://hooks.example.com/orders answered 503',
+        details: { statusCode: 503 },
+      },
+    });
+    answerPages({ items: [job], total: 1 });
+
+    renderList();
+
+    await screen.findByRole('link', { name: job.id.slice(0, 8) });
+    const [, row] = screen.getAllByRole('row');
+    expect(row).toHaveTextContent('Webhook POST https://hooks.example.com/orders answered 503');
   });
 });

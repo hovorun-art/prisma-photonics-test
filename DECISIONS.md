@@ -159,6 +159,20 @@ come from the locale file, not from Zod. The `VALIDATION_FAILED` issues are read
 `ValidationFailedDetails` schema; an issue that matches no field is shown in the form's alert
 rather than dropped.
 
+**job-ui: one form shell, one payload section per job type.** The submit page renders the form of
+the chosen type (`/jobs/new?type=webhook`, so the link can be shared and Back works); each type
+supplies its fields, starting values, form schema, messages and request preview, and the shell owns
+execution settings, submit and API error mapping. A type switch starts a fresh form and carries
+Priority and Max attempts over. *Alternatives:* one form over the union of all types (awkward
+typing and per-type validation in `react-hook-form`), or a page per type (repeats the shell).
+*Trade-off:* a small generic layer, which pays off as transit and batch are added.
+
+**job-ui: a webhook body is typed as text.** The "Body (JSON)" field holds what the user typed; the
+form schema treats blank text as "no body" and otherwise parses it and checks it with the
+contract's `JsonObject`, so invalid JSON and non-objects are caught under the field before
+anything is sent. *Alternative:* a structured key/value editor, which cannot express nested JSON
+without much more UI. *Trade-off:* the preview shows the raw text while it is not valid JSON.
+
 **job-ui: errors are contained per page with `react-error-boundary`.** Each page sits in an error
 boundary inside the app frame, so an unexpected error, or a failed first load of the list or a job,
 replaces only that page with "Something went wrong" and a Reload button; the header keeps working.

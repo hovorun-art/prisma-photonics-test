@@ -1,11 +1,20 @@
-import type { EmailJob } from '@job-queue/contracts';
+import { randomUUID } from 'node:crypto';
+
+import type { EmailJob, WebhookJob } from '@job-queue/contracts';
 
 export type BuildJobFixturesRequest = Partial<EmailJob>;
 export type BuildJobFixturesResponse = EmailJob;
+export type BuildWebhookJobFixturesRequest = Partial<WebhookJob>;
+export type BuildWebhookJobFixturesResponse = WebhookJob;
 
 /** Builds valid jobs for tests; each test overrides only the fields its scenario is about. */
 export interface JobFixtures {
   build(req?: BuildJobFixturesRequest): BuildJobFixturesResponse;
+}
+
+/** Builds valid webhook jobs for tests, like `JobFixtures` for email. */
+export interface WebhookJobFixtures {
+  build(req?: BuildWebhookJobFixturesRequest): BuildWebhookJobFixturesResponse;
 }
 
 /** Test-only: a pending email job with fixed ids and times, as job-service returns it. */
@@ -32,3 +41,32 @@ export class EmailJobFixtures implements JobFixtures {
 }
 
 export const jobFixtures: JobFixtures = new EmailJobFixtures();
+
+/** Test-only: a pending webhook job with a fresh id, as job-service returns it. */
+export class PendingWebhookJobFixtures implements WebhookJobFixtures {
+  build(req: BuildWebhookJobFixturesRequest = {}): BuildWebhookJobFixturesResponse {
+    return {
+      id: randomUUID(),
+      type: 'webhook',
+      status: 'pending',
+      priority: 5,
+      attempts: 0,
+      maxAttempts: 3,
+      payload: {
+        method: 'POST',
+        url: 'https://hooks.example.com/orders',
+        body: { orderId: 'ord_4821', event: 'order.paid' },
+      },
+      result: null,
+      error: null,
+      scheduledAt: null,
+      startedAt: null,
+      completedAt: null,
+      createdAt: '2026-10-29T21:02:09.000Z',
+      updatedAt: '2026-10-29T21:02:09.000Z',
+      ...req,
+    };
+  }
+}
+
+export const webhookJobFixtures: WebhookJobFixtures = new PendingWebhookJobFixtures();
