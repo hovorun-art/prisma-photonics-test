@@ -69,7 +69,7 @@ Owns: `apps/job-ui/test/e2e/jobs.spec.ts`, `DECISIONS.md`, `docs/roadmap/05-reli
 
 - [x] 4.1 Add a Playwright test "Submit a scheduled job: the new job page shows the scheduled time" to `apps/job-ui/test/e2e/jobs.spec.ts` (mocked API answers with a `scheduled` job; asserts the request's `scheduledAt` and the "Scheduled for" row and Lifecycle) and run it in the main agent with the job-ui Playwright suite
 - [x] 4.2 Record in `DECISIONS.md` (scheduled jobs paragraph) how job-ui schedules: native `datetime-local` in local time chosen over a calendar library (react-day-picker 10.0.2, ~45M weekly downloads) to add no dependency, sent as UTC, checked in the form with the API's rules, with the browser-clock vs job-service-clock trade-off; mark `priority-scheduling-ui` done in the roadmap if the roadmap tracks status
-- [ ] 4.3 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run format:check`) and the `change-verifier` subagent in the foreground; fix until it returns PASS
+- [x] 4.3 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run format:check`) and the `change-verifier` subagent in the foreground; fix until it returns PASS
 
 ## Workflow follow-up
 
