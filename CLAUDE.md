@@ -53,6 +53,39 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
   its real dependency via Testcontainers), per-app e2e (`apps/<app>/test/e2e/`, the app as a black
   box with its own infrastructure, other apps simulated), contract checks through the shared Zod
   schemas (no Pact), system e2e (`tests/system-e2e`, full compose stack, Playwright).
+- Per-app backend e2e (`apps/<app>/test/e2e/`): one `*.e2e.test.ts` file per spec area (in
+  job-service: `service`, `errors`, `jobs` and `internal-jobs`). Next to them there is exactly one
+  small shared file (`<app>-under-test.ts`, one class): it starts the app as described below,
+  and holds the HTTP calls, error-body checks and seeding the test files share. It is not a support
+  folder: no fixture, launcher, probe-module or fake-service classes.
+  - The app's own database is real: a fresh Postgres Testcontainer per file, migrated with the
+    app's migrations and emptied before each test.
+  - Everything outside the app is mocked at its domain port with `mockDeep<Port>()`: the queue,
+    the Redis connection and other services' HTTP clients. Mocks are swapped in through
+    `Test.createTestingModule({ imports: [AppModule.forRoot({ config })] })` and
+    `.overrideProvider(TOKEN).useValue(mock)`, and reset with `mockReset` before each test.
+  - Build the config with the app's own config parser, apply the bootstrap's own list of setup
+    steps (e.g. `JOB_SERVICE_SETUP_STEPS`, never a copy of it), `listen(0, '127.0.0.1')`, and
+    call the routes with `fetch`.
+  - Drive the app only through its HTTP API. When a test needs data in a state no route can
+    create, store it through the app's own repository, taken from the DI container
+    (`app.get(TOKEN)`).
+  - Assert on HTTP responses (parsed with the contract schemas) and on the calls the mocks
+    received (`toHaveBeenCalledExactlyOnceWith`). To simulate an outage, make the stub reject
+    once (`mockImplementationOnce`) instead of pointing the app at an address that can't be
+    reached.
+  - No probe controllers: test error responses through the real routes. For an unexpected
+    failure, make a real provider throw once (`vi.spyOn(app.get(TOKEN), 'method')
+    .mockRejectedValueOnce(...)`, restored after each test).
+  - Shutdown is tested in the same process: start a second app with its own mocks, call
+    `app.close()`, and assert that each connection (database, queue, Redis) was closed once.
+  - What this level can't see is covered elsewhere: the adapters' real behaviour by their
+    `*.int.test.ts`, signal handling by the kernel's unit tests, and the whole running system by
+    the system e2e.
+- After writing or changing tests, run the `test-case-reviewer` subagent in the foreground on that
+  area. Give it only the app and test level (or the file), not your own reasoning, so it judges the
+  cases independently. Add the missing corner cases it reports, or tell the user why a case does
+  not belong to that area.
 - With `TDD_STRICT=1` in `.claude/flow.conf`, a hook blocks edits to source files until a test file
   has changed on the branch.
 
