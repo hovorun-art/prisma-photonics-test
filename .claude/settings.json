@@ -69,6 +69,15 @@
             "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/tdd-guard.sh\""
           }
         ]
+      },
+      {
+        "matcher": "SubagentHandback",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR/.claude/hooks/verifier-hooks.sh\" handback"
+          }
+        ]
       }
     ],
     "PostToolUse": [
