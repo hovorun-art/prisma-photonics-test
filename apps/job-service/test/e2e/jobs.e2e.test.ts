@@ -436,6 +436,110 @@ describe('job-service public job routes', () => {
 
       expect(await service.issuePaths(response)).toContainEqual(['offset']);
     });
+
+    describe('filters', () => {
+      // Filter semantics (several types, AND, paging and `total` over filtered jobs, no match) are
+      // tested against Postgres in `prisma-job-repository.int.test.ts`; these tests prove the HTTP
+      // wiring and the HTTP answers the spec names.
+
+      /** Repeated parameters, as a client builds them: `[['status', 'failed'], ...]`. */
+      const filtered = (params: [string, string][]): Promise<QueryJobsResponse> =>
+        query(`?${new URLSearchParams(params).toString()}`);
+
+      /** Ids in the API's order: creation time descending, id descending for equal times. */
+      const newestFirst = (jobs: Job[]): string[] =>
+        [...jobs]
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
+          .map((job) => job.id);
+
+      /** The fields with an issue in a `VALIDATION_FAILED` answer to the given parameters. */
+      const rejectedFields = async (params: [string, string][]): Promise<unknown[]> => {
+        const search = new URLSearchParams(params).toString();
+        const paths = await service.issuePaths(await fetch(service.url(`${JOBS_ROUTE}?${search}`)));
+        return paths.map((path) => (path as unknown[])[0]);
+      };
+
+      it('Filter by one status', async () => {
+        const failed = [
+          await service.seed({ status: 'failed' }),
+          await service.seed({ status: 'failed', type: 'webhook' }),
+        ];
+        await service.seed({ status: 'completed' });
+        await service.seed({ status: 'pending' });
+
+        const page = await filtered([['status', 'failed']]);
+
+        expect(page.items.map((job) => job.id)).toEqual(newestFirst(failed));
+        expect(page.total).toBe(2);
+        expect(service.queue.enqueue).not.toHaveBeenCalled();
+      });
+
+      it('Filter by several statuses', async () => {
+        const matching = [
+          await service.seed({ status: 'failed' }),
+          await service.seed({ status: 'cancelled' }),
+        ];
+        await service.seed({ status: 'completed' });
+        await service.seed({ status: 'scheduled' });
+
+        const page = await filtered([
+          ['status', 'failed'],
+          ['status', 'cancelled'],
+        ]);
+
+        expect(page.items.map((job) => job.id)).toEqual(newestFirst(matching));
+        expect(page.total).toBe(2);
+      });
+
+      it('Repeated status value', async () => {
+        await service.seed({ status: 'failed' });
+        await service.seed({ status: 'completed' });
+
+        const once = await filtered([['status', 'failed']]);
+        const twice = await filtered([
+          ['status', 'failed'],
+          ['status', 'failed'],
+        ]);
+
+        expect(twice).toEqual(once);
+        expect(twice.total).toBe(1);
+      });
+
+      it('Filter by one type', async () => {
+        const webhooks = [
+          await service.seed({ status: 'pending', type: 'webhook' }),
+          await service.seed({ status: 'completed', type: 'webhook' }),
+        ];
+        await service.seed({ status: 'pending', type: 'email' });
+        await service.seed({ status: 'pending', type: 'flight-transit' });
+
+        const page = await filtered([['type', 'webhook']]);
+
+        expect(page.items.map((job) => job.id)).toEqual(newestFirst(webhooks));
+        expect(page.total).toBe(2);
+      });
+
+      it('Unknown status filter', async () => {
+        expect(await rejectedFields([['status', 'done']])).toContain('status');
+      });
+
+      it('Unknown type filter', async () => {
+        expect(await rejectedFields([['type', 'sms']])).toContain('type');
+      });
+
+      it('Empty filter value', async () => {
+        expect(await rejectedFields([['status', '']])).toContain('status');
+      });
+
+      it('One unknown value among known ones', async () => {
+        expect(
+          await rejectedFields([
+            ['status', 'failed'],
+            ['status', 'done'],
+          ]),
+        ).toContain('status');
+      });
+    });
   });
 
   describe('delete', () => {

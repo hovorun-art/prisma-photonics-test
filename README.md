@@ -58,6 +58,9 @@ curl -s http://localhost:3000/v1/jobs/<uuid>
 curl -s 'http://localhost:3000/v1/jobs?limit=20&offset=0'
 # {"items":[...],"total":1}
 
+# Only failed or cancelled webhook jobs (repeat a filter for several values; total counts matches)
+curl -s 'http://localhost:3000/v1/jobs?status=failed&status=cancelled&type=webhook'
+
 curl -i http://localhost:3000/no-such-route
 # HTTP/1.1 404 Not Found
 # {"code":"ROUTE_NOT_FOUND","message":"...","details":{}}

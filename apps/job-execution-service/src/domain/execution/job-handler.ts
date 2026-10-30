@@ -11,6 +11,11 @@ export interface JobHandler {
 
 export interface RunJobHandlerRequest {
   job: Job;
+  /**
+   * The attempt being run, from the queue entry. `job.attempts` is read before job-service counts
+   * this attempt on start, so it is one lower.
+   */
+  attempt: number;
   /** Aborted when the worker gives up on running jobs (shutdown grace period over). */
   signal: AbortSignal;
 }

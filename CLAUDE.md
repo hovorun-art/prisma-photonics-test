@@ -28,6 +28,11 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
   the first planning artifact. Planning (`openspec/changes/<change>/`), code and the archive all go on
   that branch; the main branch only receives the merge, which brings the code and the updated main
   specs together.
+- One commit per task group: when a group of `tasks.md` is done (its boxes checked, its test review
+  acted on, the checks green), propose its commit (the files, including the checked boxes, and a
+  Conventional Commits message for that group) before starting the next group. Groups are never
+  folded into one commit, and a group is not split across commits. With parallel groups, each
+  group's worktree changes are brought in and committed on their own.
 
 ## Testing (TDD)
 

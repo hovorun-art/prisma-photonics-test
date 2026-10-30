@@ -107,7 +107,7 @@ export class JobExecutionImpl implements JobExecution {
 
       let ran: RunJobHandlerResponse;
       try {
-        ran = await handler.run({ job, signal: this.running.signal });
+        ran = await handler.run({ job, attempt: fields.attempt, signal: this.running.signal });
       } catch (error) {
         if (this.running.signal.aborted) return this.abandon({ fields });
         return await this.fail({ fields, error: this.toJobError(error) });

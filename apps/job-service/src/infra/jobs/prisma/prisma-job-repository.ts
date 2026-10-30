@@ -78,13 +78,15 @@ export class PrismaJobRepository implements JobRepository {
   }
 
   async query(req: QueryJobRepositoryRequest): Promise<QueryJobRepositoryResponse> {
+    const where = this.toQueryWhere(req);
     const [rows, total] = await this.d.prisma.$transaction([
       this.d.prisma.job.findMany({
+        where,
         orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
         skip: req.offset,
         take: req.limit,
       }),
-      this.d.prisma.job.count(),
+      this.d.prisma.job.count({ where }),
     ]);
     return { items: rows.map((row) => this.toJob(row)), total };
   }
@@ -112,6 +114,14 @@ export class PrismaJobRepository implements JobRepository {
       if (this.isRecordNotFound(error)) await this.throwMissOn(req.id);
       throw error;
     }
+  }
+
+  /** Each filter only when given; Prisma ANDs the two, `in` ORs the values of one. */
+  private toQueryWhere(req: QueryJobRepositoryRequest): Prisma.JobWhereInput {
+    return {
+      ...(req.statuses && { status: { in: req.statuses } }),
+      ...(req.types && { type: { in: req.types.map((type) => ROW_TYPES[type]) } }),
+    };
   }
 
   /** A conditional write matched no row: the job is gone, or its state differs from the expected one. */
