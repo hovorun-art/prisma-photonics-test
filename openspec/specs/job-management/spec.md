@@ -240,7 +240,7 @@ response schemas.
 
 #### Scenario: Docs list the job routes
 - **WHEN** a client opens the documentation route of job-service
-- **THEN** it lists submit, get, query and delete under `/v1/jobs` with their request and response schemas
+- **THEN** it lists submit, get, query, status change and delete under `/v1/jobs` with their request and response schemas
 
 ### Requirement: Clients can submit many jobs in one request
 `POST /v1/jobs/bulk` with a body `{ jobs: [...] }`, where each item is an ordinary job submission
