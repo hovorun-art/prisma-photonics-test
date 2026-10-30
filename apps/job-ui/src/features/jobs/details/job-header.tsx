@@ -1,4 +1,4 @@
-import { FINISHED_JOB_STATUSES, type Job } from '@job-queue/contracts';
+import type { Job } from '@job-queue/contracts';
 import { RotateCw } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -6,16 +6,16 @@ import { en } from '@/locales';
 
 import { ComingSoon } from '../../app-frame/coming-soon';
 import { useCurl } from '../hooks/use-curl';
+import { useJobPresenter } from '../hooks/use-job-presenter';
 import { LiveIndicator } from '../list/live-indicator';
 import { StatusBadge } from '../list/status-badge';
 import { CopyButton } from './copy-button';
 import { DeleteJobDialog } from './delete-job-dialog';
 
-const FINISHED: readonly Job['status'][] = FINISHED_JOB_STATUSES;
-
 /** The full id with status and type badges, and the job's actions (design "JobDetail"). */
 export function JobHeader({ job, connectionLost }: { job: Job; connectionLost: boolean }) {
   const curl = useCurl();
+  const actions = useJobPresenter().actions({ job });
   return (
     <div className="flex flex-wrap items-center justify-between gap-4">
       <div className="flex flex-wrap items-center gap-3">
@@ -32,14 +32,14 @@ export function JobHeader({ job, connectionLost }: { job: Job; connectionLost: b
           label={en.copy.copyAsCurl}
           className="h-10"
         />
-        {(job.status === 'pending' || job.status === 'scheduled') && (
+        {actions.cancel && (
           <ComingSoon>
             <Button variant="outline" className="h-10">
               {en.job.cancelJob}
             </Button>
           </ComingSoon>
         )}
-        {job.status === 'failed' && (
+        {actions.retry && (
           <ComingSoon>
             <Button className="h-10">
               <RotateCw aria-hidden="true" />
@@ -47,7 +47,7 @@ export function JobHeader({ job, connectionLost }: { job: Job; connectionLost: b
             </Button>
           </ComingSoon>
         )}
-        {FINISHED.includes(job.status) && <DeleteJobDialog id={job.id} />}
+        {actions.delete && <DeleteJobDialog id={job.id} />}
       </div>
     </div>
   );

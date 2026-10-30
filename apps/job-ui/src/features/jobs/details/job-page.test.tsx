@@ -192,11 +192,13 @@ describe('JobPage', () => {
   });
 
   it('Job deleted while open: the next poll shows "Job not found"', async () => {
-    answerJob(pending.id, pending, 'not-found');
-
+    answerJob(pending.id, pending);
     renderJob(pending.id, 20);
-
     expect(await screen.findByRole('heading', { level: 1, name: pending.id })).toBeVisible();
+
+    // The next answer is served only now, so the first state cannot be skipped by a fast poll.
+    answerJob(pending.id, 'not-found');
+
     expect(
       await screen.findByRole('heading', { name: en.job.notFoundTitle }, POLL_WAIT),
     ).toBeVisible();
@@ -204,13 +206,15 @@ describe('JobPage', () => {
 
   it('Status change appears on the job page: the next poll shows the new status', async () => {
     const processing = { ...pending, status: 'processing' as const };
-    answerJob(pending.id, pending, processing);
-
+    answerJob(pending.id, pending);
     renderJob(pending.id, 20);
-
     const heading = await screen.findByRole('heading', { level: 1, name: pending.id });
     const header = heading.parentElement!;
     expect(within(header).getByText(en.statuses.pending)).toBeVisible();
+
+    // The next answer is served only now, so the first state cannot be skipped by a fast poll.
+    answerJob(pending.id, processing);
+
     expect(await within(header).findByText(en.statuses.processing, {}, POLL_WAIT)).toBeVisible();
   });
 
@@ -257,6 +261,17 @@ describe('JobPage', () => {
       );
       expect(requests).toContain(`DELETE /api/v1/jobs/${completed.id}`);
     });
+
+    it.each([failed, { ...pending, status: 'cancelled' as const }])(
+      'Delete a finished job: a $status job has the Delete button',
+      async (job) => {
+        answerJob(job.id, job);
+
+        renderJob(job.id);
+
+        expect(await screen.findByRole('button', { name: en.job.deleteJob })).toBeVisible();
+      },
+    );
 
     it('Cancel the confirmation: the dialog closes, nothing is deleted, the page stays', async () => {
       const user = userEvent.setup();

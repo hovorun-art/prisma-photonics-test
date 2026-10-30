@@ -1,8 +1,10 @@
-import type { Job, JobStatus } from '@job-queue/contracts';
+import { FINISHED_JOB_STATUSES, type Job, type JobStatus } from '@job-queue/contracts';
 
 import { en } from '@/locales';
 
 import type {
+  ActionsJobPresentationRequest,
+  ActionsJobPresentationResponse,
   DetailsJobPresentationRequest,
   JobPresentation,
   LifecycleJobPresentationRequest,
@@ -19,7 +21,7 @@ export interface JobPresenterParams {
   readonly shortIdLength: number;
 }
 
-const FINAL_STATUSES: readonly JobStatus[] = ['completed', 'failed', 'cancelled'];
+const FINISHED: readonly JobStatus[] = FINISHED_JOB_STATUSES;
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 
@@ -73,7 +75,7 @@ export class JobPresenter implements JobPresentation {
 
   lifecycle(req: LifecycleJobPresentationRequest): LifecycleJobPresentationResponse {
     const { job } = req;
-    const finished = FINAL_STATUSES.includes(job.status);
+    const finished = FINISHED.includes(job.status);
     const steps: LifecycleStep[] = [
       { status: 'pending', reached: true, at: this.listTime({ at: job.createdAt }).text },
       {
@@ -88,6 +90,14 @@ export class JobPresenter implements JobPresentation {
       },
     ];
     return { steps };
+  }
+
+  actions({ job }: ActionsJobPresentationRequest): ActionsJobPresentationResponse {
+    return {
+      cancel: job.status === 'pending' || job.status === 'scheduled',
+      retry: job.status === 'failed',
+      delete: FINISHED.includes(job.status),
+    };
   }
 
   private optionalTime(at: Job['startedAt']): string | null {

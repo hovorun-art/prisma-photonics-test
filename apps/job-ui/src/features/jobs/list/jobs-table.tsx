@@ -95,7 +95,8 @@ function JobRow({ job }: { job: Job }) {
 
 /** Cancel and Retry as the design places them; disabled until their API exists. */
 function RowActions({ job }: { job: Job }) {
-  if (job.status === 'pending' || job.status === 'scheduled') {
+  const actions = useJobPresenter().actions({ job });
+  if (actions.cancel) {
     return (
       <ComingSoon>
         <Button variant="outline" size="sm">
@@ -104,7 +105,7 @@ function RowActions({ job }: { job: Job }) {
       </ComingSoon>
     );
   }
-  if (job.status === 'failed') {
+  if (actions.retry) {
     return (
       <ComingSoon>
         <Button size="sm">{en.list.retry}</Button>

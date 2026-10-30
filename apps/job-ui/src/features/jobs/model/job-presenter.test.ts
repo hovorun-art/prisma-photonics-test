@@ -105,4 +105,15 @@ describe('JobPresenter', () => {
       { status: 'completed', reached: false, at: null },
     ]);
   });
+
+  it.each([
+    ['scheduled', { cancel: true, retry: false, delete: false }],
+    ['pending', { cancel: true, retry: false, delete: false }],
+    ['processing', { cancel: false, retry: false, delete: false }],
+    ['completed', { cancel: false, retry: false, delete: true }],
+    ['failed', { cancel: false, retry: true, delete: true }],
+    ['cancelled', { cancel: false, retry: false, delete: true }],
+  ] as const)('actions: a %s job offers %o', (status, actions) => {
+    expect(presenter.actions({ job: jobFixtures.build({ status }) })).toEqual(actions);
+  });
 });

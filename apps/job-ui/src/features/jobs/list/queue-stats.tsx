@@ -1,14 +1,16 @@
+import { cn } from '@/lib/class-names';
 import { en } from '@/locales';
 
 import { ComingSoon } from '../../app-frame/coming-soon';
+import { STATUS_DOT } from '../model/status-style';
 
 const STATS = [
-  { label: en.list.stats.pending, color: '#8A4B00' },
-  { label: en.list.stats.processing, color: '#1F3FC4' },
-  { label: en.list.stats.scheduled, color: '#5B3FB8' },
-  { label: en.list.stats.completed, color: '#13703A' },
-  { label: en.list.stats.failed, color: '#B42121' },
-  { label: en.list.stats.throughput, color: '#5C5C63' },
+  { label: en.list.stats.pending, dot: STATUS_DOT.pending },
+  { label: en.list.stats.processing, dot: STATUS_DOT.processing },
+  { label: en.list.stats.scheduled, dot: STATUS_DOT.scheduled },
+  { label: en.list.stats.completed, dot: STATUS_DOT.completed },
+  { label: en.list.stats.failed, dot: STATUS_DOT.failed },
+  { label: en.list.stats.throughput, dot: 'bg-muted-foreground' },
 ] as const;
 
 /** Queue statistics cards (design "Main"); no statistics API yet, so each shows "—". */
@@ -22,7 +24,7 @@ export function QueueStats() {
         <ComingSoon key={stat.label} className="rounded-xl">
           <div className="flex w-full flex-col gap-1.5 rounded-xl border border-border bg-card p-4">
             <div className="flex items-center gap-2 text-[13px] text-muted-foreground">
-              <span className="size-2 rounded-[2px]" style={{ background: stat.color }} />
+              <span className={cn('size-2 rounded-[2px]', stat.dot)} />
               {stat.label}
             </div>
             <div className="font-mono text-[26px] font-medium tracking-tight">

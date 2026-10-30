@@ -38,6 +38,19 @@
   --border-soft: #eeeeeb;
   --input: #d4d4d0;
   --ring: #1f3fc4;
+  /* Job status colours (design "Components"): text and dot, then the badge background. */
+  --status-scheduled: #5b3fb8;
+  --status-scheduled-bg: #f1edfc;
+  --status-pending: #8a4b00;
+  --status-pending-bg: #fdf3e2;
+  --status-processing: #1f3fc4;
+  --status-processing-bg: #ebeffd;
+  --status-completed: #13703a;
+  --status-completed-bg: #e8f5ec;
+  --status-failed: #b42121;
+  --status-failed-bg: #fcebeb;
+  --status-cancelled: #5c5c63;
+  --status-cancelled-bg: #f0f0ee;
 }
 
 @theme inline {
@@ -66,6 +79,18 @@
   --color-accent: var(--accent);
   --color-accent-foreground: var(--accent-foreground);
   --color-link: var(--link);
+  --color-status-scheduled: var(--status-scheduled);
+  --color-status-scheduled-bg: var(--status-scheduled-bg);
+  --color-status-pending: var(--status-pending);
+  --color-status-pending-bg: var(--status-pending-bg);
+  --color-status-processing: var(--status-processing);
+  --color-status-processing-bg: var(--status-processing-bg);
+  --color-status-completed: var(--status-completed);
+  --color-status-completed-bg: var(--status-completed-bg);
+  --color-status-failed: var(--status-failed);
+  --color-status-failed-bg: var(--status-failed-bg);
+  --color-status-cancelled: var(--status-cancelled);
+  --color-status-cancelled-bg: var(--status-cancelled-bg);
   --color-destructive: var(--destructive);
   --color-destructive-muted: var(--destructive-muted);
   --color-destructive-border: var(--destructive-border);

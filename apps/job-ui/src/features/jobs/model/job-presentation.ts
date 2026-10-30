@@ -29,6 +29,15 @@ export interface LifecycleStep {
   /** Local time of the step, when the job has one for it. */
   readonly at: string | null;
 }
+export interface ActionsJobPresentationRequest {
+  readonly job: Job;
+}
+/** Which actions a job offers in its current status. */
+export interface ActionsJobPresentationResponse {
+  readonly cancel: boolean;
+  readonly retry: boolean;
+  readonly delete: boolean;
+}
 export interface LifecycleJobPresentationResponse {
   readonly steps: readonly LifecycleStep[];
 }
@@ -43,4 +52,6 @@ export interface JobPresentation {
   dateTime(req: TimeJobPresentationRequest): TextJobPresentationResponse;
   totalTime(req: TotalTimeJobPresentationRequest): TotalTimeJobPresentationResponse;
   lifecycle(req: LifecycleJobPresentationRequest): LifecycleJobPresentationResponse;
+  /** Cancel while it waits, retry after it failed, delete once it is finished. */
+  actions(req: ActionsJobPresentationRequest): ActionsJobPresentationResponse;
 }
