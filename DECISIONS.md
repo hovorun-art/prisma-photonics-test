@@ -123,6 +123,23 @@ defaults and the email field lengths are constants in the shared Zod schemas, so
 UI form validate with the same rules. Values that operators tune (page sizes, enqueue timeout) are
 environment config of job-service.
 
+**job-ui: polling, not push.** The jobs list and the job page fetch again every 2 s (TanStack
+Query `refetchInterval`); a failed poll keeps the last data on screen with a "Connection lost,
+retrying" note, and polling itself is the retry. *Alternatives:* Server-Sent Events or WebSockets
+push changes at once and cost less per idle tab, but need a change feed from job-service (Postgres
+`LISTEN/NOTIFY` or queue events) and reconnect handling. *Trade-off:* up to one interval of delay
+and one request per open page per interval; SSE is the planned upgrade if time allows.
+
+**job-ui: the whole design laid out now, unbuilt parts disabled.** Filters, search, Cancel/Retry,
+queue statistics, the health pill, scheduling and idempotency fields are in place but disabled with
+a "Coming soon" tooltip; each later change enables its part. *Why:* reviewers see the target UI,
+and later changes only wire behaviour. *Trade-off:* visible controls that do nothing yet.
+
+**job-ui: the form validates with the API's own schema.** The submit form runs the shared
+`CreateEmailJobRequest` Zod schema before sending, and maps an API `VALIDATION_FAILED` answer to
+the same fields, so client and server rules cannot drift. Messages shown for client-side errors
+come from the locale file, not from Zod.
+
 **Internal API protected by a shared service token.** Routes under `/internal` require
 `Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
 docs. *Trade-off:* a shared secret in environment variables is weaker than service identity (mTLS,
