@@ -2,7 +2,8 @@
 
 ## Purpose
 Lets API clients submit background jobs, read and query them and delete finished ones, with
-predictable answers for every normal and error case. Today the only job type is email.
+predictable answers for every normal and error case. Each job type's payload and result are defined
+in its own spec (`email-job`, `webhook-job`).
 
 ## Requirements
 
