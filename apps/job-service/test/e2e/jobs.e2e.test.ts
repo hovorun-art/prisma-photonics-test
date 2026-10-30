@@ -23,6 +23,9 @@ const EMAIL_JOB = {
   maxAttempts: 4,
 };
 
+const MINUTE_MS = 60_000;
+const DAY_MS = 86_400_000;
+
 const WEBHOOK_JOB = {
   type: 'webhook',
   payload: {
@@ -41,6 +44,10 @@ describe('job-service public job routes', () => {
     expect(await service.total()).toBe(0);
     expect(service.queue.enqueue).not.toHaveBeenCalled();
   };
+
+  /** An execution time the given milliseconds from now, at the app's real clock. */
+  const fromNow = (ms: number): string => new Date(Date.now() + ms).toISOString();
+  const maxAheadMs = JOB_LIMITS.scheduledAt.maxAheadDays * DAY_MS;
 
   const expectNotFound = async (response: Response): Promise<void> => {
     await service.errorBody({ response, status: 404, code: 'JOB_NOT_FOUND' });
@@ -141,6 +148,110 @@ describe('job-service public job routes', () => {
       expect(await service.total()).toBe(3);
     });
 
+    it('Job with a future execution time is scheduled', async () => {
+      const scheduledAt = fromNow(60 * MINUTE_MS);
+
+      const response = await service.submit({ ...EMAIL_JOB, scheduledAt });
+
+      expect(response.status).toBe(201);
+      const job = Job.parse(await response.json());
+      expect(job).toMatchObject({ status: 'scheduled', attempts: 0, scheduledAt });
+      expect(await service.stored(job.id)).toEqual(job);
+    });
+
+    it('Scheduled job is queued for its time', async () => {
+      const scheduledAt = fromNow(60 * MINUTE_MS);
+
+      const job = await service.submitted({ ...EMAIL_JOB, scheduledAt });
+
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 1,
+        priority: EMAIL_JOB.priority,
+        runAt: scheduledAt,
+      });
+    });
+
+    it('Job with a past execution time runs at once', async () => {
+      const scheduledAt = fromNow(-MINUTE_MS);
+
+      const job = await service.submitted({ ...EMAIL_JOB, scheduledAt });
+
+      expect(job).toMatchObject({ status: 'pending', scheduledAt });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 1,
+        priority: EMAIL_JOB.priority,
+        runAt: scheduledAt,
+      });
+    });
+
+    it('Execution time with a time zone offset', async () => {
+      const utc = new Date(Date.now() + 60 * MINUTE_MS);
+      utc.setUTCMilliseconds(0);
+      // The same instant two hours ahead on the wall clock, written with `+02:00`.
+      const local = new Date(utc.getTime() + 2 * 60 * MINUTE_MS).toISOString().slice(0, 19);
+
+      const job = await service.submitted({ ...EMAIL_JOB, scheduledAt: `${local}+02:00` });
+
+      expect(job).toMatchObject({ status: 'scheduled', scheduledAt: utc.toISOString() });
+    });
+
+    it('Queue unavailable during a scheduled submit', async () => {
+      service.queue.enqueue.mockImplementationOnce(({ jobId, attempt }) =>
+        Promise.reject(new JobQueueUnavailableError({ jobId, attempt })),
+      );
+
+      const scheduledAt = fromNow(MINUTE_MS);
+
+      const response = await service.submit({ ...EMAIL_JOB, scheduledAt });
+
+      expect(response.status).toBe(201);
+      const job = Job.parse(await response.json());
+      expect(job.status).toBe('scheduled');
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: job.id,
+        attempt: 1,
+        priority: EMAIL_JOB.priority,
+        runAt: scheduledAt,
+      });
+      expect(await service.stored(job.id)).toEqual(job);
+    });
+
+    it('Execution time is not a timestamp', async () => {
+      await expectRejected({ ...EMAIL_JOB, scheduledAt: fromNow(MINUTE_MS).slice(0, 19) }, [
+        'scheduledAt',
+      ]);
+    });
+
+    it('Execution time too far ahead', async () => {
+      const response = await service.submit({
+        ...EMAIL_JOB,
+        scheduledAt: fromNow(maxAheadMs + MINUTE_MS),
+      });
+
+      const body = await service.errorBody({ response, status: 400, code: 'VALIDATION_FAILED' });
+      expect(body.details.issues).toEqual([
+        expect.objectContaining({
+          path: ['scheduledAt'],
+          message: expect.stringContaining(
+            `${String(JOB_LIMITS.scheduledAt.maxAheadDays)} days`,
+          ) as unknown,
+        }),
+      ]);
+      expect(await service.total()).toBe(0);
+      expect(service.queue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('accepts an execution time just within the maximum', async () => {
+      const job = await service.submitted({
+        ...EMAIL_JOB,
+        scheduledAt: fromNow(maxAheadMs - MINUTE_MS),
+      });
+
+      expect(job.status).toBe('scheduled');
+    });
+
     it('Unknown job type', async () => {
       await expectRejected({ ...EMAIL_JOB, type: 'fax' }, ['type']);
     });
@@ -236,6 +347,30 @@ describe('job-service public job routes', () => {
       const page = QueryJobsResponse.parse(await (await fetch(service.url(JOBS_ROUTE))).json());
 
       expect(page.items.map((job) => job.id)).toEqual(jobs.map((job) => job.id).reverse());
+    });
+
+    it('Bulk items with and without an execution time', async () => {
+      const scheduledAt = fromNow(60 * MINUTE_MS);
+
+      const jobs = await service.submittedBulk([{ ...EMAIL_JOB, scheduledAt }, WEBHOOK_JOB]);
+
+      expect(jobs.map((job) => [job.status, job.scheduledAt])).toEqual([
+        ['scheduled', scheduledAt],
+        ['pending', null],
+      ]);
+      expect(service.queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
+        entries: [
+          { jobId: jobs[0]!.id, attempt: 1, priority: EMAIL_JOB.priority, runAt: scheduledAt },
+          { jobId: jobs[1]!.id, attempt: 1, priority: JOB_LIMITS.priority.default, runAt: null },
+        ],
+      });
+    });
+
+    it('Bulk item with an execution time too far ahead', async () => {
+      await expectBulkRejected(
+        [EMAIL_JOB, { ...WEBHOOK_JOB, scheduledAt: fromNow(maxAheadMs + MINUTE_MS) }],
+        ['jobs', 1, 'scheduledAt'],
+      );
     });
 
     it('One item with an invalid payload', async () => {

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { Job } from '@job-queue/contracts';
+import { Job, JOB_LIMITS } from '@job-queue/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { JobQueueUnavailableError } from '../../src/domain/jobs/errors/job-queue-unavailable.error.js';
@@ -115,6 +115,23 @@ describe('job-service internal job routes', () => {
       expect(response.status).toBe(200);
       const started = Job.parse(await response.json());
       expect(started).toMatchObject({ status: 'processing', attempts: 1 });
+      expect(started.startedAt).toEqual(expect.any(String));
+      expect(await service.stored(job.id)).toEqual(started);
+      expect(service.queue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('Start a scheduled job', async () => {
+      const job = await service.seed({ status: 'scheduled' });
+
+      const response = await service.report({ id: job.id, body: START });
+
+      expect(response.status).toBe(200);
+      const started = Job.parse(await response.json());
+      expect(started).toMatchObject({
+        status: 'processing',
+        attempts: 1,
+        scheduledAt: job.scheduledAt,
+      });
       expect(started.startedAt).toEqual(expect.any(String));
       expect(await service.stored(job.id)).toEqual(started);
       expect(service.queue.enqueue).not.toHaveBeenCalled();
@@ -278,7 +295,14 @@ describe('job-service internal job routes', () => {
     });
 
     it('Retries count attempts through the routes', async () => {
-      const job = await service.submitted({ ...EMAIL_JOB, maxAttempts: 2 });
+      // A scheduled, high-priority job: the retry keeps its priority and runs at once.
+      const scheduledAt = new Date(Date.now() + 60_000).toISOString();
+      const job = await service.submitted({
+        ...EMAIL_JOB,
+        maxAttempts: 2,
+        priority: JOB_LIMITS.priority.max,
+        scheduledAt,
+      });
 
       expect((await service.report({ id: job.id, body: START })).status).toBe(200);
       expect((await service.report({ id: job.id, body: FAIL })).status).toBe(200);
@@ -288,8 +312,8 @@ describe('job-service internal job routes', () => {
       expect(retried).toMatchObject({ status: 'processing', attempts: 2 });
       expect(failed).toMatchObject({ status: 'failed', attempts: 2, maxAttempts: 2 });
       expect(service.queue.enqueue.mock.calls.map(([entry]) => entry)).toEqual([
-        { jobId: job.id, attempt: 1, priority: job.priority, runAt: null },
-        { jobId: job.id, attempt: 2, priority: job.priority, runAt: null },
+        { jobId: job.id, attempt: 1, priority: JOB_LIMITS.priority.max, runAt: scheduledAt },
+        { jobId: job.id, attempt: 2, priority: JOB_LIMITS.priority.max, runAt: null },
       ]);
     });
 
