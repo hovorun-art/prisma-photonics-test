@@ -93,7 +93,7 @@ describe('HttpJobRepository against a stub job-service', () => {
     received = [];
   });
 
-  it('Read a job with its time limit', async () => {
+  it('reads the job with its maximum processing time', async () => {
     answer = respond(200, INTERNAL_JOB);
 
     await expect(api().get({ id: JOB.id })).resolves.toEqual({
@@ -119,12 +119,14 @@ describe('HttpJobRepository against a stub job-service', () => {
     });
 
     expect(job.status).toBe('processing');
-    expect(received[0]).toMatchObject({
-      method: 'PATCH',
-      url: `${INTERNAL_JOBS_ROUTE}/${JOB.id}`,
-      authorization: `Bearer ${TOKEN}`,
-      body: { status: 'processing', run: 2, attempt: 3 },
-    });
+    expect(received).toEqual([
+      {
+        method: 'PATCH',
+        url: `${INTERNAL_JOBS_ROUTE}/${JOB.id}`,
+        authorization: `Bearer ${TOKEN}`,
+        body: { status: 'processing', run: 2, attempt: 3 },
+      },
+    ]);
   });
 
   it('passes through an accepted report whose job does not match the contract', async () => {
@@ -168,12 +170,18 @@ describe('HttpJobRepository against a stub job-service', () => {
     });
   });
 
-  it('maps 409 without a status in its details to a conflict without a status', async () => {
-    answer = respond(409, { code: 'JOB_STATUS_CONFLICT', message: 'x', details: {} });
+  it.each([
+    { name: 'no status', details: {} },
+    { name: 'a status that is not a string', details: { status: 42 } },
+  ])('maps 409 with $name in its details to a conflict without a status', async ({ details }) => {
+    answer = respond(409, { code: 'JOB_STATUS_CONFLICT', message: 'x', details });
 
+    const refused = api().update({ id: JOB.id, update: { status: 'processing', ...RUN_ATTEMPT } });
+
+    await expect(refused).rejects.toBeInstanceOf(JobStatusConflictError);
     await expect(
-      api().update({ id: JOB.id, update: { status: 'processing', ...RUN_ATTEMPT } }),
-    ).rejects.toMatchObject({ details: { id: JOB.id } });
+      refused.catch((error: unknown) => (error as JobStatusConflictError).details),
+    ).resolves.toEqual({ id: JOB.id });
   });
 
   it('maps a server error to JobServiceUnavailableError', async () => {
@@ -210,7 +218,12 @@ describe('HttpJobRepository against a stub job-service', () => {
   it('rejects a read without the time limit as invalid', async () => {
     answer = respond(200, JOB);
 
-    await expect(api().get({ id: JOB.id })).rejects.toBeInstanceOf(InvalidJobError);
+    const read = api().get({ id: JOB.id });
+
+    await expect(read).rejects.toBeInstanceOf(InvalidJobError);
+    await expect(read).rejects.toMatchObject({
+      details: { id: JOB.id, issues: [expect.objectContaining({ path: ['maxProcessingMs'] })] },
+    });
   });
 
   it('rejects a job that does not match the contract as invalid', async () => {

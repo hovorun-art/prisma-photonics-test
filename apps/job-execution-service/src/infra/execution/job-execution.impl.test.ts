@@ -167,7 +167,9 @@ describe('JobExecutionImpl', () => {
 
   it('Another worker started the job first', async () => {
     jobs.get.mockResolvedValueOnce(read(job()));
-    jobs.update.mockRejectedValueOnce(new JobStatusConflictError({ id: JOB_ID }));
+    jobs.update.mockRejectedValueOnce(
+      new JobStatusConflictError({ id: JOB_ID, status: 'processing' }),
+    );
 
     await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'skipped' });
 
@@ -177,6 +179,8 @@ describe('JobExecutionImpl', () => {
       expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
       expect.any(String),
     );
+    // A lost start is a plain race, never the warning for a recovered attempt.
+    expect(logger.warn).not.toHaveBeenCalled();
     expect(logger.error).not.toHaveBeenCalled();
   });
 
@@ -300,6 +304,12 @@ describe('JobExecutionImpl', () => {
         'processing',
         'completed',
       ]);
+      // Without a current status there is no sign of a recovery: info, not the warning.
+      expect(logger.log).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: JOB_ID, status: 'completed' }),
+        expect.stringMatching(/^Report refused/),
+      );
+      expect(logger.warn).not.toHaveBeenCalled();
       expect(logger.error).not.toHaveBeenCalled();
     });
 
@@ -314,6 +324,10 @@ describe('JobExecutionImpl', () => {
         'processing',
         'failed',
       ]);
+      expect(logger.log).toHaveBeenCalledWith(
+        expect.objectContaining({ jobId: JOB_ID, status: 'failed' }),
+        expect.stringMatching(/^Report refused/),
+      );
       expect(logger.error).not.toHaveBeenCalled();
     });
   });
@@ -1184,7 +1198,7 @@ describe('JobExecutionImpl', () => {
     });
 
     it('Dropped entry is logged', async () => {
-      jobs.get.mockResolvedValueOnce(read(job({ status: 'processing', ...AT })));
+      jobs.get.mockResolvedValueOnce(read(job({ status: 'processing', attempts: 1 })));
 
       await execution.execute(ENTRY);
 

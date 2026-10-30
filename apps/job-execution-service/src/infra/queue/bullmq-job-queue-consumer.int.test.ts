@@ -4,6 +4,7 @@ import { JOB_QUEUE_NAME, JobQueueEntryId } from '@job-queue/contracts';
 import { CONTAINER_IMAGES } from '@job-queue/test-support';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { Queue, Worker } from 'bullmq';
+import { Redis } from 'ioredis';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import type { JobQueueEntry } from '../../domain/queue/job-queue-consumer.js';
@@ -208,6 +209,42 @@ describe('BullMqJobQueueConsumer against Redis', () => {
     // Let a wrongly doubled delivery show up before counting.
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect([...seenBy.first, ...seenBy.second].sort()).toEqual([...jobIds].sort());
+    // Both consumers really took from the queue, so the entries were shared, not run by one.
+    expect(seenBy.first.length).toBeGreaterThan(0);
+    expect(seenBy.second.length).toBeGreaterThan(0);
+  });
+
+  it('holds a running entry for the configured lock duration', async () => {
+    const LOCK_MS = 500;
+    let release: () => void = () => undefined;
+    const running = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const started = vi.fn();
+    startConsumer({
+      concurrency: 1,
+      lockDurationMs: LOCK_MS,
+      execute: async () => {
+        started();
+        await running;
+      },
+    });
+    const entryId = JobQueueEntryId.encode({ jobId: JOB_ID, run: 1, attempt: 1 });
+
+    await enqueue(JOB_ID);
+    // Released whatever happens, or closing the consumer would wait for the held entry forever.
+    try {
+      await expect.poll(() => started.mock.calls.length, POLL).toBe(1);
+      const redis = new Redis(container.getConnectionUrl());
+      const ttl = await redis
+        .pttl(`bull:${JOB_QUEUE_NAME}:${entryId}:lock`)
+        .finally(() => redis.quit());
+
+      expect(ttl).toBeGreaterThan(0);
+      expect(ttl).toBeLessThanOrEqual(LOCK_MS);
+    } finally {
+      release();
+    }
   });
 
   it('Stalled entry is not run again', async () => {

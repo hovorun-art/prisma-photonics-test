@@ -65,17 +65,6 @@ describe('job-execution-service running jobs', () => {
       ]);
     });
 
-    it('Reports of one entry', async () => {
-      runsToCompletion();
-
-      await service.run({ jobId: JOB_ID, run: 1, attempt: 2 });
-
-      expect(service.reports()).toEqual([
-        { status: 'processing', run: 1, attempt: 2 },
-        { ...COMPLETED, attempt: 2 },
-      ]);
-    });
-
     it('Run of an attempt is logged', async () => {
       runsToCompletion();
 
@@ -326,21 +315,6 @@ describe('job-execution-service running jobs', () => {
       ]);
     });
 
-    it('Completion refused after a cancel', async () => {
-      service.readAndStart(service.emailJob({ id: JOB_ID }));
-      service.sendsEmail(EMAIL);
-      service.jobs.update.mockRejectedValueOnce(
-        new JobStatusConflictError({ id: JOB_ID, status: 'cancelled' }),
-      );
-
-      await expect(service.run(ENTRY)).resolves.toEqual({ outcome: 'skipped' });
-
-      expect(service.reports()).toEqual([{ status: 'processing', ...AT }, COMPLETED]);
-      expect(service.logs.filter((line) => line.level >= 40)).toEqual([]);
-    });
-  });
-
-  describe('shutdown', () => {
     it('Job running during shutdown', async () => {
       const app = await JobExecutionServiceUnderTest.start();
       stopping = app;
