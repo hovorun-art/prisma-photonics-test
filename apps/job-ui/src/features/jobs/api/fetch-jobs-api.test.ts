@@ -2,7 +2,7 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { jobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, queueStatsFixtures } from '../testing/job-fixtures';
 import { ApiError } from './api-error';
 import { FetchJobsApi } from './fetch-jobs-api';
 
@@ -71,6 +71,42 @@ describe('FetchJobsApi', () => {
     );
 
     await expect(api.delete({ id: job.id })).resolves.toEqual({ id: job.id });
+  });
+
+  it('stats calls the statistics route and returns the statistics', async () => {
+    const stats = queueStatsFixtures.build();
+    server.use(http.get(`${BASE}/v1/stats`, () => HttpResponse.json(stats)));
+
+    await expect(api.stats()).resolves.toEqual({ stats });
+  });
+
+  it('stats rejects an answer that does not match the statistics contract', async () => {
+    server.use(
+      http.get(`${BASE}/v1/stats`, () =>
+        HttpResponse.json({ ...queueStatsFixtures.build(), pending: -1 }),
+      ),
+    );
+
+    const error: unknown = await api.stats().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 200, code: null, message: 'API unreachable' });
+  });
+
+  it('stats turns an error answer into an ApiError with its code', async () => {
+    server.use(
+      http.get(`${BASE}/v1/stats`, () =>
+        HttpResponse.json(
+          { code: 'INTERNAL_ERROR', message: 'Internal server error', details: {} },
+          { status: 500 },
+        ),
+      ),
+    );
+
+    const error: unknown = await api.stats().catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 500, code: 'INTERNAL_ERROR' });
   });
 
   it('an error body becomes an ApiError with its status, code, message and details', async () => {

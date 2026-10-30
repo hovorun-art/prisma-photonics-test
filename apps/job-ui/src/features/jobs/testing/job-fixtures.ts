@@ -1,11 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import type { EmailJob, WebhookJob } from '@job-queue/contracts';
+import type { EmailJob, QueueStats, WebhookJob } from '@job-queue/contracts';
 
 export type BuildJobFixturesRequest = Partial<EmailJob>;
 export type BuildJobFixturesResponse = EmailJob;
 export type BuildWebhookJobFixturesRequest = Partial<WebhookJob>;
 export type BuildWebhookJobFixturesResponse = WebhookJob;
+export type BuildQueueStatsFixturesRequest = Partial<QueueStats>;
+export type BuildQueueStatsFixturesResponse = QueueStats;
 
 /** Builds valid jobs for tests; each test overrides only the fields its scenario is about. */
 export interface JobFixtures {
@@ -15,6 +17,11 @@ export interface JobFixtures {
 /** Builds valid webhook jobs for tests, like `JobFixtures` for email. */
 export interface WebhookJobFixtures {
   build(req?: BuildWebhookJobFixturesRequest): BuildWebhookJobFixturesResponse;
+}
+
+/** Builds valid queue statistics for tests, with a different value in every field. */
+export interface QueueStatsFixtures {
+  build(req?: BuildQueueStatsFixturesRequest): BuildQueueStatsFixturesResponse;
 }
 
 /** The fields every pending job has, whatever its type, as job-service returns them. */
@@ -65,3 +72,19 @@ export class PendingWebhookJobFixtures implements WebhookJobFixtures {
 }
 
 export const webhookJobFixtures: WebhookJobFixtures = new PendingWebhookJobFixtures();
+
+/** Test-only: statistics as job-service returns them, every value distinct so the cards can be told apart. */
+export class DistinctQueueStatsFixtures implements QueueStatsFixtures {
+  build(req: BuildQueueStatsFixturesRequest = {}): BuildQueueStatsFixturesResponse {
+    return {
+      pending: 12,
+      processing: 3,
+      scheduled: 7,
+      recent: { windowMinutes: 1440, completed: 1234, failed: 5 },
+      throughput: { windowMinutes: 5, perMinute: 2.4 },
+      ...req,
+    };
+  }
+}
+
+export const queueStatsFixtures: QueueStatsFixtures = new DistinctQueueStatsFixtures();

@@ -8,14 +8,18 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { en } from '@/locales';
 
-import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, queueStatsFixtures, webhookJobFixtures } from '../testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../testing/test-providers';
 import { JobsListPage } from './jobs-list-page';
 
 const JOBS_URL = `${TEST_API_BASE}/v1/jobs`;
+const STATS_URL = `${TEST_API_BASE}/v1/stats`;
 /** Waits for a poll; generous, since the whole repo's tests share the machine. */
 const POLL_WAIT = { timeout: 5000 };
-const server = setupServer();
+/** The statistics cards poll too; unless a test says otherwise, job-service reports statistics. */
+const server = setupServer(
+  http.get(STATS_URL, () => HttpResponse.json(queueStatsFixtures.build())),
+);
 
 beforeAll(() => {
   server.listen({ onUnhandledFrame: 'error' });
@@ -223,13 +227,47 @@ describe('JobsListPage', () => {
     await expect.poll(() => screen.queryByText(en.list.connectionLost), POLL_WAIT).toBeNull();
   });
 
-  it('Statistics without data: every queue statistics card shows "—"', async () => {
+  it('Statistics shown: the list page shows the queue statistics cards', async () => {
     answerPages({ items: [], total: 0 });
 
     renderList();
 
     const stats = await screen.findByRole('region', { name: en.list.statsLabel });
-    expect(within(stats).getAllByText(en.list.noValue)).toHaveLength(6);
+    expect(await within(stats).findByText('1,234')).toBeVisible();
+  });
+
+  it('First statistics request fails: the cards show "—" and the jobs table still shows jobs', async () => {
+    const job = jobFixtures.build();
+    answerPages({ items: [job], total: 1 });
+    server.use(http.get(STATS_URL, () => HttpResponse.error()));
+
+    renderList();
+
+    expect(await screen.findByRole('link', { name: job.id.slice(0, 8) })).toBeVisible();
+    const stats = screen.getByRole('region', { name: en.list.statsLabel });
+    await expect
+      .poll(() => within(stats).queryAllByText(en.list.noValue).length, POLL_WAIT)
+      .toBe(6);
+    expect(screen.queryByText(en.pageError.title)).toBeNull();
+  });
+
+  it('Statistics poll fails after values were shown: the jobs table still shows jobs', async () => {
+    const job = jobFixtures.build();
+    answerPages({ items: [job], total: 1 });
+    let statsCall = 0;
+    server.use(
+      http.get(STATS_URL, () =>
+        statsCall++ === 0 ? HttpResponse.json(queueStatsFixtures.build()) : HttpResponse.error(),
+      ),
+    );
+    renderList(20);
+    const stats = await screen.findByRole('region', { name: en.list.statsLabel });
+    await within(stats).findByText('1,234');
+
+    await expect.poll(() => statsCall, POLL_WAIT).toBeGreaterThan(2);
+
+    expect(within(stats).getByText('1,234')).toBeVisible();
+    expect(screen.getByRole('link', { name: job.id.slice(0, 8) })).toBeVisible();
   });
 
   it('Disabled filter: status and type filters and the search are disabled', async () => {

@@ -1,4 +1,10 @@
-import type { CreateJobRequest, ErrorCode, Job, QueryJobsResponse } from '@job-queue/contracts';
+import type {
+  CreateJobRequest,
+  ErrorCode,
+  Job,
+  QueryJobsResponse,
+  QueueStats,
+} from '@job-queue/contracts';
 
 export interface QueryJobsApiRequest {
   readonly offset: number;
@@ -26,8 +32,12 @@ export interface DeleteJobsApiResponse {
   readonly id: string;
 }
 
+export interface StatsJobsApiResponse {
+  readonly stats: QueueStats;
+}
+
 /**
- * job-service's public job routes as job-ui uses them. Every method throws `ApiError` when the
+ * job-service's public job and statistics routes as job-ui uses them. Every method throws `ApiError` when the
  * call fails: with the API's error code when job-service answered, without one otherwise.
  */
 export interface JobsApi {
@@ -35,6 +45,8 @@ export interface JobsApi {
   get(req: GetJobsApiRequest): Promise<GetJobsApiResponse>;
   create(req: CreateJobsApiRequest): Promise<CreateJobsApiResponse>;
   delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse>;
+  /** The queue statistics (`GET /v1/stats`). */
+  stats(): Promise<StatsJobsApiResponse>;
 }
 
 /** A failed API call: the HTTP status and error body of job-service, or `null`s for a network failure. */

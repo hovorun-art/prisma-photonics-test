@@ -8,13 +8,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { en } from '@/locales';
 
 import { AppRoutes } from './app';
-import { jobFixtures } from './features/jobs/testing/job-fixtures';
+import { jobFixtures, queueStatsFixtures } from './features/jobs/testing/job-fixtures';
 import { TEST_API_BASE, TestProviders } from './features/jobs/testing/test-providers';
 
 const job = jobFixtures.build();
 const server = setupServer(
   http.get(`${TEST_API_BASE}/v1/jobs`, () => HttpResponse.json({ items: [job], total: 1 })),
   http.get(`${TEST_API_BASE}/v1/jobs/${job.id}`, () => HttpResponse.json(job)),
+  http.get(`${TEST_API_BASE}/v1/stats`, () => HttpResponse.json(queueStatsFixtures.build())),
 );
 
 beforeAll(() => {

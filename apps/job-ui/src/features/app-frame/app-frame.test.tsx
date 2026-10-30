@@ -1,16 +1,39 @@
+import { randomUUID } from 'node:crypto';
+
 import { render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
-import { MemoryRouter, Route, Routes } from 'react-router';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { http, HttpResponse } from 'msw';
+import { setupServer } from 'msw/node';
+import { Route, Routes } from 'react-router';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { API_BASE_PATH } from '@/config';
 import { en } from '@/locales';
 
+import { queueStatsFixtures } from '../jobs/testing/job-fixtures';
+import { TEST_API_BASE, TestProviders } from '../jobs/testing/test-providers';
 import { AppFrame } from './app-frame';
+
+const JOB_ID = randomUUID();
+
+/** The header's API status pill polls the statistics; every test here sees job-service online. */
+const server = setupServer(
+  http.get(`${TEST_API_BASE}/v1/stats`, () => HttpResponse.json(queueStatsFixtures.build())),
+);
+
+beforeAll(() => {
+  server.listen({ onUnhandledFrame: 'error' });
+});
+afterEach(() => {
+  server.resetHandlers();
+});
+afterAll(() => {
+  server.close();
+});
 
 function renderAt(path: string) {
   return render(
-    <MemoryRouter initialEntries={[path]}>
+    <TestProviders path={path}>
       <Routes>
         <Route element={<AppFrame />}>
           <Route path="/jobs" element={<p>jobs list page</p>} />
@@ -18,7 +41,7 @@ function renderAt(path: string) {
           <Route path="/jobs/:id" element={<p>job page</p>} />
         </Route>
       </Routes>
-    </MemoryRouter>,
+    </TestProviders>,
   );
 }
 
@@ -26,7 +49,7 @@ describe('AppFrame', () => {
   it.each([
     ['/jobs', 'jobs list page'],
     ['/jobs/new', 'submit page'],
-    ['/jobs/7f3a9c21-4b5d-4e6f-8a7b-9c0d1e2f3a4b', 'job page'],
+    [`/jobs/${JOB_ID}`, 'job page'],
   ])('Header on every page: %s shows the mark, navigation and New job', (path, page) => {
     renderAt(path);
 
@@ -36,8 +59,14 @@ describe('AppFrame', () => {
     expect(within(nav).getByRole('link', { name: en.frame.jobs })).toBeVisible();
     expect(within(nav).getByRole('link', { name: en.frame.apiDocs })).toBeVisible();
     expect(within(header).getByRole('link', { name: en.frame.newJob })).toBeVisible();
-    expect(within(header).getByText(en.frame.apiStatus)).toBeVisible();
     expect(screen.getByText(page)).toBeVisible();
+  });
+
+  it('Statistics without data: the header pill is not disabled and shows no "Coming soon"', async () => {
+    renderAt('/jobs');
+
+    const pill = await within(screen.getByRole('banner')).findByText(en.frame.apiOnline);
+    expect(pill.closest('[aria-disabled="true"]')).toBeNull();
   });
 
   it('New job from the header: opens the submit page', async () => {
@@ -75,14 +104,14 @@ describe('AppFrame', () => {
     }
     function renderFlaky() {
       return render(
-        <MemoryRouter initialEntries={['/jobs']}>
+        <TestProviders path="/jobs">
           <Routes>
             <Route element={<AppFrame />}>
               <Route path="/jobs" element={<FlakyPage />} />
               <Route path="/jobs/new" element={<p>submit page</p>} />
             </Route>
           </Routes>
-        </MemoryRouter>,
+        </TestProviders>,
       );
     }
 
