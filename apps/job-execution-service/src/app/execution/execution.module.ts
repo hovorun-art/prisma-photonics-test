@@ -18,6 +18,7 @@ import { EXECUTION_CONFIG, type ExecutionConfig } from '../../domain/config/exec
 import { JOB_EXECUTION, type JobExecution } from '../../domain/execution/job-execution.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../domain/jobs/job-repository.js';
 import { JOB_HANDLERS, type JobHandlers } from '../../domain/execution/job-handler.js';
+import { JOB_CANCELLATIONS, type JobCancellations } from '../../domain/queue/job-cancellations.js';
 import {
   JOB_QUEUE_CONSUMER,
   type JobQueueConsumer,
@@ -28,11 +29,13 @@ import { EmailJobHandler } from '../../infra/notifications/email-job-handler.js'
 import { FlightTransitJobHandler } from '../../infra/flight-transit/flight-transit-job-handler.js';
 import { TurfTransitReportGenerator } from '../../infra/flight-transit/turf-transit-report-generator.js';
 import { BullMqJobQueueConsumer } from '../../infra/queue/bullmq-job-queue-consumer.js';
+import { RedisJobCancellations } from '../../infra/queue/redis-job-cancellations.js';
 import { WebhookJobHandler } from '../../infra/webhooks/webhook-job-handler.js';
 
 /**
- * Runs queued jobs: starts taking entries once the app has started, and on shutdown stops taking
- * new ones and lets running jobs finish for the configured grace period, then abandons the rest.
+ * Runs queued jobs: listens for cancellations and starts taking entries once the app has started,
+ * and on shutdown stops taking new ones and lets running jobs finish for the configured grace
+ * period, then abandons the rest. Cancellations are heard until the running jobs are done.
  */
 @Module({
   providers: [
@@ -110,6 +113,15 @@ import { WebhookJobHandler } from '../../infra/webhooks/webhook-job-handler.js';
         ),
       inject: [EXECUTION_CONFIG],
     },
+    {
+      provide: JOB_CANCELLATIONS,
+      useFactory: (config: ExecutionConfig): JobCancellations =>
+        new RedisJobCancellations(
+          { logger: new Logger('JobCancellations') },
+          { redisUrl: config.redisUrl },
+        ),
+      inject: [EXECUTION_CONFIG],
+    },
   ],
 })
 export class ExecutionModule implements OnApplicationBootstrap, BeforeApplicationShutdown {
@@ -118,11 +130,22 @@ export class ExecutionModule implements OnApplicationBootstrap, BeforeApplicatio
   constructor(
     @Inject(JOB_QUEUE_CONSUMER) private readonly consumer: JobQueueConsumer,
     @Inject(JOB_EXECUTION) private readonly execution: JobExecution,
+    @Inject(JOB_CANCELLATIONS) private readonly cancellations: JobCancellations,
     @Inject(SLEEPER) private readonly sleeper: Sleeper,
     @Inject(EXECUTION_CONFIG) private readonly config: ExecutionConfig,
   ) {}
 
+  /**
+   * Listens before taking entries, so no cancel of a job it starts is missed. Not awaited: while
+   * Redis is down the subscription waits for it, and jobs still run (a missed cancel only means a
+   * refused report).
+   */
   onApplicationBootstrap(): void {
+    this.cancellations
+      .listen({ onCancel: (jobId) => this.execution.cancel({ jobId }) })
+      .catch((err: unknown) => {
+        this.logger.error({ err }, 'Could not listen for job cancellations');
+      });
     this.consumer.start({ execute: (entry) => this.execution.execute(entry) });
   }
 
@@ -143,5 +166,6 @@ export class ExecutionModule implements OnApplicationBootstrap, BeforeApplicatio
     } else {
       graceTimer.abort();
     }
+    await this.cancellations.close();
   }
 }

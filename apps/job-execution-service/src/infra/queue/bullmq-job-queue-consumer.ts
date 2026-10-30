@@ -69,7 +69,10 @@ export class BullMqJobQueueConsumer implements JobQueueConsumer {
     return {};
   }
 
-  /** The job id and attempt from the entry id (`JobQueueEntryId`), checked against the data. */
+  /**
+   * The job id and attempt from the entry id (`JobQueueEntryId`, with or without a run), checked
+   * against the data.
+   */
   private toEntry(entry: QueueEntry<JobQueueMessage>): JobQueueEntry | undefined {
     const message = JobQueueMessage.safeParse(entry.data);
     const id = JobQueueEntryId.safeDecode(entry.id ?? '');
@@ -77,6 +80,7 @@ export class BullMqJobQueueConsumer implements JobQueueConsumer {
       this.d.logger.error({ entryId: entry.id }, 'Dropped a malformed queue entry');
       return undefined;
     }
-    return id.data;
+    // The run only keeps entry ids unique in job-service; running an entry needs the attempt.
+    return { jobId: id.data.jobId, attempt: id.data.attempt };
   }
 }

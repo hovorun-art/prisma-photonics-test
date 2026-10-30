@@ -170,6 +170,48 @@ describe('job-execution-service running jobs', () => {
     });
   });
 
+  describe('cancellation', () => {
+    /** The email job starts sending and its send lasts until it is aborted. */
+    const sendsUntilAborted = (jobId: string): void => {
+      service.readAndStart(service.emailJob({ id: jobId }));
+      service.random.int.mockReturnValueOnce({ value: EMAIL.sendMs });
+      service.sleepsUntilAborted();
+    };
+
+    it('Running job is cancelled', async () => {
+      sendsUntilAborted(JOB_ID);
+      const running = service.run(ENTRY);
+      await vi.waitFor(() => {
+        expect(service.sleeper.sleep).toHaveBeenCalledOnce();
+      });
+
+      service.announceCancel(JOB_ID);
+
+      await expect(running).resolves.toEqual({ outcome: 'cancelled' });
+      expect(service.reports()).toEqual([{ status: 'processing' }]);
+      expect(service.jobLogs(JOB_ID)).toContainEqual(
+        expect.objectContaining({
+          level: 30,
+          jobId: JOB_ID,
+          attempt: 1,
+          instanceId: INSTANCE_ID,
+          msg: expect.stringContaining('cancelled') as unknown,
+        }),
+      );
+      expect(service.logs.filter((line) => line.level >= 40)).toEqual([]);
+    });
+
+    it('Cancellation of a job this worker does not run', async () => {
+      runsToCompletion();
+      const running = service.run(ENTRY);
+
+      service.announceCancel(randomUUID());
+
+      await expect(running).resolves.toEqual({ outcome: 'completed' });
+      expect(service.reports()).toEqual([{ status: 'processing' }, COMPLETED]);
+    });
+  });
+
   describe('shutdown', () => {
     it('Job running during shutdown', async () => {
       const app = await JobExecutionServiceUnderTest.start();
@@ -211,6 +253,40 @@ describe('job-execution-service running jobs', () => {
         signal: SIGNAL,
       });
       expect(app.reports()).toEqual([{ status: 'processing' }, COMPLETED]);
+      expect(app.logs.filter((line) => line.level >= 40)).toEqual([]);
+    });
+
+    it('Job cancelled during the shutdown grace period', async () => {
+      const app = await JobExecutionServiceUnderTest.start();
+      stopping = app;
+      app.readAndStart(app.emailJob({ id: JOB_ID }));
+      app.random.int.mockReturnValueOnce({ value: EMAIL.sendMs });
+      app.sleepsUntilAborted();
+      const running = app.run(ENTRY);
+      await vi.waitFor(() => {
+        expect(app.sleeper.sleep).toHaveBeenCalledOnce();
+      });
+      app.consumer.close.mockImplementationOnce(async () => {
+        await running;
+        return {};
+      });
+      app.cancellations.close.mockResolvedValueOnce({});
+      app.sleepsUntilAborted();
+
+      const closing = app.close();
+      await vi.waitFor(() => {
+        expect(app.consumer.close).toHaveBeenCalledOnce();
+      });
+      app.announceCancel(JOB_ID);
+      await closing;
+      stopping = undefined;
+
+      await expect(running).resolves.toEqual({ outcome: 'cancelled' });
+      expect(app.reports()).toEqual([{ status: 'processing' }]);
+      expect(app.cancellations.close).toHaveBeenCalledOnce();
+      expect(app.consumer.close.mock.invocationCallOrder[0]).toBeLessThan(
+        app.cancellations.close.mock.invocationCallOrder[0] ?? 0,
+      );
       expect(app.logs.filter((line) => line.level >= 40)).toEqual([]);
     });
 
