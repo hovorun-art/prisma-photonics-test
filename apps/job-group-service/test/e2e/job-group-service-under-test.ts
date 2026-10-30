@@ -26,6 +26,11 @@ import {
   type JobGroupRepository,
 } from '../../src/domain/groups/job-group-repository.js';
 import {
+  type CheckRunningJobGroupTrackerResponse,
+  JOB_GROUP_TRACKER,
+  type JobGroupTracker,
+} from '../../src/domain/groups/job-group-tracker.js';
+import {
   JOB_GROUP_SERVICE_BODY_PARSER,
   JOB_GROUP_SERVICE_SETUP_STEPS,
 } from '../../src/infra/bootstrap/job-group-service-bootstrap.js';
@@ -37,8 +42,11 @@ const DATABASE_SCHEMA = 'job_groups';
 
 /** The configured values the e2e tests depend on. */
 export const TEST_CONFIG = {
-  /** Short, so the polling scenarios settle within `expect.poll`. */
-  pollIntervalMs: 50,
+  /**
+   * Long enough that the timer never fires during a test: a test runs a poll itself with `poll()`,
+   * so every call to the job-service mock is one the test stubbed (the timer is unit-tested).
+   */
+  pollIntervalMs: 3_600_000,
   queryDefaultLimit: 3,
   queryMaxLimit: 10,
 } as const;
@@ -164,6 +172,20 @@ export class JobGroupServiceUnderTest implements Closable {
 
   remove(id: string): Promise<Response> {
     return fetch(this.url(`${JOB_GROUPS_ROUTE}/${id}`), { method: 'DELETE' });
+  }
+
+  // --- The poll ---------------------------------------------------------------------------------
+
+  /** One poll of the running groups, as the app's timer runs it, taken from the DI container. */
+  poll(): Promise<CheckRunningJobGroupTrackerResponse> {
+    return this.app.get<JobGroupTracker>(JOB_GROUP_TRACKER).checkRunning();
+  }
+
+  /** Lets the clock move on, so groups created one after another get different creation times. */
+  nextMillisecond(): Promise<void> {
+    return new Promise((resolve) => {
+      setTimeout(resolve, 5);
+    });
   }
 
   // --- Checks -----------------------------------------------------------------------------------

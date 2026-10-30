@@ -184,8 +184,9 @@ routes and validation failures as in job-service.
   migrations into the `job_groups` schema (including the conditional `recordCheck`);
   `HttpGroupChildJobs` against a local `node:http` server, as `HttpJobRepository` is tested
   (query strings, timeout, 5xx, unparseable body).
-- Per-app e2e: real Postgres, `GroupChildJobs` mocked at its port with `mockDeep`, a short
-  configured poll interval and `expect.poll` for the polling scenarios; `service` (health, docs,
+- Per-app e2e: real Postgres, `GroupChildJobs` mocked at its port with `mockDeep`; the configured
+  poll interval is an hour and each polling scenario runs one poll itself (the tracker from the DI
+  container), so every mock call is one the test stubbed with a `...Once` form; `service` (health, docs,
   shutdown closes the database once and stops polling), `errors` (unknown route, unexpected
   failure via a spied provider), `groups` (every `job-groups` scenario).
 - System e2e (`tests/system-e2e`): create a group, bulk-submit jobs with its `groupId` to

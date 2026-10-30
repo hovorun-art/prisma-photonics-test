@@ -13,6 +13,7 @@ import {
   JOB_GROUP_SERVICE_CONFIG,
   type JobGroupServiceConfig,
 } from '../domain/config/job-group-service-config.js';
+import { JobGroupsModule } from './groups/job-groups.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
 
 export interface AppOptions {
@@ -32,6 +33,7 @@ export class AppModule {
         ScheduleModule.forRoot(),
         PrismaModule,
         HealthModule,
+        JobGroupsModule,
       ],
       providers: [
         { provide: APP_FILTER, useClass: ErrorResponseFilter },

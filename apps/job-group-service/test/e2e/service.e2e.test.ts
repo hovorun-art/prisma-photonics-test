@@ -2,6 +2,9 @@ import { HEALTH_ROUTE, HealthResponse } from '@job-queue/contracts';
 import { JobServiceUnavailableError } from '@job-queue/kernel';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SchedulerRegistry } from '@nestjs/schedule';
+
+import { JOB_GROUP_POLL_INTERVAL_NAME } from '../../src/app/groups/job-group-poll.js';
 import { PrismaDatabase } from '../../src/infra/prisma/prisma-database.js';
 import { JobGroupServiceUnderTest } from './job-group-service-under-test.js';
 
@@ -33,15 +36,17 @@ describe('job-group-service health, docs and shutdown', () => {
     });
 
     it('job-group-service healthy while job-service is down', async () => {
+      await service.seed({ status: 'running', total: 1, completed: 0, failed: 0 });
       service.childJobs.count.mockRejectedValueOnce(
         new JobServiceUnavailableError({ reason: 'connect ECONNREFUSED' }),
       );
+      expect(await service.poll()).toEqual({ checked: 0, failedChecks: 1 });
 
       const response = await fetch(service.url(HEALTH_ROUTE.path));
 
       expect(response.status).toBe(200);
       expect(HealthResponse.parse(await response.json())).toEqual({ status: 'ok' });
-      expect(service.childJobs.count).not.toHaveBeenCalled();
+      expect(service.childJobs.count).toHaveBeenCalledOnce();
     });
 
     it('job-group-service stopped', async () => {
@@ -50,8 +55,14 @@ describe('job-group-service health, docs and shutdown', () => {
       const health = stopping.url(HEALTH_ROUTE.path);
       expect((await fetch(health)).status).toBe(200);
 
+      await stopping.seed({ status: 'running', total: 1, completed: 0, failed: 0 });
+      const scheduler = stopping.app.get(SchedulerRegistry);
+      expect(scheduler.getIntervals()).toEqual([JOB_GROUP_POLL_INTERVAL_NAME]);
+
       await stopping.close();
 
+      expect(scheduler.getIntervals()).toEqual([]);
+      expect(stopping.childJobs.count).not.toHaveBeenCalled();
       expect(databaseClose).toHaveBeenCalledOnce();
       await expect(fetch(health)).rejects.toThrow();
     }, 180_000);
