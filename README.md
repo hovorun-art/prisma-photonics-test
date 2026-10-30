@@ -63,6 +63,17 @@ curl -s 'http://localhost:3000/v1/jobs?limit=20&offset=0'
 # Only failed or cancelled webhook jobs (repeat a filter for several values; total counts matches)
 curl -s 'http://localhost:3000/v1/jobs?status=failed&status=cancelled&type=webhook'
 
+# Cancel a job that has not finished (scheduled, pending or processing; a running job is stopped)
+curl -s -X PATCH http://localhost:3000/v1/jobs/<uuid> \
+  -H 'content-type: application/json' -d '{"status":"cancelled"}'
+# {"id":"<uuid>","status":"cancelled","completedAt":"<time>",...}
+
+# Retry a failed job: back to pending with zero attempts, its error cleared, queued again
+curl -s -X PATCH http://localhost:3000/v1/jobs/<uuid> \
+  -H 'content-type: application/json' -d '{"status":"pending"}'
+# {"id":"<uuid>","status":"pending","attempts":0,"error":null,...}
+# Any other status: 400 VALIDATION_FAILED; a status that does not allow it: 409 JOB_STATUS_CONFLICT
+
 # Submit several jobs at once, tied to one group (all are stored, or none if any item is invalid)
 curl -s -X POST http://localhost:3000/v1/jobs/bulk \
   -H 'content-type: application/json' \

@@ -63,11 +63,11 @@ Owns: `apps/job-ui/src/features/jobs/testing/job-fixtures.ts`, `apps/job-ui/src/
 
 ## 5. Integration
 
-Owns: `tests/system-e2e/jobs.spec.ts`, `tests/system-e2e/job-ui.spec.ts`, `DECISIONS.md`, `README.md`, `docs/roadmap/04-all-endpoints.md` · Depends on: 2, 3, 4 · Parallel with: none
+Owns: `tests/system-e2e/support/stack-jobs.ts`, `tests/system-e2e/jobs.spec.ts`, `tests/system-e2e/job-ui.spec.ts`, `DECISIONS.md`, `README.md`, `docs/roadmap/04-all-endpoints.md` · Depends on: 2, 3, 4 · Parallel with: none
 
-- [ ] 5.1 Add system e2e tests, named after "Cancelled waiting job never runs" and "Running job is stopped on the full system" (API, `jobs.spec.ts`), "Retried job runs again on the full system" (API), "Cancel a job from the UI on the full system" and "Retry a job from the UI on the full system" (`job-ui.spec.ts`), using the setups of design D7; verify `npm run test:e2e` passes
-- [ ] 5.2 Record in `DECISIONS.md` (design D8): cancellation over Redis pub/sub and the alternatives, the `run` counter in entry ids, the refused-report safety net and cancelling running jobs beyond the task text; add `PATCH /v1/jobs/:id` cancel and retry examples to `README.md`. Verify the text matches decisions.md
-- [ ] 5.3 In `docs/roadmap/04-all-endpoints.md`, replace the `job-cancel` and `job-retry` rows with `job-status-change` and answer the open question on cancelling running jobs (yes, decided); verify the file reads so
+- [x] 5.1 Add system e2e tests, named after "Cancelled waiting job never runs" and "Running job is stopped on the full system" (API, `jobs.spec.ts`), "Retried job runs again on the full system" (API), "Cancel a job from the UI on the full system" and "Retry a job from the UI on the full system" (`job-ui.spec.ts`), using the setups of design D7; verify `npm run test:e2e` passes
+- [x] 5.2 Record in `DECISIONS.md` (design D8): cancellation over Redis pub/sub and the alternatives, the `run` counter in entry ids, the refused-report safety net and cancelling running jobs beyond the task text; add `PATCH /v1/jobs/:id` cancel and retry examples to `README.md`. Verify the text matches decisions.md
+- [x] 5.3 In `docs/roadmap/04-all-endpoints.md`, replace the `job-cancel` and `job-retry` rows with `job-status-change` and answer the open question on cancelling running jobs (yes, decided); verify the file reads so
 - [ ] 5.4 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run format:check`) and verify they all pass
 
 ## Workflow follow-up
