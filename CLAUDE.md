@@ -170,7 +170,9 @@ apps/job-group-service      Job Group context: groups of jobs a client follows a
                             (GroupChildJobs) and sets its status. Own Postgres schema `job_groups`
                             (JOB_GROUP_SERVICE_DATABASE_URL), no Redis, no service token; one instance.
                             src/{domain,infra,app}/ + main.ts; prisma/ (schema, migrations)
-apps/job-ui                 React + Vite UI (today: the started page), src/features/<feature>/
+apps/job-ui                 React + Vite UI: jobs list, job page, submit page, groups list, group
+                            page and the new group page (one tab per job; creates the group, then
+                            bulk-submits its jobs), src/features/<feature>/
 packages/kernel             framework-free: Clock, Random, Sleeper ports, DomainError + ERROR_CODES,
                             SignalGracefulShutdown, ProcessFatalErrorHandler, the job errors shared by
                             the backends (JobNotFoundError, JobStatusConflictError,

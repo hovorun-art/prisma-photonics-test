@@ -377,6 +377,23 @@ costs N/100 requests per poll, fine for groups of hundreds; for much larger grou
 route is the fix. The cells and the counts can differ for up to one poll, since the counts are as
 of the group's last check.
 
+**job-ui: creating a group is two calls to two services, undone on failure.** The new group page
+(`/groups/new`, one tab per job, each the submit page's form) creates an empty group in
+job-group-service, then sends every job in one bulk submit to job-service with the group's id. There
+is no transaction across the two services, so when the bulk is rejected the page deletes the group
+it just made (it has no jobs, so the delete is allowed) and shows the bulk's error. If that delete
+fails too (job-group-service or job-service down at that moment), the page still shows only the
+bulk's error and an empty `running` group with no jobs is left behind; trying again creates a new
+group. *Alternatives:* a single "create group with jobs" route in job-group-service that calls the
+bulk itself (one call for the browser, but the same two-service gap moves into the backend and the
+service would need to submit jobs, which it deliberately does not); retrying the delete or a cleanup
+sweep for old empty groups (more moving parts for a rare double failure). *Trade-off:* a rare stray
+empty group, visible in the groups list. The page allows at most `maxGroupJobs` jobs (100), kept
+equal to job-service's default bulk maximum (`JOB_SERVICE_BULK_MAX_JOBS`); if job-service is
+configured lower, its `VALIDATION_FAILED` on `jobs` reaches the page's alert. Each tab keeps its own
+form mounted (hidden when not open), so values and errors survive switching tabs; field ids carry a
+per-tab prefix so labels point at their own form.
+
 **Internal API protected by a shared service token.** Routes under `/internal` require
 `Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
 docs. *Trade-off:* a shared secret in environment variables is weaker than service identity (mTLS,

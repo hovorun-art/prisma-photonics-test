@@ -53,16 +53,16 @@ Owns: `apps/job-ui/src/features/groups/hooks/use-create-group.ts`, `apps/job-ui/
 
 ## 5. Integration
 
-Owns: `apps/job-ui/src/app.tsx`, `apps/job-ui/src/app.test.tsx`, `apps/job-ui/src/features/app-frame/app-frame.tsx`, `apps/job-ui/src/features/app-frame/app-frame.test.tsx`, `apps/job-ui/src/features/groups/list/groups-list-page.test.tsx`, `apps/job-ui/vite.config.ts`, `apps/job-ui/nginx.conf`, `apps/job-ui/test/e2e/groups.spec.ts`, `tests/system-e2e/job-ui.spec.ts`, `DECISIONS.md`, `CLAUDE.md` · Depends on: 4 · Parallel with: none
+Owns: `apps/job-ui/src/app.tsx`, `apps/job-ui/src/app.test.tsx`, `apps/job-ui/src/features/app-frame/app-frame.tsx`, `apps/job-ui/src/features/app-frame/app-frame.test.tsx`, `apps/job-ui/src/features/index.ts`, `apps/job-ui/src/features/groups/list/groups-list-page.test.tsx`, `apps/job-ui/vite.config.ts`, `apps/job-ui/nginx.conf`, `apps/job-ui/test/e2e/groups.spec.ts`, `tests/system-e2e/job-ui.spec.ts`, `DECISIONS.md`, `CLAUDE.md` · Depends on: 4 · Parallel with: none
 
-- [ ] 5.1 Write failing tests for "Header on every page" (with the new group page and the "New group" button), "New group from the header" (`app-frame.test.tsx`), "Direct link to the new group page" (`app.test.tsx`) and "No groups" with the "New group" hint (`groups-list-page.test.tsx`); see them fail
-- [ ] 5.2 Add the "New group" outline button before "New job" in the header and the `/groups/new` route before `/groups/:id`; verify the tests from 5.1 pass
-- [ ] 5.3 Check that the Vite dev proxy and `nginx.conf` pass `POST`/`DELETE` on `/v1/groups` and `POST /v1/jobs/bulk` to their services; fix if not, and verify with `npm run dev` and a manual group creation
-- [ ] 5.4 Add job-ui Playwright cases to `test/e2e/groups.spec.ts` (mocked API routes): "Create a group with two jobs", "Invalid job in another tab", "Group deleted after a failed submit"; run them in the main agent and see them pass
-- [ ] 5.5 Add a system e2e case to `tests/system-e2e/job-ui.spec.ts`: create a group with an email and a webhook job through the UI on the running stack and see its page with two job cells; run it in the main agent and see it pass
-- [ ] 5.6 Record in `DECISIONS.md` the UI create flow across two services (compensating delete, an empty running group left when that delete fails too) and the `maxGroupJobs` default kept equal to job-service's bulk maximum; update the job-ui line of `CLAUDE.md`'s architecture block
-- [ ] 5.7 Run the `test-case-reviewer` subagent on `apps/job-ui` unit tests (`app.test.tsx`, `app-frame.test.tsx`, `groups-list-page.test.tsx`), `apps/job-ui/test/e2e/groups.spec.ts` and `tests/system-e2e/job-ui.spec.ts`; add the missing cases it reports or note why they belong elsewhere
-- [ ] 5.8 Run the full checks (CHECK_CMDS: `npm run typecheck`, `npm run lint`, `npm test`; plus `npm run test:e2e` in the main agent) and see them green
+- [x] 5.1 Write failing tests for "Header on every page" (with the new group page and the "New group" button), "New group from the header" (`app-frame.test.tsx`), "Direct link to the new group page" (`app.test.tsx`) and "No groups" with the "New group" hint (`groups-list-page.test.tsx`); see them fail
+- [x] 5.2 Add the "New group" outline button before "New job" in the header and the `/groups/new` route before `/groups/:id`; verify the tests from 5.1 pass
+- [x] 5.3 Check that the Vite dev proxy and `nginx.conf` pass `POST`/`DELETE` on `/v1/groups` and `POST /v1/jobs/bulk` to their services; fix if not, and verify with `npm run dev` and a manual group creation
+- [x] 5.4 Add job-ui Playwright cases to `test/e2e/groups.spec.ts` (mocked API routes): "Create a group with two jobs", "Invalid job in another tab", "Group deleted after a failed submit"; run them in the main agent and see them pass
+- [x] 5.5 Add a system e2e case to `tests/system-e2e/job-ui.spec.ts`: create a group with an email and a webhook job through the UI on the running stack and see its page with two job cells; run it in the main agent and see it pass
+- [x] 5.6 Record in `DECISIONS.md` the UI create flow across two services (compensating delete, an empty running group left when that delete fails too) and the `maxGroupJobs` default kept equal to job-service's bulk maximum; update the job-ui line of `CLAUDE.md`'s architecture block
+- [x] 5.7 Run the `test-case-reviewer` subagent on `apps/job-ui` unit tests (`app.test.tsx`, `app-frame.test.tsx`, `groups-list-page.test.tsx`), `apps/job-ui/test/e2e/groups.spec.ts` and `tests/system-e2e/job-ui.spec.ts`; add the missing cases it reports or note why they belong elsewhere
+- [x] 5.8 Run the full checks (CHECK_CMDS: `npm run typecheck`, `npm run lint`, `npm test`; plus `npm run test:e2e` in the main agent) and see them green
 
 ## Workflow follow-up
 
