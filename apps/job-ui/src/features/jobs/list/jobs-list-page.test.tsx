@@ -153,6 +153,29 @@ describe('JobsListPage', () => {
     expect(offsets).toContain('20');
   });
 
+  it('Previous from a shorter last page returns to the page before it', async () => {
+    const user = userEvent.setup();
+    server.use(
+      http.get(JOBS_URL, ({ request }) => {
+        const offset = new URL(request.url).searchParams.get('offset');
+        const items =
+          offset === '20'
+            ? Array.from({ length: 5 }, (_, i) => jobNumber(i + 21))
+            : Array.from({ length: 20 }, (_, i) => jobNumber(i + 1));
+        return HttpResponse.json({ items, total: 25 });
+      }),
+    );
+    renderList();
+    await screen.findByText(en.list.showing(1, 20, 25));
+    await user.click(screen.getByRole('button', { name: en.list.next }));
+    await screen.findByText(en.list.showing(21, 25, 25));
+
+    await user.click(screen.getByRole('button', { name: en.list.previous }));
+
+    expect(await screen.findByText(en.list.showing(1, 20, 25))).toBeVisible();
+    expect(screen.getByRole('button', { name: en.list.previous })).toBeDisabled();
+  });
+
   it('Last page: Next is disabled on the page that holds the oldest job', async () => {
     answerPages({ items: [jobNumber(1), jobNumber(2)], total: 2 });
 
@@ -165,11 +188,13 @@ describe('JobsListPage', () => {
   it('Status change appears in the list: the next poll shows the new status', async () => {
     const pending = jobFixtures.build({ status: 'pending' });
     const processing = jobFixtures.build({ status: 'processing' });
-    answerPages({ items: [pending], total: 1 }, { items: [processing], total: 1 });
-
+    answerPages({ items: [pending], total: 1 });
     renderList(20);
-
     expect(await screen.findByText(en.statuses.pending)).toBeVisible();
+
+    // The next answer is served only now, so the first state cannot be skipped by a fast poll.
+    answerPages({ items: [processing], total: 1 });
+
     expect(await screen.findByText(en.statuses.processing, {}, POLL_WAIT)).toBeVisible();
   });
 

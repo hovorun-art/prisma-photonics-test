@@ -15,6 +15,9 @@ import { QueueStats } from './queue-stats';
 
 /** The jobs list (design "Main"): newest first, a page at a time, refreshed by polling. */
 export function JobsListPage() {
+  // Offsets of the pages visited before this one, so Previous returns to exactly that page even
+  // from a last page shorter than the others.
+  const [previousOffsets, setPreviousOffsets] = useState<number[]>([]);
   const [offset, setOffset] = useState(0);
   const query = useJobsPage(offset);
   const page = query.data;
@@ -31,20 +34,18 @@ export function JobsListPage() {
       <QueueStats />
       <Card aria-label={en.list.tableLabel} className="gap-0 rounded-xl py-0 shadow-none">
         <JobsToolbar />
-        {page?.total === 0 ? (
-          <EmptyJobs />
-        ) : (
-          <JobsTable jobs={query.isError && !page ? [] : page?.items} />
-        )}
+        {page?.total === 0 ? <EmptyJobs /> : <JobsTable jobs={page?.items} />}
         {page && page.total > 0 && (
           <JobsPager
             offset={offset}
             shown={page.items.length}
             total={page.total}
             onPrevious={() => {
-              setOffset(Math.max(0, offset - page.items.length));
+              setOffset(previousOffsets.at(-1) ?? 0);
+              setPreviousOffsets(previousOffsets.slice(0, -1));
             }}
             onNext={() => {
+              setPreviousOffsets([...previousOffsets, offset]);
               setOffset(offset + page.items.length);
             }}
           />
