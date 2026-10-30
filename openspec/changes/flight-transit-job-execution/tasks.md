@@ -12,12 +12,12 @@ All paths below are under `apps/job-execution-service/src/` unless stated otherw
 
 Owns: `domain/flight-transit/transit-report-generator.ts`, `domain/flight-transit/flight-transit-job-error-codes.ts`, `domain/config/execution-config.ts`, `infra/config/zod-execution-config-parser.ts`, `infra/config/zod-execution-config-parser.test.ts`, `apps/job-execution-service/package.json`, `package-lock.json` (repo root), `.env.example` (repo root) · Depends on: none · Parallel with: none
 
-- [ ] 1.1 Add `@date-fns/tz` and `@turf/distance`, `@turf/along`, `@turf/helpers` to `apps/job-execution-service` with `npm install -w apps/job-execution-service`; verify `npm run typecheck` passes
-- [ ] 1.2 Add the `TransitReportGenerator` port with its Request/Response types and `TRANSIT_REPORT_GENERATOR` token, and `FLIGHT_TRANSIT_JOB_ERROR_CODES` (design.md "Two classes, one port"); verify `npm run typecheck` passes
-- [ ] 1.3 Write failing parser tests: the eight `FLIGHT_TRANSIT_*` settings default to the values in design.md "Config", are read when set, and a failure rate outside [0, 1], a negative wait, fewer than 2 path points or negative cruise waypoints are rejected; run `npm run test:unit -w apps/job-execution-service` and see them fail
-- [ ] 1.4 Add the eight settings to `ExecutionConfig` and `ZodExecutionConfigParser` (defaults only in `DEFAULTS`) and list them commented out in `.env.example`; verify the tests from 1.3 pass
-- [ ] 1.5 Run the `test-case-reviewer` subagent on `apps/job-execution-service/src/infra/config/zod-execution-config-parser.test.ts`; add the missing cases it reports or note why they belong elsewhere
-- [ ] 1.6 Show the group's diff and commit message to the user and commit it with their approval (`feat(job-execution-service): ...`)
+- [x] 1.1 Add `@date-fns/tz` and `@turf/distance`, `@turf/along`, `@turf/helpers` to `apps/job-execution-service` with `npm install -w apps/job-execution-service`; verify `npm run typecheck` passes
+- [x] 1.2 Add the `TransitReportGenerator` port with its Request/Response types and `TRANSIT_REPORT_GENERATOR` token, and `FLIGHT_TRANSIT_JOB_ERROR_CODES` (design.md "Two classes, one port"); verify `npm run typecheck` passes
+- [x] 1.3 Write failing parser tests: the eight `FLIGHT_TRANSIT_*` settings default to the values in design.md "Config", are read when set, and a failure rate outside [0, 1], a negative wait, fewer than 2 path points or negative cruise waypoints are rejected; run `npm run test:unit -w apps/job-execution-service` and see them fail
+- [x] 1.4 Add the eight settings to `ExecutionConfig` and `ZodExecutionConfigParser` (defaults only in `DEFAULTS`) and list them commented out in `.env.example`; verify the tests from 1.3 pass
+- [x] 1.5 Run the `test-case-reviewer` subagent on `apps/job-execution-service/src/infra/config/zod-execution-config-parser.test.ts`; add the missing cases it reports or note why they belong elsewhere
+- [x] 1.6 Show the group's diff and commit message to the user and commit it with their approval (`feat(job-execution-service): ...`)
 
 ## 2. Transit report generator
 

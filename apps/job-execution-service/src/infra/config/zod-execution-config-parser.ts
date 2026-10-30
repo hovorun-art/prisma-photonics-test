@@ -10,6 +10,14 @@ const DEFAULTS = {
   emailSendMaxMs: 3_000,
   webhookCallMs: 1_500,
   webhookFailureRate: 0.2,
+  flightTransitGenerateMs: 2_000,
+  flightTransitFailureRate: 0.1,
+  flightTransitPathPoints: 64,
+  flightTransitCruiseWaypoints: 4,
+  flightTransitLongHaulKm: 4_000,
+  flightTransitClimbKm: 200,
+  flightTransitDescentKm: 250,
+  flightTransitTaxiSpeedKmh: 30,
   reportRetries: 3,
   reportRetryDelayMs: 500,
   reportRetryMaxDelayMs: 5_000,
@@ -32,6 +40,39 @@ const ExecutionEnv = baseEnv
     EMAIL_SEND_MAX_MS: z.coerce.number().int().positive().default(DEFAULTS.emailSendMaxMs),
     WEBHOOK_CALL_MS: z.coerce.number().int().min(0).default(DEFAULTS.webhookCallMs),
     WEBHOOK_FAILURE_RATE: z.coerce.number().min(0).max(1).default(DEFAULTS.webhookFailureRate),
+    FLIGHT_TRANSIT_GENERATE_MS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .default(DEFAULTS.flightTransitGenerateMs),
+    FLIGHT_TRANSIT_FAILURE_RATE: z.coerce
+      .number()
+      .min(0)
+      .max(1)
+      .default(DEFAULTS.flightTransitFailureRate),
+    FLIGHT_TRANSIT_PATH_POINTS: z.coerce
+      .number()
+      .int()
+      .min(2)
+      .default(DEFAULTS.flightTransitPathPoints),
+    FLIGHT_TRANSIT_CRUISE_WAYPOINTS: z.coerce
+      .number()
+      .int()
+      .min(0)
+      .default(DEFAULTS.flightTransitCruiseWaypoints),
+    FLIGHT_TRANSIT_LONG_HAUL_KM: z.coerce
+      .number()
+      .positive()
+      .default(DEFAULTS.flightTransitLongHaulKm),
+    FLIGHT_TRANSIT_CLIMB_KM: z.coerce.number().positive().default(DEFAULTS.flightTransitClimbKm),
+    FLIGHT_TRANSIT_DESCENT_KM: z.coerce
+      .number()
+      .positive()
+      .default(DEFAULTS.flightTransitDescentKm),
+    FLIGHT_TRANSIT_TAXI_SPEED_KMH: z.coerce
+      .number()
+      .positive()
+      .default(DEFAULTS.flightTransitTaxiSpeedKmh),
     JOB_REPORT_RETRIES: z.coerce.number().int().min(0).default(DEFAULTS.reportRetries),
     JOB_REPORT_RETRY_DELAY_MS: z.coerce.number().int().min(0).default(DEFAULTS.reportRetryDelayMs),
     JOB_REPORT_RETRY_MAX_DELAY_MS: z.coerce
@@ -66,6 +107,14 @@ const ExecutionEnv = baseEnv
     emailSendMaxMs: env.EMAIL_SEND_MAX_MS,
     webhookCallMs: env.WEBHOOK_CALL_MS,
     webhookFailureRate: env.WEBHOOK_FAILURE_RATE,
+    flightTransitGenerateMs: env.FLIGHT_TRANSIT_GENERATE_MS,
+    flightTransitFailureRate: env.FLIGHT_TRANSIT_FAILURE_RATE,
+    flightTransitPathPoints: env.FLIGHT_TRANSIT_PATH_POINTS,
+    flightTransitCruiseWaypoints: env.FLIGHT_TRANSIT_CRUISE_WAYPOINTS,
+    flightTransitLongHaulKm: env.FLIGHT_TRANSIT_LONG_HAUL_KM,
+    flightTransitClimbKm: env.FLIGHT_TRANSIT_CLIMB_KM,
+    flightTransitDescentKm: env.FLIGHT_TRANSIT_DESCENT_KM,
+    flightTransitTaxiSpeedKmh: env.FLIGHT_TRANSIT_TAXI_SPEED_KMH,
     reportRetries: env.JOB_REPORT_RETRIES,
     reportRetryDelayMs: env.JOB_REPORT_RETRY_DELAY_MS,
     reportRetryMaxDelayMs: env.JOB_REPORT_RETRY_MAX_DELAY_MS,

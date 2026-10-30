@@ -30,6 +30,14 @@ describe('ZodExecutionConfigParser', () => {
         emailSendMaxMs: 3000,
         webhookCallMs: 1500,
         webhookFailureRate: 0.2,
+        flightTransitGenerateMs: 2000,
+        flightTransitFailureRate: 0.1,
+        flightTransitPathPoints: 64,
+        flightTransitCruiseWaypoints: 4,
+        flightTransitLongHaulKm: 4000,
+        flightTransitClimbKm: 200,
+        flightTransitDescentKm: 250,
+        flightTransitTaxiSpeedKmh: 30,
         reportRetries: 3,
         reportRetryDelayMs: 500,
         reportRetryMaxDelayMs: 5000,
@@ -47,6 +55,14 @@ describe('ZodExecutionConfigParser', () => {
       EMAIL_SEND_MAX_MS: '20',
       WEBHOOK_CALL_MS: '0',
       WEBHOOK_FAILURE_RATE: '1',
+      FLIGHT_TRANSIT_GENERATE_MS: '0',
+      FLIGHT_TRANSIT_FAILURE_RATE: '1',
+      FLIGHT_TRANSIT_PATH_POINTS: '2',
+      FLIGHT_TRANSIT_CRUISE_WAYPOINTS: '0',
+      FLIGHT_TRANSIT_LONG_HAUL_KM: '5000',
+      FLIGHT_TRANSIT_CLIMB_KM: '150',
+      FLIGHT_TRANSIT_DESCENT_KM: '180',
+      FLIGHT_TRANSIT_TAXI_SPEED_KMH: '20',
       JOB_REPORT_RETRIES: '0',
       JOB_REPORT_RETRY_DELAY_MS: '50',
       JOB_REPORT_RETRY_MAX_DELAY_MS: '60',
@@ -62,6 +78,14 @@ describe('ZodExecutionConfigParser', () => {
         emailSendMaxMs: 20,
         webhookCallMs: 0,
         webhookFailureRate: 1,
+        flightTransitGenerateMs: 0,
+        flightTransitFailureRate: 1,
+        flightTransitPathPoints: 2,
+        flightTransitCruiseWaypoints: 0,
+        flightTransitLongHaulKm: 5000,
+        flightTransitClimbKm: 150,
+        flightTransitDescentKm: 180,
+        flightTransitTaxiSpeedKmh: 20,
         reportRetries: 0,
         reportRetryDelayMs: 50,
         reportRetryMaxDelayMs: 60,
@@ -101,6 +125,28 @@ describe('ZodExecutionConfigParser', () => {
     }
     const negativeCall = parser.parse({ env: { ...ENV, WEBHOOK_CALL_MS: '-1' } });
     expect(negativeCall.ok ? '' : negativeCall.problems).toContain('WEBHOOK_CALL_MS');
+  });
+
+  it('rejects invalid flight transit settings', () => {
+    for (const [name, value] of [
+      ['FLIGHT_TRANSIT_FAILURE_RATE', '-0.1'],
+      ['FLIGHT_TRANSIT_FAILURE_RATE', '1.5'],
+      ['FLIGHT_TRANSIT_FAILURE_RATE', 'often'],
+      ['FLIGHT_TRANSIT_GENERATE_MS', '-1'],
+      ['FLIGHT_TRANSIT_GENERATE_MS', '1.5'],
+      ['FLIGHT_TRANSIT_PATH_POINTS', '1'],
+      ['FLIGHT_TRANSIT_PATH_POINTS', '2.5'],
+      ['FLIGHT_TRANSIT_CRUISE_WAYPOINTS', '-1'],
+      ['FLIGHT_TRANSIT_CRUISE_WAYPOINTS', '2.5'],
+      ['FLIGHT_TRANSIT_LONG_HAUL_KM', '0'],
+      ['FLIGHT_TRANSIT_CLIMB_KM', '0'],
+      ['FLIGHT_TRANSIT_DESCENT_KM', '0'],
+      ['FLIGHT_TRANSIT_TAXI_SPEED_KMH', '0'],
+    ] as const) {
+      const result = parser.parse({ env: { ...ENV, [name]: value } });
+
+      expect(result.ok ? '' : result.problems).toContain(name);
+    }
   });
 
   it('rejects a retry delay above its maximum', () => {
