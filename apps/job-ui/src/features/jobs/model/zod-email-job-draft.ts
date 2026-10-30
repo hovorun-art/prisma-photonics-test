@@ -1,25 +1,52 @@
-import { EMAIL_LIMITS, JOB_LIMITS, ValidationFailedDetails } from '@job-queue/contracts';
+import { CreateEmailJobRequest, EMAIL_LIMITS } from '@job-queue/contracts';
 
 import { en } from '@/locales';
 
-import { EMAIL_FORM_FIELDS, type EmailFormField } from './email-form-values';
+import {
+  EMAIL_FORM_FIELDS,
+  EMPTY_EMAIL_FORM,
+  type EmailFormField,
+  type EmailFormValues,
+} from './email-form-values';
+import type { EmailJobDraft } from './email-job-draft';
 import type {
-  ApiErrorsEmailJobDraftRequest,
-  ApiErrorsEmailJobDraftResponse,
-  EmailFormErrors,
-  EmailJobDraft,
-  FieldMessageEmailJobDraftRequest,
-  FieldMessageEmailJobDraftResponse,
-} from './email-job-draft';
-
-const FORM_FIELDS: ReadonlySet<string> = new Set(EMAIL_FORM_FIELDS);
+  ApiErrorsJobFormDraftRequest,
+  ApiErrorsJobFormDraftResponse,
+  EmptyValuesJobFormDraftRequest,
+  EmptyValuesJobFormDraftResponse,
+  FieldMessageJobFormDraftRequest,
+  FieldMessageJobFormDraftResponse,
+  PreviewRequestJobFormDraftRequest,
+  PreviewRequestJobFormDraftResponse,
+  SchemaJobFormDraftResponse,
+} from './job-form-draft';
+import { LocaleExecutionFieldMessages } from './execution-field-messages';
+import { ValidationIssueMapper } from './validation-issue-mapper';
 
 /** `EmailJobDraft` for the shared Zod schemas, with the strings from `locales/en.ts`. */
 export class ZodEmailJobDraft implements EmailJobDraft {
+  readonly fields = EMAIL_FORM_FIELDS;
+  private readonly execution = new LocaleExecutionFieldMessages();
+  private readonly issues = new ValidationIssueMapper({ fields: EMAIL_FORM_FIELDS });
+
+  emptyValues({
+    execution,
+  }: EmptyValuesJobFormDraftRequest): EmptyValuesJobFormDraftResponse<EmailFormValues> {
+    return { values: { ...EMPTY_EMAIL_FORM, ...execution } };
+  }
+
+  schema(): SchemaJobFormDraftResponse<EmailFormValues> {
+    // The same schema job-service validates with.
+    return { schema: CreateEmailJobRequest };
+  }
+
   fieldMessage({
     field,
     values,
-  }: FieldMessageEmailJobDraftRequest): FieldMessageEmailJobDraftResponse {
+  }: FieldMessageJobFormDraftRequest<
+    EmailFormValues,
+    EmailFormField
+  >): FieldMessageJobFormDraftResponse {
     switch (field) {
       case 'payload.to':
         return { message: en.submit.errors.to };
@@ -33,32 +60,18 @@ export class ZodEmailJobDraft implements EmailJobDraft {
       case 'payload.body':
         return { message: en.submit.errors.bodyTooLong(EMAIL_LIMITS.bodyMaxLength) };
       case 'priority':
-        return {
-          message: en.submit.errors.priority(JOB_LIMITS.priority.min, JOB_LIMITS.priority.max),
-        };
       case 'maxAttempts':
-        return {
-          message: en.submit.errors.maxAttempts(
-            JOB_LIMITS.maxAttempts.min,
-            JOB_LIMITS.maxAttempts.max,
-          ),
-        };
+        return this.execution.message({ field });
     }
   }
 
-  apiErrors({ details }: ApiErrorsEmailJobDraftRequest): ApiErrorsEmailJobDraftResponse {
-    const parsed = ValidationFailedDetails.safeParse(details);
-    const errors: EmailFormErrors = {};
-    const unmatched: string[] = [];
-    for (const issue of parsed.success ? parsed.data.issues : []) {
-      const path = issue.path.join('.');
-      if (this.isFormField(path)) errors[path] ??= issue.message;
-      else unmatched.push(issue.message);
-    }
-    return { errors, unmatched };
+  apiErrors(req: ApiErrorsJobFormDraftRequest): ApiErrorsJobFormDraftResponse<EmailFormField> {
+    return this.issues.map(req);
   }
 
-  private isFormField(path: string): path is EmailFormField {
-    return FORM_FIELDS.has(path);
+  previewRequest({
+    values,
+  }: PreviewRequestJobFormDraftRequest<EmailFormValues>): PreviewRequestJobFormDraftResponse {
+    return { request: values };
   }
 }

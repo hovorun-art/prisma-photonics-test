@@ -9,6 +9,7 @@ and see each one's result in the UI, including the aircraft transit on a map.
 |---|---|---|
 | `webhook-job` | Webhook job type with simulated random failures | `email-job-execution` |
 | `webhook-job-execution` | Run webhook jobs: simulated call with a configured wait and random 5xx failures | `webhook-job` |
+| `webhook-job-ui` | Submit webhook jobs in the UI and show them in the list and on the job page | `webhook-job`, `job-ui-crud` |
 | `flight-transit-job` | Aircraft transit report job: two airports, dates, generated route and aircraft data | `email-job-execution` |
 | `flight-transit-map` | Show a transit report's route on a map, with hover details for aircraft and transit | `flight-transit-job` |
 | `batch-job` | Batch job type: processes items one by one, reports progress, returns a summary | `email-job-execution` |

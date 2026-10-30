@@ -3,12 +3,12 @@ import { render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { Route, Routes } from 'react-router';
+import { Route, Routes, useLocation, useNavigate } from 'react-router';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { en } from '@/locales';
 
-import { jobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../testing/test-providers';
 import { SubmitJobPage } from './submit-job-page';
 
@@ -36,11 +36,32 @@ function answerCreate(response: () => Response) {
   );
 }
 
-function renderSubmit() {
+/** Test-only: the query string of the current URL, and the browser's Back button. */
+function UrlControls() {
+  const navigate = useNavigate();
+  return (
+    <>
+      <output aria-label="current search">{useLocation().search}</output>
+      <button type="button" onClick={() => void navigate(-1)}>
+        Browser back
+      </button>
+    </>
+  );
+}
+
+function renderSubmit(path = '/jobs/new') {
   return render(
-    <TestProviders path="/jobs/new">
+    <TestProviders path={path}>
       <Routes>
-        <Route path="/jobs/new" element={<SubmitJobPage />} />
+        <Route
+          path="/jobs/new"
+          element={
+            <>
+              <SubmitJobPage />
+              <UrlControls />
+            </>
+          }
+        />
         <Route path="*" element={<CurrentPath />} />
       </Routes>
     </TestProviders>,
@@ -51,6 +72,18 @@ async function fillEmail(user: ReturnType<typeof userEvent.setup>, to = 'ops@acm
   await user.type(screen.getByLabelText(en.submit.to), to);
   await user.type(screen.getByLabelText(en.submit.subject), 'Weekly digest');
   await user.type(screen.getByLabelText(en.submit.body), 'Hi team');
+}
+
+/** Opens the webhook form and fills its URL (and body, pasted so `{` is not read as a key). */
+async function fillWebhook(
+  user: ReturnType<typeof userEvent.setup>,
+  { url = 'https://hooks.example.com/orders', body }: { url?: string; body?: string } = {},
+) {
+  if (url) await user.type(screen.getByLabelText(en.submit.url), url);
+  if (body) {
+    await user.click(screen.getByLabelText(en.submit.jsonBody));
+    await user.paste(body);
+  }
 }
 
 describe('SubmitJobPage', () => {
@@ -97,7 +130,7 @@ describe('SubmitJobPage', () => {
     expect(posted).toEqual([]);
   });
 
-  it('Disabled job types: Webhook and Aircraft transit are disabled, Email is selected', () => {
+  it('Disabled job types: Aircraft transit is disabled, Webhook can be chosen, Email is selected', () => {
     renderSubmit();
 
     const types = screen.getByRole('group', { name: en.submit.typeSection });
@@ -105,8 +138,75 @@ describe('SubmitJobPage', () => {
       'aria-pressed',
       'true',
     );
-    expect(within(types).getByRole('button', { name: /^Webhook/ })).toBeDisabled();
+    expect(within(types).getByRole('button', { name: /^Webhook/ })).toBeEnabled();
     expect(within(types).getByRole('button', { name: /^Aircraft transit/ })).toBeDisabled();
+  });
+
+  it('Choose Webhook: the card is selected, the webhook fields show and the URL has the type', async () => {
+    const user = userEvent.setup();
+    renderSubmit();
+
+    await user.click(screen.getByRole('button', { name: /^Webhook/ }));
+
+    expect(screen.getByRole('button', { name: /^Webhook/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByLabelText(en.submit.method)).toBeVisible();
+    expect(screen.getByLabelText(en.submit.url)).toBeVisible();
+    expect(screen.queryByLabelText(en.submit.to)).not.toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'current search' })).toHaveTextContent(
+      '?type=webhook',
+    );
+  });
+
+  it('Direct link to the webhook form: Webhook is selected and its fields are shown', () => {
+    renderSubmit('/jobs/new?type=webhook');
+
+    expect(screen.getByRole('button', { name: /^Webhook/ })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(screen.getByLabelText(en.submit.jsonBody)).toBeVisible();
+  });
+
+  it('Back to the previous type: Back after choosing Webhook shows the email form', async () => {
+    const user = userEvent.setup();
+    renderSubmit();
+    await user.click(screen.getByRole('button', { name: /^Webhook/ }));
+
+    await user.click(screen.getByRole('button', { name: 'Browser back' }));
+
+    expect(screen.getByRole('button', { name: /^Email/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText(en.submit.to)).toBeVisible();
+    expect(screen.getByRole('status', { name: 'current search' })).toHaveTextContent('');
+  });
+
+  it('Switching keeps the execution settings: Back keeps Priority changed on the webhook form', async () => {
+    const user = userEvent.setup();
+    renderSubmit();
+    await user.click(screen.getByRole('button', { name: /^Webhook/ }));
+    await user.clear(screen.getByLabelText(en.submit.priority));
+    await user.type(screen.getByLabelText(en.submit.priority), '9');
+
+    await user.click(screen.getByRole('button', { name: 'Browser back' }));
+
+    expect(screen.getByRole('button', { name: /^Email/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText(en.submit.priority)).toHaveValue(9);
+  });
+
+  it('Switching keeps the execution settings: Priority stays, the email fields start empty', async () => {
+    const user = userEvent.setup();
+    renderSubmit();
+    await user.clear(screen.getByLabelText(en.submit.priority));
+    await user.type(screen.getByLabelText(en.submit.priority), '8');
+    await user.type(screen.getByLabelText(en.submit.subject), 'Weekly digest');
+
+    await user.click(screen.getByRole('button', { name: /^Webhook/ }));
+    await user.click(screen.getByRole('button', { name: /^Email/ }));
+
+    expect(screen.getByLabelText(en.submit.priority)).toHaveValue(8);
+    expect(screen.getByLabelText(en.submit.subject)).toHaveValue('');
   });
 
   it('Invalid email address: the To field shows an error and nothing is sent', async () => {
@@ -279,5 +379,148 @@ describe('SubmitJobPage', () => {
     expect(response).toHaveTextContent('"attempts": 0');
     expect(response).toHaveTextContent(`"priority": ${JOB_LIMITS.priority.default}`);
     expect(response).toHaveTextContent(`"maxAttempts": ${JOB_LIMITS.maxAttempts.default}`);
+  });
+
+  it('Submit a valid webhook job: creates it with the entered values and opens its page', async () => {
+    const user = userEvent.setup();
+    const created = webhookJobFixtures.build();
+    answerCreate(() => HttpResponse.json(created, { status: 201 }));
+    renderSubmit('/jobs/new?type=webhook');
+
+    await user.selectOptions(screen.getByLabelText(en.submit.method), 'PUT');
+    await fillWebhook(user, { body: '{"orderId": "o-1"}' });
+    await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+    expect(await screen.findByRole('status', { name: 'current path' })).toHaveTextContent(
+      `/jobs/${created.id}`,
+    );
+    expect(posted).toEqual([
+      {
+        type: 'webhook',
+        payload: {
+          method: 'PUT',
+          url: 'https://hooks.example.com/orders',
+          body: { orderId: 'o-1' },
+        },
+        priority: JOB_LIMITS.priority.default,
+        maxAttempts: JOB_LIMITS.maxAttempts.default,
+      },
+    ]);
+  });
+
+  it('Submit without a body: the created webhook job has no body', async () => {
+    const user = userEvent.setup();
+    answerCreate(() => HttpResponse.json(webhookJobFixtures.build(), { status: 201 }));
+    renderSubmit('/jobs/new?type=webhook');
+
+    await fillWebhook(user);
+    await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+    await screen.findByRole('status', { name: 'current path' });
+    expect(posted).toEqual([
+      {
+        type: 'webhook',
+        payload: { method: 'POST', url: 'https://hooks.example.com/orders' },
+        priority: JOB_LIMITS.priority.default,
+        maxAttempts: JOB_LIMITS.maxAttempts.default,
+      },
+    ]);
+  });
+
+  it('Webhook form at first: POST, empty URL and body, API defaults and the mock note', () => {
+    renderSubmit('/jobs/new?type=webhook');
+
+    expect(screen.getByLabelText(en.submit.method)).toHaveValue('POST');
+    expect(screen.getByLabelText(en.submit.url)).toHaveValue('');
+    expect(screen.getByLabelText(en.submit.jsonBody)).toHaveValue('');
+    expect(screen.getByLabelText(en.submit.priority)).toHaveValue(JOB_LIMITS.priority.default);
+    expect(screen.getByLabelText(en.submit.maxAttempts)).toHaveValue(
+      JOB_LIMITS.maxAttempts.default,
+    );
+    expect(screen.getByText(en.submit.webhookHint)).toBeVisible();
+  });
+
+  it.each([
+    ['Invalid webhook URL', 'ftp://example.com/hook'],
+    ['Missing webhook URL', ''],
+  ])('%s: the URL field shows an error and nothing is sent', async (_name, url) => {
+    const user = userEvent.setup();
+    renderSubmit('/jobs/new?type=webhook');
+
+    await fillWebhook(user, { url });
+    await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+    expect(await screen.findByText(en.submit.errors.url)).toBeVisible();
+    expect(screen.getByLabelText(en.submit.url)).toHaveAttribute('aria-invalid', 'true');
+    expect(posted).toEqual([]);
+  });
+
+  it.each([
+    ['Body is not valid JSON', '{ orderId: ', en.submit.errors.jsonInvalid],
+    ['Body is not a JSON object', '[1, 2]', en.submit.errors.jsonNotObject],
+  ])(
+    '%s: the Body (JSON) field shows an error and nothing is sent',
+    async (_name, body, message) => {
+      const user = userEvent.setup();
+      renderSubmit('/jobs/new?type=webhook');
+
+      await fillWebhook(user, { body });
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      expect(await screen.findByText(message)).toBeVisible();
+      expect(screen.getByLabelText(en.submit.jsonBody)).toHaveAttribute('aria-invalid', 'true');
+      expect(posted).toEqual([]);
+    },
+  );
+
+  it('API validation error on a webhook field: the URL field shows the issue and the values stay', async () => {
+    const user = userEvent.setup();
+    answerCreate(() =>
+      HttpResponse.json(
+        {
+          code: 'VALIDATION_FAILED',
+          message: 'Request validation failed',
+          details: { issues: [{ path: ['payload', 'url'], message: 'URL is blocked' }] },
+        },
+        { status: 400 },
+      ),
+    );
+    renderSubmit('/jobs/new?type=webhook');
+
+    await fillWebhook(user, { body: '{"a": 1}' });
+    await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+    await screen.findByText('URL is blocked');
+    const url = screen.getByLabelText(en.submit.url);
+    expect(url).toHaveAccessibleDescription('URL is blocked');
+    expect(url).toHaveAttribute('aria-invalid', 'true');
+    expect(url).toHaveValue('https://hooks.example.com/orders');
+    expect(screen.getByLabelText(en.submit.jsonBody)).toHaveValue('{"a": 1}');
+  });
+
+  it('Preview of a webhook request: shows type webhook, the method and the typed URL', async () => {
+    const user = userEvent.setup();
+    renderSubmit('/jobs/new?type=webhook');
+
+    await user.selectOptions(screen.getByLabelText(en.submit.method), 'GET');
+    await fillWebhook(user, { url: 'https://example.com/ping' });
+
+    const preview = screen.getByRole('region', { name: en.submit.request });
+    expect(preview).toHaveTextContent('"type": "webhook"');
+    expect(preview).toHaveTextContent('"method": "GET"');
+    expect(preview).toHaveTextContent('"url": "https://example.com/ping"');
+  });
+
+  it('Example response for a webhook job: a 201 Created example with type webhook, pending', async () => {
+    const user = userEvent.setup();
+    renderSubmit();
+
+    await user.click(screen.getByRole('button', { name: /^Webhook/ }));
+
+    const response = screen.getByRole('region', { name: en.submit.response });
+    expect(response).toHaveTextContent(en.submit.created);
+    expect(response).toHaveTextContent(en.submit.example);
+    expect(response).toHaveTextContent('"type": "webhook"');
+    expect(response).toHaveTextContent('"status": "pending"');
   });
 });

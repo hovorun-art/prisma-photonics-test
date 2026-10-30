@@ -29,6 +29,7 @@ export const en = {
   },
   jobTypes: {
     email: 'email',
+    webhook: 'webhook',
   },
   errors: {
     network: 'Could not reach the API. Check your connection and try again.',
@@ -83,6 +84,8 @@ export const en = {
   },
   details: {
     emailWaiting: (to: string, subject: string) => `to ${to} · “${subject}”`,
+    webhookWaiting: (method: string, url: string) => `${method} ${url}`,
+    webhookCompleted: (statusCode: number) => `HTTP ${statusCode}`,
   },
   job: {
     breadcrumb: 'Breadcrumb',
@@ -135,6 +138,10 @@ export const en = {
     subject: 'Subject',
     body: 'Body',
     emailHint: 'Mock sender: returns a message ID. Nothing is actually sent.',
+    method: 'Method',
+    url: 'URL',
+    jsonBody: 'Body (JSON)',
+    webhookHint: 'Mock target: some calls fail at random, so you can watch retries.',
     priority: 'Priority',
     priorityHint: (min: number, max: number) => `${min}–${max}, higher runs first`,
     maxAttempts: 'Max attempts',
@@ -160,6 +167,11 @@ export const en = {
       subjectRequired: 'Enter a subject',
       subjectTooLong: (max: number) => `Use at most ${max} characters`,
       bodyTooLong: (max: number) => `Use at most ${max} characters`,
+      method: (methods: string) => `Choose one of ${methods}`,
+      url: 'Enter an absolute http or https URL',
+      urlTooLong: (max: number) => `Use at most ${max} characters`,
+      jsonInvalid: 'Body must be valid JSON',
+      jsonNotObject: 'Body must be a JSON object',
       priority: (min: number, max: number) =>
         `Priority must be a whole number from ${min} to ${max}`,
       maxAttempts: (min: number, max: number) =>
