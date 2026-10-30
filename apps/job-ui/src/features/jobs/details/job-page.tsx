@@ -1,12 +1,13 @@
-import { Link, useParams } from 'react-router';
+import { useParams } from 'react-router';
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Skeleton } from '@/components/ui/skeleton';
 import { en } from '@/locales';
 
 import { TransitReport } from '../../transit-map';
 import { ApiError } from '../api/api-error';
 import { useJob } from '../hooks/use-job';
+import { Breadcrumb } from './breadcrumb';
+import { DetailsSkeleton } from './details-skeleton';
 import { JobDetailsList } from './job-details-list';
 import { JobHeader } from './job-header';
 import { JobNotFound } from './job-not-found';
@@ -24,13 +25,7 @@ export function JobPage() {
   const job = query.data;
   return (
     <>
-      <nav aria-label={en.job.breadcrumb} className="flex gap-2 text-[13px] text-muted-foreground">
-        <Link to="/jobs" className="text-muted-foreground">
-          {en.job.jobs}
-        </Link>
-        <span aria-hidden="true">/</span>
-        <span className="font-mono text-xs text-foreground">{id}</span>
-      </nav>
+      <Breadcrumb label={en.job.breadcrumb} parent={en.job.jobs} to="/jobs" id={id} />
       {job?.type === 'flight-transit' && job.status === 'completed' && job.result ? (
         <TransitReport job={{ ...job, result: job.result }} connectionLost={query.isError} />
       ) : job ? (
@@ -55,14 +50,7 @@ export function JobPage() {
           </div>
         </>
       ) : (
-        <div
-          aria-label={en.job.loading}
-          aria-busy="true"
-          className="flex flex-wrap items-start gap-5"
-        >
-          <Skeleton className="h-64 min-w-0 flex-[999_1_560px] rounded-xl" />
-          <Skeleton className="h-64 min-w-0 flex-[1_1_300px] rounded-xl" />
-        </div>
+        <DetailsSkeleton label={en.job.loading} />
       )}
     </>
   );

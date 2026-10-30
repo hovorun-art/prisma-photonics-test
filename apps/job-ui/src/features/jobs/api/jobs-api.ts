@@ -16,6 +16,10 @@ export interface JobListFilters {
 
 export interface QueryJobsApiRequest extends JobListFilters {
   readonly offset: number;
+  /** Only the jobs of this group. */
+  readonly groupId?: string;
+  /** Page size; left out means job-service's default. */
+  readonly limit?: number;
 }
 export type QueryJobsApiResponse = QueryJobsResponse;
 

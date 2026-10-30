@@ -4,6 +4,8 @@ import { MemoryRouter, useLocation } from 'react-router';
 
 import { UI_CONFIG, type UiConfig, UiConfigContext } from '@/config';
 
+import { FetchGroupsApi } from '../../groups/api/fetch-groups-api';
+import { GroupsApiContext } from '../../groups/api/groups-api-context';
 import { FetchJobsApi } from '../api/fetch-jobs-api';
 import { JobsApiContext } from '../api/jobs-api-context';
 
@@ -26,12 +28,17 @@ export function TestProviders({
   const [api] = useState(
     () => new FetchJobsApi({ baseUrl: TEST_API_BASE, networkErrorMessage: 'API unreachable' }),
   );
+  const [groupsApi] = useState(
+    () => new FetchGroupsApi({ baseUrl: TEST_API_BASE, networkErrorMessage: 'API unreachable' }),
+  );
   return (
     <QueryClientProvider client={queryClient}>
       <JobsApiContext value={api}>
-        <UiConfigContext value={{ ...UI_CONFIG, pollIntervalMs: 60_000, ...config }}>
-          <MemoryRouter initialEntries={[path]}>{children}</MemoryRouter>
-        </UiConfigContext>
+        <GroupsApiContext value={groupsApi}>
+          <UiConfigContext value={{ ...UI_CONFIG, pollIntervalMs: 60_000, ...config }}>
+            <MemoryRouter initialEntries={[path]}>{children}</MemoryRouter>
+          </UiConfigContext>
+        </GroupsApiContext>
       </JobsApiContext>
     </QueryClientProvider>
   );
