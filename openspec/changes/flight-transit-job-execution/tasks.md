@@ -44,10 +44,10 @@ Owns: `infra/flight-transit/flight-transit-job-handler.ts`, `infra/flight-transi
 
 Owns: `app/execution/execution.module.ts`, `DECISIONS.md` (repo root) · Depends on: 1, 2, 3 · Parallel with: none
 
-- [ ] 4.1 Register `'flight-transit': new FlightTransitJobHandler(...)` in `JOB_HANDLERS` with a `TurfTransitReportGenerator` built from the config, and a `Logger('FlightTransit')`; verify `npm run build` succeeds
-- [ ] 4.2 Update `DECISIONS.md`: how the transit report is generated (great-circle math with turf on a 6371 km sphere, departure in the origin's local time, climb-cruise-descent profile, aircraft by distance class, the short-flight peak), the simulated wait and failure, and the library choices with their numbers and reasons (`@date-fns/tz` over `temporal-polyfill` and `luxon`; `@turf/distance` + `@turf/along` over `@turf/great-circle` and `geolib`); replace any note that queued transit jobs fail as `UNSUPPORTED_JOB_TYPE`
-- [ ] 4.3 Run the full checks (`CHECK_CMDS` in `.claude/flow.conf`: typecheck, lint, test) and verify they pass
-- [ ] 4.4 Show the group's diff and commit message to the user and commit it with their approval
+- [x] 4.1 Register `'flight-transit': new FlightTransitJobHandler(...)` in `JOB_HANDLERS` with a `TurfTransitReportGenerator` built from the config, and a `Logger('FlightTransit')`; verify `npm run build` succeeds
+- [x] 4.2 Update `DECISIONS.md`: how the transit report is generated (great-circle math with turf on a 6371 km sphere, departure in the origin's local time, climb-cruise-descent profile, aircraft by distance class, the short-flight peak), the simulated wait and failure, and the library choices with their numbers and reasons (`@date-fns/tz` over `temporal-polyfill` and `luxon`; `@turf/distance` + `@turf/along` over `@turf/great-circle` and `geolib`); replace any note that queued transit jobs fail as `UNSUPPORTED_JOB_TYPE`
+- [x] 4.3 Run the full checks (`CHECK_CMDS` in `.claude/flow.conf`: typecheck, lint, test) and verify they pass
+- [x] 4.4 Show the group's diff and commit message to the user and commit it with their approval
 
 ## Workflow follow-up
 

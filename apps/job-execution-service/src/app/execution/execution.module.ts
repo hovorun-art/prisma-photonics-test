@@ -25,6 +25,8 @@ import {
 import { JobExecutionImpl } from '../../infra/execution/job-execution.impl.js';
 import { HttpJobRepository } from '../../infra/jobs/http-job-repository.js';
 import { EmailJobHandler } from '../../infra/notifications/email-job-handler.js';
+import { FlightTransitJobHandler } from '../../infra/flight-transit/flight-transit-job-handler.js';
+import { TurfTransitReportGenerator } from '../../infra/flight-transit/turf-transit-report-generator.js';
 import { BullMqJobQueueConsumer } from '../../infra/queue/bullmq-job-queue-consumer.js';
 import { WebhookJobHandler } from '../../infra/webhooks/webhook-job-handler.js';
 
@@ -56,6 +58,28 @@ import { WebhookJobHandler } from '../../infra/webhooks/webhook-job-handler.js';
         webhook: new WebhookJobHandler(
           { random, sleeper },
           { callMs: config.webhookCallMs, failureRate: config.webhookFailureRate },
+        ),
+        'flight-transit': new FlightTransitJobHandler(
+          {
+            random,
+            sleeper,
+            reports: new TurfTransitReportGenerator(
+              { random },
+              {
+                pathPoints: config.flightTransitPathPoints,
+                cruiseWaypoints: config.flightTransitCruiseWaypoints,
+                longHaulKm: config.flightTransitLongHaulKm,
+                climbKm: config.flightTransitClimbKm,
+                descentKm: config.flightTransitDescentKm,
+                taxiSpeedKmh: config.flightTransitTaxiSpeedKmh,
+              },
+            ),
+            logger: new Logger('FlightTransit'),
+          },
+          {
+            generateMs: config.flightTransitGenerateMs,
+            failureRate: config.flightTransitFailureRate,
+          },
         ),
       }),
       inject: [RANDOM, SLEEPER, EXECUTION_CONFIG],
