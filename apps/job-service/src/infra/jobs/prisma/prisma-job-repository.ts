@@ -116,7 +116,6 @@ export class PrismaJobRepository implements JobRepository {
     }
   }
 
-  /** A conditional write matched no row: the job is gone, or its state differs from the expected one. */
   /** Each filter only when given; Prisma ANDs the two, `in` ORs the values of one. */
   private toQueryWhere(req: QueryJobRepositoryRequest): Prisma.JobWhereInput {
     return {
@@ -125,6 +124,7 @@ export class PrismaJobRepository implements JobRepository {
     };
   }
 
+  /** A conditional write matched no row: the job is gone, or its state differs from the expected one. */
   private async throwMissOn(id: string): Promise<never> {
     const row = await this.d.prisma.job.findUnique({ where: { id }, select: { status: true } });
     if (row === null) throw new JobNotFoundError({ id });

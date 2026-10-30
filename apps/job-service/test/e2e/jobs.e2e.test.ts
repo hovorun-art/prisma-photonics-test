@@ -438,9 +438,9 @@ describe('job-service public job routes', () => {
     });
 
     describe('filters', () => {
-      // Filter semantics (AND/OR, paging and `total` over filtered jobs, no match) are tested
-      // against Postgres in `prisma-job-repository.int.test.ts`, and value rules (duplicates,
-      // empty and mixed values) in the contract's unit tests; these tests prove the HTTP wiring.
+      // Filter semantics (several types, AND, paging and `total` over filtered jobs, no match) are
+      // tested against Postgres in `prisma-job-repository.int.test.ts`; these tests prove the HTTP
+      // wiring and the HTTP answers the spec names.
 
       /** Repeated parameters, as a client builds them: `[['status', 'failed'], ...]`. */
       const filtered = (params: [string, string][]): Promise<QueryJobsResponse> =>
@@ -491,6 +491,20 @@ describe('job-service public job routes', () => {
         expect(page.total).toBe(2);
       });
 
+      it('Repeated status value', async () => {
+        await service.seed({ status: 'failed' });
+        await service.seed({ status: 'completed' });
+
+        const once = await filtered([['status', 'failed']]);
+        const twice = await filtered([
+          ['status', 'failed'],
+          ['status', 'failed'],
+        ]);
+
+        expect(twice).toEqual(once);
+        expect(twice.total).toBe(1);
+      });
+
       it('Filter by one type', async () => {
         const webhooks = [
           await service.seed({ status: 'pending', type: 'webhook' }),
@@ -511,6 +525,19 @@ describe('job-service public job routes', () => {
 
       it('Unknown type filter', async () => {
         expect(await rejectedFields([['type', 'sms']])).toContain('type');
+      });
+
+      it('Empty filter value', async () => {
+        expect(await rejectedFields([['status', '']])).toContain('status');
+      });
+
+      it('One unknown value among known ones', async () => {
+        expect(
+          await rejectedFields([
+            ['status', 'failed'],
+            ['status', 'done'],
+          ]),
+        ).toContain('status');
       });
     });
   });
