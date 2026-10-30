@@ -114,6 +114,7 @@ export const en = {
       priority: 'Priority',
       attempts: 'Attempts',
       created: 'Created',
+      scheduledFor: 'Scheduled for',
       started: 'Started',
       finished: 'Finished',
       totalTime: 'Total time',
@@ -168,6 +169,8 @@ export const en = {
     runLabel: 'When to run',
     runNow: 'Immediately',
     runLater: 'At a specific time',
+    scheduledAt: 'Date and time',
+    scheduleHint: (timeZone: string) => `Your local time (${timeZone})`,
     idempotencyKey: 'Idempotency key',
     optional: '(optional)',
     generate: 'Generate',
@@ -199,6 +202,9 @@ export const en = {
         `Priority must be a whole number from ${min} to ${max}`,
       maxAttempts: (min: number, max: number) =>
         `Max attempts must be a whole number from ${min} to ${max}`,
+      scheduleRequired: 'Choose a date and time',
+      schedulePast: 'Choose a time in the future',
+      scheduleTooFar: (days: number) => `Choose a time within ${days} days`,
     },
   },
   report: {
