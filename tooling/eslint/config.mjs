@@ -235,6 +235,7 @@ export default tseslint.config(
     files: [
       'apps/job-service/**/*.ts',
       'apps/job-execution-service/**/*.ts',
+      'apps/job-group-service/**/*.ts',
       'packages/service-kit/**/*.ts',
     ],
     rules: {

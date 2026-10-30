@@ -93,12 +93,15 @@ The page-limit error (`QueryLimitExceededError` in job-service) is needed here t
 the kernel in group 1 and both apps use it, instead of a copy.
 
 ### Config
-From the service-kit base (`NODE_ENV`, `LOG_LEVEL`, port) plus: `JOB_GROUP_SERVICE_PORT` (3002),
-`DATABASE_URL` (with `?schema=job_groups`), `JOB_SERVICE_URL`, `JOB_GROUP_POLL_INTERVAL_MS`
-(2000), `JOB_GROUP_POLL_BATCH_SIZE` (100, running groups read per page of a tick),
-`JOB_SERVICE_TIMEOUT_MS` (5000), `JOB_GROUP_QUERY_DEFAULT_LIMIT` (20) and
-`JOB_GROUP_QUERY_MAX_LIMIT` (100). job-group-service uses no Redis and no service token; if the
-base env schema requires them, it is split so a service without Redis can use it.
+From the service-kit core (`NODE_ENV`, `LOG_LEVEL`, port; no Redis, no service token) plus:
+`JOB_GROUP_SERVICE_PORT` (3002), `JOB_GROUP_SERVICE_DATABASE_URL` (with `?schema=job_groups`; its
+own name because `npm run dev` reads one env file for every app and job-service owns
+`DATABASE_URL`), `JOB_SERVICE_URL` (shared with job-execution-service, same meaning),
+`JOB_GROUP_POLL_INTERVAL_MS` (2000), `JOB_GROUP_POLL_BATCH_SIZE` (100, running groups read per page
+of a tick), `JOB_GROUP_JOB_SERVICE_TIMEOUT_MS` (5000; job-execution-service owns
+`JOB_SERVICE_TIMEOUT_MS`), `JOB_GROUP_QUERY_DEFAULT_LIMIT` (20) and `JOB_GROUP_QUERY_MAX_LIMIT` (100).
+The parser splits the URL into `databaseUrl` (without `schema`) and `databaseSchema`: `prisma
+migrate` needs the schema in the URL, the `pg` pool gets it as the adapter's `schema` option.
 
 ### Data store: own Postgres schema in the shared database
 Prisma schema `apps/job-group-service/prisma/schema.prisma`, table `job_groups` in the Postgres
@@ -111,7 +114,7 @@ in `public` are untouched and neither app reads the other's schema.
 job_groups(id uuid pk default gen_random_uuid(), status job_group_status, total int, completed int,
            failed int, created_at, updated_at, checked_at null, finished_at null  -- timestamptz(3))
 index (created_at desc, id desc)            list order, stable offset paging
-index (status, checked_at asc nulls first)  running groups, least recently checked first
+index (status, id)                          running groups, a page at a time by id
 ```
 
 ### Counting children (`HttpGroupChildJobs`)
@@ -134,8 +137,9 @@ Per running group, from the stored row and the reported counts:
 
 `recordCheck` writes with `UPDATE ... SET total = GREATEST(total, $total), ... WHERE id = $id AND
 status = 'running'`, so a group deleted or finished in the meantime is not changed or recreated.
-The tracker reads running groups a page at a time (`listRunning`, ordered by `checked_at nulls
-first`), checks them one after another, and catches each group's failure on its own: it logs
+The tracker reads running groups a page at a time (`listRunning`, keyset paging by id: `afterId`
+and the batch size, so groups that finish during the tick do not shift the pages), checks them
+one after another, and catches each group's failure on its own: it logs
 `groupId` and the error and moves on, so one bad answer does not hold back the rest. Time comes
 from the kernel `Clock`.
 

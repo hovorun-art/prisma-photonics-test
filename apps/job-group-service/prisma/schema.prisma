@@ -1,0 +1,43 @@
+// job-group-service's own data: the `job_groups` Postgres schema of the shared database (picked by
+// `?schema=job_groups` in DATABASE_URL). It never reads job-service's tables; child jobs are read
+// through job-service's public API.
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/infra/prisma/generated"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum JobGroupStatus {
+  running
+  completed
+  failed
+
+  @@map("job_group_status")
+}
+
+/// A group of jobs a client follows as one; its id is the `groupId` of its child jobs in job-service.
+model JobGroup {
+  id         String         @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  status     JobGroupStatus
+  /// The highest child count job-service has reported for the group.
+  total      Int
+  completed  Int
+  /// Failed, cancelled and missing children.
+  failed     Int
+  createdAt  DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt  DateTime       @updatedAt @map("updated_at") @db.Timestamptz(3)
+  /// The last successful poll; null before the first.
+  checkedAt  DateTime?      @map("checked_at") @db.Timestamptz(3)
+  finishedAt DateTime?      @map("finished_at") @db.Timestamptz(3)
+
+  /// The list order (newest first, id breaks ties so offset paging is stable).
+  @@index([createdAt(sort: Desc), id(sort: Desc)], map: "job_groups_created_at_id_idx")
+  /// The running groups a poll reads, a page at a time by id.
+  @@index([status, id], map: "job_groups_status_id_idx")
+  @@map("job_groups")
+}
