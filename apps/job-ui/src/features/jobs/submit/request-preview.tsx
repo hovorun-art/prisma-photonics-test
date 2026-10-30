@@ -1,17 +1,22 @@
-import type { CreateEmailJobRequest } from '@job-queue/contracts';
-import type { z } from 'zod';
+import { JOB_LIMITS } from '@job-queue/contracts';
 
 import { en } from '@/locales';
 
 import { CopyButton } from '../details/copy-button';
 import { useCurl } from '../hooks/use-curl';
-
-type EmailRequest = z.input<typeof CreateEmailJobRequest>;
+import type { EmailFormValues } from '../model/email-form-values';
 
 /** The request the form will send as a curl command, and an example of the API's answer. */
-export function RequestPreview({ request }: { request: EmailRequest }) {
+export function RequestPreview({ request }: { request: EmailFormValues }) {
   const curl = useCurl();
-  const command = curl.submit({ request: { priority: 0, maxAttempts: 0, ...request } }).command;
+  // The schema fills in priority and attempts when they are missing; the preview does the same.
+  const command = curl.submit({
+    request: {
+      ...request,
+      priority: request.priority ?? JOB_LIMITS.priority.default,
+      maxAttempts: request.maxAttempts ?? JOB_LIMITS.maxAttempts.default,
+    },
+  }).command;
   const example = {
     id: en.submit.placeholderId,
     type: request.type,
@@ -47,7 +52,7 @@ export function RequestPreview({ request }: { request: EmailRequest }) {
       >
         <div className="flex flex-wrap items-center gap-2 border-b border-border-soft px-4 py-3 text-[13px] font-medium">
           <h2 className="m-0 text-[13px] font-medium">{en.submit.response}</h2>
-          <span className="rounded bg-[#E8F5EC] px-1.5 py-0.5 font-mono text-xs text-[#13703A]">
+          <span className="rounded bg-status-completed-bg px-1.5 py-0.5 font-mono text-xs text-status-completed">
             {en.submit.created}
           </span>
           <span className="rounded bg-secondary px-1.5 py-0.5 text-xs text-subtle-foreground">

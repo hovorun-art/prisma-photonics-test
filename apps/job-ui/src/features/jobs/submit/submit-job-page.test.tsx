@@ -193,6 +193,42 @@ describe('SubmitJobPage', () => {
     expect(screen.getByLabelText(en.submit.to)).toHaveValue('ops@acme.test');
   });
 
+  it('API validation error on a field not in the form: the alert shows its message', async () => {
+    const user = userEvent.setup();
+    answerCreate(() =>
+      HttpResponse.json(
+        {
+          code: 'VALIDATION_FAILED',
+          message: 'Request validation failed',
+          details: { issues: [{ path: ['type'], message: 'Unknown job type' }] },
+        },
+        { status: 400 },
+      ),
+    );
+    renderSubmit();
+
+    await fillEmail(user);
+    await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Unknown job type');
+  });
+
+  it('API validation error without issues: the alert shows the API message', async () => {
+    const user = userEvent.setup();
+    answerCreate(() =>
+      HttpResponse.json(
+        { code: 'VALIDATION_FAILED', message: 'Request body is not valid JSON', details: {} },
+        { status: 400 },
+      ),
+    );
+    renderSubmit();
+
+    await fillEmail(user);
+    await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Request body is not valid JSON');
+  });
+
   it('Subject longer than the limit is rejected before sending', async () => {
     const user = userEvent.setup();
     renderSubmit();

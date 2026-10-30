@@ -1,8 +1,7 @@
-import { CreateEmailJobRequest, EMAIL_LIMITS, type Job, JOB_LIMITS } from '@job-queue/contracts';
+import { type CreateJobRequest, type Job, JOB_LIMITS } from '@job-queue/contracts';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useFormContext } from 'react-hook-form';
 import { Link } from 'react-router';
-import type { z } from 'zod';
 
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
@@ -14,85 +13,79 @@ import { en } from '@/locales';
 import { ComingSoon } from '../../app-frame/coming-soon';
 import { ApiError } from '../api/api-error';
 import { useCreateJob } from '../hooks/use-create-job';
-import type { EmailFormField, EmailFormValues } from './email-form-values';
+import { useEmailJobDraft } from '../hooks/use-email-job-draft';
+import type { EmailFormField, EmailFormValues } from '../model/email-form-values';
 import { JobTypePicker } from './job-type-picker';
 
-type FieldErrors = Partial<Record<EmailFormField, string>>;
-type EmailRequest = z.input<typeof CreateEmailJobRequest>;
-
-/** Contract paths of the request (`payload.to`) to the form's fields. */
-const FIELD_OF_PATH: Readonly<Record<string, EmailFormField>> = {
-  'payload.to': 'to',
-  'payload.subject': 'subject',
-  'payload.body': 'body',
-  priority: 'priority',
-  maxAttempts: 'maxAttempts',
-};
+/** Error type of a message the API sent, shown as it is (not replaced by job-ui's own message). */
+const API_ERROR = 'api';
 
 /** The email form (design "SubmitJob"): checked with the shared schema before it is sent. */
-export function EmailJobForm({
-  values,
-  request,
-  onChange,
-  onCreated,
-}: {
-  values: EmailFormValues;
-  /** The request `values` make; the same object the preview shows. */
-  request: EmailRequest;
-  onChange: (values: EmailFormValues) => void;
-  onCreated: (job: Job) => void;
-}) {
-  const [errors, setErrors] = useState<FieldErrors>({});
+export function EmailJobForm({ onCreated }: { onCreated: (job: Job) => void }) {
+  const draft = useEmailJobDraft();
+  const form = useFormContext<EmailFormValues, unknown, CreateJobRequest>();
+  const { errors } = form.formState;
   const create = useCreateJob();
-  const otherError =
-    create.error && !(create.error instanceof ApiError && create.error.code === 'VALIDATION_FAILED')
-      ? create.error.message
-      : null;
 
-  const field = (name: EmailFormField) => ({
+  /** The message to show under a field: the API's own, or job-ui's for a schema rejection. */
+  const errorOf = (name: EmailFormField): string | undefined => {
+    const error = form.getFieldState(name, form.formState).error;
+    if (!error) return undefined;
+    return error.type === API_ERROR
+      ? error.message
+      : draft.fieldMessage({ field: name, values: form.getValues() }).message;
+  };
+  const field = (name: EmailFormField, options?: { valueAsNumber: true }) => ({
     id: `field-${name}`,
-    value: values[name],
-    'aria-invalid': errors[name] ? true : undefined,
-    'aria-describedby': errors[name] ? `field-${name}-error` : undefined,
-    onChange: (event: { target: { value: string } }) => {
-      onChange({ ...values, [name]: event.target.value });
-    },
+    'aria-invalid': errorOf(name) ? true : undefined,
+    'aria-describedby': errorOf(name) ? `field-${name}-error` : undefined,
+    ...form.register(name, options),
+  });
+  const alert =
+    errors.root?.api?.message ??
+    (create.error &&
+    !(create.error instanceof ApiError && create.error.code === 'VALIDATION_FAILED')
+      ? create.error.message
+      : null);
+  // Runs only when the shared schema accepts the values.
+  const submit = form.handleSubmit((request) => {
+    create.mutate(request, {
+      onSuccess: onCreated,
+      onError: (error) => {
+        if (!(error instanceof ApiError) || error.code !== 'VALIDATION_FAILED') return;
+        const mapped = draft.apiErrors({ details: error.details });
+        for (const [name, message] of Object.entries(mapped.errors)) {
+          form.setError(name as EmailFormField, { type: API_ERROR, message });
+        }
+        // API issues that match no field, or a rejection with no issues at all: shown in the
+        // alert so the user always learns why nothing was created.
+        const fieldCount = Object.keys(mapped.errors).length;
+        if (mapped.unmatched.length > 0 || fieldCount === 0) {
+          const message = mapped.unmatched.length > 0 ? mapped.unmatched.join(' ') : error.message;
+          form.setError('root.api', { type: API_ERROR, message });
+        }
+      },
+    });
   });
 
   return (
     <form
       noValidate
       className="flex min-w-0 flex-[999_1_560px] flex-col rounded-xl border border-border bg-card"
-      onSubmit={(event) => {
-        event.preventDefault();
-        const parsed = CreateEmailJobRequest.safeParse(request);
-        if (!parsed.success) {
-          setErrors(clientErrors(parsed.error.issues, values));
-          return;
-        }
-        setErrors({});
-        create.mutate(parsed.data, {
-          onSuccess: onCreated,
-          onError: (error) => {
-            if (error instanceof ApiError && error.code === 'VALIDATION_FAILED') {
-              setErrors(apiErrors(error.details));
-            }
-          },
-        });
-      }}
+      onSubmit={(event) => void submit(event)}
     >
       <Section legend={en.submit.typeSection}>
         <JobTypePicker />
       </Section>
       <Section legend={en.submit.payloadSection}>
-        <Field label={en.submit.to} name="to" error={errors.to}>
-          <Input type="email" autoComplete="off" {...field('to')} />
+        <Field label={en.submit.to} name="payload.to" error={errorOf('payload.to')}>
+          <Input type="email" autoComplete="off" {...field('payload.to')} />
         </Field>
-        <Field label={en.submit.subject} name="subject" error={errors.subject}>
-          <Input type="text" {...field('subject')} />
+        <Field label={en.submit.subject} name="payload.subject" error={errorOf('payload.subject')}>
+          <Input type="text" {...field('payload.subject')} />
         </Field>
-        <Field label={en.submit.body} name="body" error={errors.body}>
-          <Textarea rows={6} {...field('body')} />
+        <Field label={en.submit.body} name="payload.body" error={errorOf('payload.body')}>
+          <Textarea rows={6} {...field('payload.body')} />
         </Field>
         <p className="m-0 text-[13px] text-muted-foreground">{en.submit.emailHint}</p>
       </Section>
@@ -101,7 +94,7 @@ export function EmailJobForm({
           <Field
             label={en.submit.priority}
             name="priority"
-            error={errors.priority}
+            error={errorOf('priority')}
             hint={en.submit.priorityHint(JOB_LIMITS.priority.min, JOB_LIMITS.priority.max)}
           >
             <Input
@@ -109,13 +102,13 @@ export function EmailJobForm({
               min={JOB_LIMITS.priority.min}
               max={JOB_LIMITS.priority.max}
               className="font-mono"
-              {...field('priority')}
+              {...field('priority', { valueAsNumber: true })}
             />
           </Field>
           <Field
             label={en.submit.maxAttempts}
             name="maxAttempts"
-            error={errors.maxAttempts}
+            error={errorOf('maxAttempts')}
             hint={en.submit.maxAttemptsHint(JOB_LIMITS.maxAttempts.min, JOB_LIMITS.maxAttempts.max)}
           >
             <Input
@@ -123,7 +116,7 @@ export function EmailJobForm({
               min={JOB_LIMITS.maxAttempts.min}
               max={JOB_LIMITS.maxAttempts.max}
               className="font-mono"
-              {...field('maxAttempts')}
+              {...field('maxAttempts', { valueAsNumber: true })}
             />
           </Field>
         </div>
@@ -168,9 +161,9 @@ export function EmailJobForm({
         </ComingSoon>
       </Section>
       <div className="flex flex-col gap-3 rounded-b-xl border-t border-border bg-surface-muted px-6 py-4">
-        {otherError && (
+        {alert && (
           <Alert variant="destructive" className="border-destructive-border bg-destructive-muted">
-            <AlertDescription>{otherError}</AlertDescription>
+            <AlertDescription>{alert}</AlertDescription>
           </Alert>
         )}
         <div className="flex flex-wrap items-center justify-end gap-3">
@@ -233,46 +226,4 @@ function Field({
       )}
     </div>
   );
-}
-
-/** Our own messages for what the shared schema rejected, one per field. */
-function clientErrors(issues: readonly z.core.$ZodIssue[], values: EmailFormValues): FieldErrors {
-  const errors: FieldErrors = {};
-  for (const issue of issues) {
-    const name = FIELD_OF_PATH[issue.path.join('.')];
-    if (!name || errors[name]) continue;
-    errors[name] = messageFor(name, values);
-  }
-  return errors;
-}
-
-function messageFor(name: EmailFormField, values: EmailFormValues): string {
-  switch (name) {
-    case 'to':
-      return en.submit.errors.to;
-    case 'subject':
-      return values.subject === ''
-        ? en.submit.errors.subjectRequired
-        : en.submit.errors.subjectTooLong(EMAIL_LIMITS.subjectMaxLength);
-    case 'body':
-      return en.submit.errors.bodyTooLong(EMAIL_LIMITS.bodyMaxLength);
-    case 'priority':
-      return en.submit.errors.priority(JOB_LIMITS.priority.min, JOB_LIMITS.priority.max);
-    case 'maxAttempts':
-      return en.submit.errors.maxAttempts(JOB_LIMITS.maxAttempts.min, JOB_LIMITS.maxAttempts.max);
-  }
-}
-
-/** The API's `VALIDATION_FAILED` issues (`details.issues`), with their own messages, per field. */
-function apiErrors(details: Readonly<Record<string, unknown>>): FieldErrors {
-  const errors: FieldErrors = {};
-  const issues = Array.isArray(details.issues) ? (details.issues as unknown[]) : [];
-  for (const issue of issues) {
-    if (typeof issue !== 'object' || issue === null) continue;
-    const { path, message } = issue as { path?: unknown; message?: unknown };
-    if (!Array.isArray(path) || typeof message !== 'string') continue;
-    const name = FIELD_OF_PATH[path.join('.')];
-    if (name && !errors[name]) errors[name] = message;
-  }
-  return errors;
 }
