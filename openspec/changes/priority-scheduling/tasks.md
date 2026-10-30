@@ -40,9 +40,11 @@ Owns: `apps/job-service/src/infra/jobs/job-service.impl.ts`, `apps/job-service/s
 
 Owns: `apps/job-execution-service/src/infra/execution/job-execution.impl.ts`, `apps/job-execution-service/src/infra/execution/job-execution.impl.test.ts` · Depends on: 1 · Parallel with: 2, 3
 
-- [ ] 4.1 Write failing unit tests in `job-execution.impl.test.ts` for "Scheduled job runs to completion" and keep "Job already taken or finished" covering `processing`, `completed`, `failed` and `cancelled`; verify the scheduled case fails because the job is skipped
-- [ ] 4.2 Skip only jobs whose status is not in `STARTABLE_JOB_STATUSES` (log "job is no longer startable"); verify the tests pass
-- [ ] 4.3 Run the `test-case-reviewer` subagent on job-execution-service unit tests (`job-execution.impl.test.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 4.1 Write failing unit tests in `job-execution.impl.test.ts` for "Scheduled job runs to completion" and keep "Job already taken or finished" covering `processing`, `completed`, `failed` and `cancelled`; verify the scheduled case fails because the job is skipped
+- [x] 4.2 Skip only jobs whose status is not in `STARTABLE_JOB_STATUSES` (log "job is no longer startable"); verify the tests pass
+- [x] 4.3 Run the `test-case-reviewer` subagent on job-execution-service unit tests (`job-execution.impl.test.ts`); add the missing cases it reports or note why they belong elsewhere
+
+Review note (4.3): the reviewer also listed untested branches of `JobExecutionImpl` that predate this change (read error, abort while reading, start report given up, handler resolving after abort, completion/failure report refused, the outcome of "Handler throws an unexpected error"). By the user's choice they go to a separate `fix/` branch.
 
 ## 5. Integration: end to end, docs and full checks
 
