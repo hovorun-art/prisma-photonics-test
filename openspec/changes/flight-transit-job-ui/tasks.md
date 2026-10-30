@@ -43,18 +43,18 @@ Depends on: 1 · Parallel with: 3
 
 ## 3. Report model and list Details
 
-Owns: `apps/job-ui/src/features/transit-map/model/*` (presentation interface, `intl-transit-report-presenter.ts`, `great-circle-route-geometry.ts`, their tests),
+Owns: `apps/job-ui/src/features/transit-map/model/*` (presentation interface, `intl-transit-report-presenter.ts`, `mercator-route-geometry.ts`, their tests),
 `apps/job-ui/src/features/jobs/model/{job-presenter.ts,job-presenter.test.ts}`,
 `apps/job-ui/src/features/jobs/list/jobs-list-page.test.tsx` · Depends on: 1 · Parallel with: 2
 
-- [ ] 3.1 Write failing tests in `job-presenter.test.ts` and `jobs-list-page.test.tsx` for "Waiting or running transit job", "Completed transit job", "Failed transit job"; see them fail
-- [ ] 3.2 Implement the transit branch of `JobPresenter.details`; verify 3.1 passes
-- [ ] 3.3 Write failing unit tests for `IntlTransitReportPresenter`: "Summary tiles", "Airport cards" (coordinates, UTC time, local `GMT` / `EDT`), waypoint card values for "Departure selected at first" (`Ground`) and "Hover a waypoint" (flight level, ground speed, flown / left), title and subtitle of "Report header"; see them fail
-- [ ] 3.4 Implement `TransitReportPresentation` and `IntlTransitReportPresenter`; verify 3.3 passes
-- [ ] 3.5 Write failing unit tests for `GreatCircleRouteGeometry`: "Route across the antimeridian" (unwrapped longitudes, no step over 180°), flown path for departure (empty) and arrival (whole path), bearing at a waypoint; see them fail
-- [ ] 3.6 Implement `RouteGeometry` and `GreatCircleRouteGeometry`; verify 3.5 passes
-- [ ] 3.7 Run the `test-case-reviewer` subagent on job-ui unit tests of `features/transit-map/model` and `features/jobs/model/job-presenter.test.ts`, and on `features/jobs/list/jobs-list-page.test.tsx`; add the missing cases it reports or note why they belong elsewhere
-- [ ] 3.8 Show the stage's diff and commit message (`feat(job-ui): summarise transit jobs and model the transit report`) and commit after the user's approval
+- [x] 3.1 Write failing tests in `job-presenter.test.ts` and `jobs-list-page.test.tsx` for "Waiting or running transit job", "Completed transit job", "Failed transit job"; see them fail
+- [x] 3.2 Implement the transit branch of `JobPresenter.details`; verify 3.1 passes
+- [x] 3.3 Write failing unit tests for `IntlTransitReportPresenter`: "Summary tiles", "Airport cards" (coordinates, UTC time, local `GMT` / `EDT`), waypoint card values for "Departure selected at first" (`Ground`) and "Hover a waypoint" (flight level, ground speed, flown / left), title and subtitle of "Report header"; see them fail
+- [x] 3.4 Implement `TransitReportPresentation` and `IntlTransitReportPresenter`; verify 3.3 passes
+- [x] 3.5 Write failing unit tests for `MercatorRouteGeometry`: "Route across the antimeridian" (unwrapped longitudes, no step over 180°), flown path for departure (empty) and arrival (whole path), bearing at a waypoint; see them fail
+- [x] 3.6 Implement `RouteGeometry` and `MercatorRouteGeometry`; verify 3.5 passes
+- [x] 3.7 Run the `test-case-reviewer` subagent on job-ui unit tests of `features/transit-map/model` and `features/jobs/model/job-presenter.test.ts`, and on `features/jobs/list/jobs-list-page.test.tsx`; add the missing cases it reports or note why they belong elsewhere
+- [x] 3.8 Show the stage's diff and commit message (`feat(job-ui): summarise transit jobs and model the transit report`) and commit after the user's approval
 
 ## 4. Report page and map
 

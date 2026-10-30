@@ -37,7 +37,7 @@ See proposal.md for the motivation and `specs/job-ui/spec.md` for the behaviour.
 |---|---|---|
 | Foundation | `package.json`, `src/config/`, `src/locales/en.ts`, `src/components/ui/{command,popover}.tsx`, `features/jobs/testing/job-fixtures.ts` | dependencies, config values, every new string, shadcn primitives, transit fixtures |
 | Transit form | `features/jobs/model/` (`transit-form-values.ts`, `zod-transit-job-draft.ts`), `features/jobs/hooks/use-transit-job-draft.ts`, `features/jobs/submit/` (`airport-combobox.tsx`, `transit-payload-fields.tsx`, picker, page) | the third `JobFormDraft` and its fields |
-| Report model | `features/transit-map/model/` | `TransitReportPresentation` (interface) + `IntlTransitReportPresenter`; `RouteGeometry` (interface) + `GreatCircleRouteGeometry`; plus the transit branch of `JobPresenter.details` |
+| Report model | `features/transit-map/model/` | `TransitReportPresentation` (interface) + `IntlTransitReportPresenter`; `RouteGeometry` (interface) + `MercatorRouteGeometry`; plus the transit branch of `JobPresenter.details` |
 | Report page | `features/transit-map/` (`transit-report.tsx`, `transit-map.tsx`, `waypoint-strip.tsx`, `waypoint-card.tsx`, report cards), `features/jobs/details/job-page.tsx` | components and the switch on the job page |
 
 `features/transit-map` uses `features/jobs` only through its exported components and hooks
@@ -85,7 +85,7 @@ completed (`Intl.NumberFormat('en-GB')`, rounded km).
   (altitude `Ground` at 0 ft else `FL` + round(ft/100) zero-padded to 3; flown / left from
   `distanceFlownKm` and `distanceKm`), `title`, `subtitle`.
 - Avg ground speed = `distanceKm / (durationMin / 60)`, rounded; duration `"<h>h <m>m"`.
-- `GreatCircleRouteGeometry implements RouteGeometry`: `unwrap(path)` shifts each longitude by
+- `MercatorRouteGeometry implements RouteGeometry`: `unwrap(path)` shifts each longitude by
   ±360° so consecutive points differ by at most 180° (Leaflet then draws the short way across the
   antimeridian; waypoints and airports are shifted onto the same unwrapped copy); `flownPath(path,
   waypoint)` returns the path up to the path point nearest the selected waypoint plus the waypoint
@@ -133,7 +133,7 @@ completed (`Intl.NumberFormat('en-GB')`, rounded km).
 
 - Unit: `zod-transit-job-draft.test.ts` (fake timers for "today"), `airport-search.test.ts`,
   `job-presenter.test.ts` (transit Details), `intl-transit-report-presenter.test.ts`,
-  `great-circle-route-geometry.test.ts` (antimeridian, flown path, bearing).
+  `mercator-route-geometry.test.ts` (antimeridian, flown path, bearing).
 - Component (Vitest + Testing Library, jsdom): `submit-job-page.test.tsx` (transit scenarios,
   combobox), `jobs-list-page.test.tsx` (transit Details), `job-page.test.tsx` (switch to the report,
   non-completed transit jobs), `transit-report.test.tsx` (header, tiles, cards, download, waypoint

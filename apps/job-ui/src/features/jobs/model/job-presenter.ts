@@ -34,6 +34,12 @@ export class JobPresenter implements JobPresentation {
     hourCycle: 'h23',
   });
   private readonly date = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
+  private readonly day = new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    timeZone: 'UTC',
+  });
+  private readonly km = new Intl.NumberFormat('en-GB');
 
   constructor(private readonly p: JobPresenterParams) {}
 
@@ -54,8 +60,23 @@ export class JobPresenter implements JobPresentation {
           ? { text: job.result ? en.details.webhookCompleted(job.result.statusCode) : '' }
           : { text: en.details.webhookWaiting(job.payload.method, job.payload.url) };
       case 'flight-transit':
-        // Nothing transit-specific in the list yet; the transit map change shows the report.
-        return { text: '' };
+        return job.status === 'completed'
+          ? {
+              text: job.result
+                ? en.details.transitCompleted(
+                    job.result.flight,
+                    this.km.format(Math.round(job.result.distanceKm)),
+                  )
+                : '',
+            }
+          : {
+              text: en.details.transitWaiting(
+                job.payload.origin,
+                job.payload.destination,
+                // A calendar day, not an instant: read and shown in UTC so no time zone shifts it.
+                this.day.format(new Date(`${job.payload.departureDate}T00:00:00.000Z`)),
+              ),
+            };
     }
   }
 
