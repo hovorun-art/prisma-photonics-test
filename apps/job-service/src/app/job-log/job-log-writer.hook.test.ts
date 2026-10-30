@@ -36,7 +36,7 @@ describe('JobLogWriterHook', () => {
     store.close.mockResolvedValueOnce({});
     stream.close.mockResolvedValueOnce({});
 
-    await hook.onApplicationShutdown();
+    await hook.beforeApplicationShutdown();
 
     expect(writer.stop).toHaveBeenCalledOnce();
     expect(store.close).toHaveBeenCalledOnce();
@@ -52,7 +52,7 @@ describe('JobLogWriterHook', () => {
     store.close.mockRejectedValueOnce(new Error('close failed'));
     stream.close.mockResolvedValueOnce({});
 
-    await expect(hook.onApplicationShutdown()).rejects.toThrow('close failed');
+    await expect(hook.beforeApplicationShutdown()).rejects.toThrow('close failed');
 
     expect(stream.close).toHaveBeenCalledOnce();
   });
@@ -63,7 +63,7 @@ describe('JobLogWriterHook', () => {
     store.close.mockResolvedValueOnce({});
     stream.close.mockResolvedValueOnce({});
 
-    await expect(hook.onApplicationShutdown()).rejects.toThrow('stop failed');
+    await expect(hook.beforeApplicationShutdown()).rejects.toThrow('stop failed');
 
     expect(store.close).toHaveBeenCalledOnce();
     expect(stream.close).toHaveBeenCalledOnce();

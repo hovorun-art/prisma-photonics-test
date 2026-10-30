@@ -4,6 +4,7 @@ import { EventEmitter } from 'node:events';
 import { JOB_LOG_STREAM_NAME } from '@job-queue/contracts';
 import {
   IoRedisJobLogStreamRedis,
+  type JobLogDestination,
   JobLogStreamDestination,
   LoggingModule,
 } from '@job-queue/service-kit';
@@ -52,7 +53,7 @@ describe('JobExecutionServiceBootstrap', () => {
 
   it('Instance started: logs that job-execution-service has started', async () => {
     const lines: string[] = [];
-    const createModule = vi.fn((_req: { jobLog: JobLogStreamDestination }) => ({
+    const createModule = vi.fn((_req: { jobLog: JobLogDestination }) => ({
       module: EmptyModule,
       imports: [
         LoggingModule.forRoot({
@@ -84,8 +85,8 @@ describe('JobExecutionServiceBootstrap', () => {
   });
 
   describe('Job log destination', () => {
-    const buildJobLog = async (): Promise<JobLogStreamDestination> => {
-      const createModule = vi.fn((req: { jobLog: JobLogStreamDestination }) => ({
+    const buildJobLog = async (): Promise<JobLogDestination> => {
+      const createModule = vi.fn((req: { jobLog: JobLogDestination }) => ({
         module: EmptyModule,
         imports: [
           LoggingModule.forRoot({

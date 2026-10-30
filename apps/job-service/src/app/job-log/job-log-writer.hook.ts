@@ -1,8 +1,8 @@
 import {
+  type BeforeApplicationShutdown,
   Inject,
   Injectable,
   type OnApplicationBootstrap,
-  type OnApplicationShutdown,
 } from '@nestjs/common';
 
 import { JOB_LOG_STORE, type JobLogStore } from '../../domain/job-log/job-log-store.js';
@@ -12,10 +12,11 @@ import { JOB_LOG_WRITER, type JobLogWriter } from '../../domain/job-log/job-log-
 /**
  * Starts the job log writer without waiting for the store (the writer applies the store's schema
  * itself, retrying while the store is down), and on shutdown stops it before the store and the
- * stream it works with are closed.
+ * stream it works with are closed. That runs before every `onApplicationShutdown`, so the job log
+ * destination (closed there) outlives the writer's last log lines, whatever the module order.
  */
 @Injectable()
-export class JobLogWriterHook implements OnApplicationBootstrap, OnApplicationShutdown {
+export class JobLogWriterHook implements OnApplicationBootstrap, BeforeApplicationShutdown {
   constructor(
     @Inject(JOB_LOG_WRITER) private readonly writer: JobLogWriter,
     @Inject(JOB_LOG_STORE) private readonly store: JobLogStore,
@@ -26,7 +27,7 @@ export class JobLogWriterHook implements OnApplicationBootstrap, OnApplicationSh
     this.writer.start();
   }
 
-  async onApplicationShutdown(): Promise<void> {
+  async beforeApplicationShutdown(): Promise<void> {
     try {
       await this.writer.stop();
     } finally {

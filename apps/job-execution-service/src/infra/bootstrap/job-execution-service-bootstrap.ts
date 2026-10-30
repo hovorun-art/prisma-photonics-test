@@ -1,4 +1,3 @@
-import { SystemClock, SystemRandom } from '@job-queue/kernel';
 import type {
   BootstrapProcess,
   CreateModuleRequest,
@@ -7,8 +6,8 @@ import type {
   StartServiceBootstrapResponse,
 } from '@job-queue/service-kit';
 import {
-  IoRedisJobLogStreamRedis,
-  JobLogStreamDestination,
+  type JobLogDestination,
+  JobLogStreamDestinationFactory,
   NestServiceBootstrap,
 } from '@job-queue/service-kit';
 import type { DynamicModule, INestApplication, Type } from '@nestjs/common';
@@ -22,11 +21,8 @@ import { ZodExecutionConfigParser } from '../config/zod-execution-config-parser.
  */
 export const JOB_EXECUTION_SERVICE_SETUP_STEPS: readonly ServiceSetupStep<INestApplication>[] = [];
 
-/** How long the job log's Redis connection may take to get ready at startup. */
-const JOB_LOG_OPEN_TIMEOUT_MS = 5_000;
-
 export interface CreateJobExecutionModuleRequest extends CreateModuleRequest<ExecutionConfig> {
-  jobLog: JobLogStreamDestination;
+  jobLog: JobLogDestination;
 }
 
 export interface JobExecutionServiceBootstrapDeps {
@@ -69,19 +65,12 @@ export class JobExecutionServiceBootstrap implements ServiceBootstrap {
   }
 
   /** Its own Redis connection; a dropped entry is reported on the standard output. */
-  private createJobLog({ config }: CreateModuleRequest<ExecutionConfig>): JobLogStreamDestination {
-    return new JobLogStreamDestination(
-      {
-        redis: new IoRedisJobLogStreamRedis({
-          redisUrl: config.redisUrl,
-          connectionName: 'job-execution-service-job-log',
-          openTimeoutMs: JOB_LOG_OPEN_TIMEOUT_MS,
-        }),
-        random: new SystemRandom(),
-        clock: new SystemClock(),
-        mainLog: process.stdout,
-      },
-      { source: 'job-execution-service', maxLength: config.jobLogStreamMaxLength },
-    );
+  private createJobLog({ config }: CreateModuleRequest<ExecutionConfig>): JobLogDestination {
+    return new JobLogStreamDestinationFactory().create({
+      redisUrl: config.redisUrl,
+      source: 'job-execution-service',
+      connectionName: 'job-execution-service-job-log',
+      maxLength: config.jobLogStreamMaxLength,
+    }).destination;
   }
 }

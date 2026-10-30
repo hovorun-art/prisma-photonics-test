@@ -19,7 +19,11 @@ import {
   STATS_ROUTE,
 } from '@job-queue/contracts';
 import type { Closable, CloseClosableResponse } from '@job-queue/kernel';
-import { REDIS_CONNECTION, type RedisConnection } from '@job-queue/service-kit';
+import {
+  type JobLogDestination,
+  REDIS_CONNECTION,
+  type RedisConnection,
+} from '@job-queue/service-kit';
 import { CONTAINER_IMAGES, PrismaMigrateDeploy } from '@job-queue/test-support';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
@@ -28,13 +32,14 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { expect } from 'vitest';
 import { type DeepMockProxy, mockDeep, mockReset } from 'vitest-mock-extended';
 
-import { AppModule, type JobLogDestination } from '../../src/app/app.module.js';
+import { AppModule } from '../../src/app/app.module.js';
 import { JOB_LOG_SCHEMA, type JobLogSchema } from '../../src/domain/job-log/job-log-schema.js';
 import {
   JOB_LOG_STORE,
   type JobLogStore,
   type PositionedJobLogEntry,
 } from '../../src/domain/job-log/job-log-store.js';
+import { JOB_LOG_STREAM, type JobLogStream } from '../../src/domain/job-log/job-log-stream.js';
 import { JOB_LOG_WRITER, type JobLogWriter } from '../../src/domain/job-log/job-log-writer.js';
 import { JOB_QUEUE, type JobQueue } from '../../src/domain/jobs/job-queue.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../src/domain/jobs/job-repository.js';
@@ -183,23 +188,34 @@ interface JobServiceUnderTestDeps {
   baseUrl: string;
   queue: DeepMockProxy<JobQueue>;
   redis: DeepMockProxy<RedisConnection>;
+  jobLogDestination: DeepMockProxy<JobLogDestination>;
+  jobLogStream: DeepMockProxy<JobLogStream>;
+  /** The mocked job log store; null with `realJobLogStore`. */
+  jobLogStoreMock: DeepMockProxy<JobLogStore> | null;
 }
 
 /**
  * job-service for the e2e tests: the real `AppModule`, set up with the same steps as `main.ts`,
  * over HTTP against its own Postgres (a migrated Testcontainer). The services around it are mocked
- * at their ports: the job queue and the Redis connection. Holds the HTTP calls and checks the test
- * files share.
+ * at their ports: the job queue, the Redis connection, the job log destination, stream and writer,
+ * and (unless started with `realJobLogStore`) the job log store and schema. Holds the HTTP calls and
+ * checks the test files share.
  */
 export class JobServiceUnderTest implements Closable {
   readonly app: INestApplication;
   readonly queue: DeepMockProxy<JobQueue>;
   readonly redis: DeepMockProxy<RedisConnection>;
+  readonly jobLogDestination: DeepMockProxy<JobLogDestination>;
+  readonly jobLogStream: DeepMockProxy<JobLogStream>;
+  readonly jobLogStoreMock: DeepMockProxy<JobLogStore> | null;
 
   private constructor(private readonly d: JobServiceUnderTestDeps) {
     this.app = d.app;
     this.queue = d.queue;
     this.redis = d.redis;
+    this.jobLogDestination = d.jobLogDestination;
+    this.jobLogStream = d.jobLogStream;
+    this.jobLogStoreMock = d.jobLogStoreMock;
   }
 
   static async start(req: StartRequest = {}): Promise<JobServiceUnderTest> {
@@ -236,26 +252,31 @@ export class JobServiceUnderTest implements Closable {
     if (!parsed.ok) throw new Error(parsed.problems);
     const queue = mockDeep<JobQueue>();
     const redis = mockDeep<RedisConnection>();
+    const jobLogDestination = mockDeep<JobLogDestination>();
+    const jobLogStream = mockDeep<JobLogStream>();
+    const jobLogStoreMock = clickhouse === null ? mockDeep<JobLogStore>() : null;
     let builder = Test.createTestingModule({
       imports: [
         AppModule.forRoot({
           config: parsed.config,
-          jobLogDestination: mockDeep<JobLogDestination>(),
+          jobLogDestination,
         }),
       ],
     })
       .overrideProvider(JOB_LOG_WRITER)
       .useValue(mockDeep<JobLogWriter>())
+      .overrideProvider(JOB_LOG_STREAM)
+      .useValue(jobLogStream)
       .overrideProvider(JOB_QUEUE)
       .useValue(queue)
       .overrideProvider(REDIS_CONNECTION)
       .useValue(redis);
-    if (clickhouse === null) {
+    if (jobLogStoreMock !== null) {
       builder = builder
         .overrideProvider(JOB_LOG_SCHEMA)
         .useValue(mockDeep<JobLogSchema>())
         .overrideProvider(JOB_LOG_STORE)
-        .useValue(mockDeep<JobLogStore>());
+        .useValue(jobLogStoreMock);
     }
     const moduleRef = await builder.compile();
     const app = moduleRef.createNestApplication({ logger: false });
@@ -273,6 +294,9 @@ export class JobServiceUnderTest implements Closable {
       baseUrl: await app.getUrl(),
       queue,
       redis,
+      jobLogDestination,
+      jobLogStream,
+      jobLogStoreMock,
     });
   }
 
@@ -280,6 +304,9 @@ export class JobServiceUnderTest implements Closable {
   async clear(): Promise<void> {
     mockReset(this.queue);
     mockReset(this.redis);
+    mockReset(this.jobLogDestination);
+    mockReset(this.jobLogStream);
+    if (this.jobLogStoreMock !== null) mockReset(this.jobLogStoreMock);
     await this.app.get(PrismaDatabase).job.deleteMany();
     await this.d.jobLogStore?.client.command({ query: 'TRUNCATE TABLE job_log' });
   }

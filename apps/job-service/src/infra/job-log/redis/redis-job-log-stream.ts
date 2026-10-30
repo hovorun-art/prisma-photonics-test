@@ -1,7 +1,8 @@
 import { JOB_LOG_STREAM_NAME } from '@job-queue/contracts';
 import type { CloseClosableResponse } from '@job-queue/kernel';
-import { Redis } from 'ioredis';
+import { IoRedisClient } from '@job-queue/service-kit';
 
+import { JobLogStreamGroupMissingError } from '../../../domain/job-log/errors/job-log-stream-group-missing.error.js';
 import type {
   AckJobLogStreamRequest,
   AckJobLogStreamResponse,
@@ -47,25 +48,26 @@ type RawReply = [stream: string, entries: RawEntries] | null;
 
 /** The ioredis implementation of the job log stream: a consumer group with a writer lease. */
 export class RedisJobLogStream implements JobLogStream {
-  private readonly redis: Redis;
+  private readonly client: IoRedisClient;
 
   constructor(private readonly p: RedisJobLogStreamParams) {
     // maxRetriesPerRequest 1: with ioredis defaults a command waits for the connection through
     // many reconnect attempts (well over a minute), so an outage would hang the writer instead of
     // reaching it as a rejection. The offline queue stays on, as the first command opens the
     // lazy connection.
-    this.redis = new Redis(p.redisUrl, {
+    this.client = new IoRedisClient({
+      redisUrl: p.redisUrl,
       connectionName: p.connectionName,
       lazyConnect: true,
       maxRetriesPerRequest: 1,
+      // A Redis outage reaches the writer as rejected commands, which it retries.
+      onError: () => undefined,
     });
-    // A Redis outage reaches the writer as rejected commands, which it retries.
-    this.redis.on('error', () => undefined);
   }
 
   async prepare(): Promise<PrepareJobLogStreamResponse> {
     try {
-      await this.redis.xgroup('CREATE', JOB_LOG_STREAM_NAME, GROUP, '$', 'MKSTREAM');
+      await this.client.redis.xgroup('CREATE', JOB_LOG_STREAM_NAME, GROUP, '0', 'MKSTREAM');
     } catch (error) {
       if (!(error instanceof Error) || !error.message.startsWith('BUSYGROUP')) throw error;
     }
@@ -73,7 +75,7 @@ export class RedisJobLogStream implements JobLogStream {
   }
 
   async lease(): Promise<LeaseJobLogStreamResponse> {
-    const held = await this.redis.eval(
+    const held = await this.client.redis.eval(
       LEASE_SCRIPT,
       1,
       LEASE_KEY,
@@ -85,36 +87,40 @@ export class RedisJobLogStream implements JobLogStream {
 
   async read(req: ReadJobLogStreamRequest): Promise<ReadJobLogStreamResponse> {
     const block = !req.pending && req.blockMs > 0 ? ['BLOCK', req.blockMs] : [];
-    const reply = (await this.redis.call(
-      'XREADGROUP',
-      'GROUP',
-      GROUP,
-      CONSUMER,
-      'COUNT',
-      req.count,
-      ...block,
-      'STREAMS',
-      JOB_LOG_STREAM_NAME,
-      req.pending ? '0' : '>',
-    )) as RawReply;
+    const reply = (await this.client.redis
+      .call(
+        'XREADGROUP',
+        'GROUP',
+        GROUP,
+        CONSUMER,
+        'COUNT',
+        req.count,
+        ...block,
+        'STREAMS',
+        JOB_LOG_STREAM_NAME,
+        req.pending ? '0' : '>',
+      )
+      .catch((error: unknown) => {
+        throw this.isGroupMissing(error) ? new JobLogStreamGroupMissingError() : error;
+      })) as RawReply;
     const entries = reply?.[1] ?? [];
     return { records: entries.map(([position, fields]) => this.toRecord({ position, fields })) };
   }
 
   async ack(req: AckJobLogStreamRequest): Promise<AckJobLogStreamResponse> {
     if (req.positions.length > 0) {
-      await this.redis.xack(JOB_LOG_STREAM_NAME, GROUP, ...req.positions);
+      await this.client.redis.xack(JOB_LOG_STREAM_NAME, GROUP, ...req.positions);
     }
     return {};
   }
 
   async close(): Promise<CloseClosableResponse> {
-    if (this.redis.status === 'ready') {
-      await this.redis.quit();
-    } else {
-      this.redis.disconnect();
-    }
-    return {};
+    return this.client.close();
+  }
+
+  /** The reply Redis gives for a stream or group that does not exist starts with `NOGROUP`. */
+  private isGroupMissing(error: unknown): boolean {
+    return error instanceof Error && error.message.startsWith('NOGROUP');
   }
 
   /** An entry trimmed from the stream while pending has no fields: its body is empty. */

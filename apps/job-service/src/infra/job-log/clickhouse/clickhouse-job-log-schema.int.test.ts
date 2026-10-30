@@ -1,8 +1,9 @@
-import { createClient, type ClickHouseClient } from '@clickhouse/client';
+import { ClickHouseError, createClient, type ClickHouseClient } from '@clickhouse/client';
 import { CONTAINER_IMAGES, UNREACHABLE_HTTP_URL } from '@job-queue/test-support';
 import { ClickHouseContainer, type StartedClickHouseContainer } from '@testcontainers/clickhouse';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { LogStoreUnavailableError } from '../../../domain/job-log/errors/log-store-unavailable.error.js';
 import { ClickHouseJobLogSchema } from './clickhouse-job-log-schema.js';
 
 describe('ClickHouseJobLogSchema against ClickHouse', () => {
@@ -43,6 +44,21 @@ describe('ClickHouseJobLogSchema against ClickHouse', () => {
     ).resolves.toEqual({});
 
     expect(await showCreateTable()).toContain('toIntervalDay(14)');
+  });
+
+  it('does not report a rejected statement as an unreachable store', async () => {
+    const rejecting = createClient({
+      url: container.getConnectionUrl(),
+      clickhouse_settings: { readonly: '1' },
+    });
+
+    const failure = await new ClickHouseJobLogSchema({ client: rejecting }, { retentionDays: 7 })
+      .apply()
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(ClickHouseError);
+    expect(failure).not.toBeInstanceOf(LogStoreUnavailableError);
+    await rejecting.close();
   });
 
   it('reports an unreachable store as unavailable', async () => {

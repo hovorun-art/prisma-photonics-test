@@ -1,11 +1,12 @@
 import { randomUUID } from 'node:crypto';
 
-import { createClient, type ClickHouseClient } from '@clickhouse/client';
+import { ClickHouseError, createClient, type ClickHouseClient } from '@clickhouse/client';
 import type { JobLogStreamMessage } from '@job-queue/contracts';
 import { CONTAINER_IMAGES, UNREACHABLE_HTTP_URL } from '@job-queue/test-support';
 import { ClickHouseContainer, type StartedClickHouseContainer } from '@testcontainers/clickhouse';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { LogStoreUnavailableError } from '../../../domain/job-log/errors/log-store-unavailable.error.js';
 import type { PositionedJobLogEntry } from '../../../domain/job-log/job-log-store.js';
 import { ClickHouseJobLogSchema } from './clickhouse-job-log-schema.js';
 import { ClickHouseJobLogStore } from './clickhouse-job-log-store.js';
@@ -41,7 +42,7 @@ describe('ClickHouseJobLogStore against ClickHouse', () => {
     container = await new ClickHouseContainer(CONTAINER_IMAGES.clickhouse).start();
     client = createClient({ url: container.getConnectionUrl() });
     await new ClickHouseJobLogSchema({ client }, { retentionDays: 30 }).apply();
-    store = new ClickHouseJobLogStore({ client });
+    store = new ClickHouseJobLogStore({ client }, { retentionDays: 30 });
   });
   beforeEach(async () => {
     await client.command({ query: 'TRUNCATE TABLE job_log' });
@@ -176,10 +177,39 @@ describe('ClickHouseJobLogStore against ClickHouse', () => {
     }
   });
 
-  it('a store that cannot be reached makes insert and query throw LogStoreUnavailableError', async () => {
-    const unreachable = new ClickHouseJobLogStore({
-      client: createClient({ url: UNREACHABLE_HTTP_URL }),
+  it('Expired entries: entries older than the retention are not returned before any merge', async () => {
+    const shortRetention = new ClickHouseJobLogStore({ client }, { retentionDays: 1 });
+    await store.insert({
+      entries: [positioned(1, { ts: NOW_MS - 3 * MS_PER_DAY }), positioned(2)],
     });
+
+    const { entries } = await shortRetention.query({ jobId: JOB_ID, limit: 10 });
+
+    expect(entries.map((e) => e.entry.message)).toEqual(['entry 2']);
+  });
+
+  it('a failure that is not about reaching the store is not reported as unavailable', async () => {
+    await client.command({ query: 'RENAME TABLE job_log TO job_log_moved' });
+    try {
+      const failures = await Promise.all([
+        store.query({ jobId: JOB_ID, limit: 1 }).catch((error: unknown) => error),
+        store.insert({ entries: [positioned(1)] }).catch((error: unknown) => error),
+      ]);
+
+      for (const failure of failures) {
+        expect(failure).toBeInstanceOf(ClickHouseError);
+        expect(failure).not.toBeInstanceOf(LogStoreUnavailableError);
+      }
+    } finally {
+      await client.command({ query: 'RENAME TABLE job_log_moved TO job_log' });
+    }
+  });
+
+  it('a store that cannot be reached makes insert and query throw LogStoreUnavailableError', async () => {
+    const unreachable = new ClickHouseJobLogStore(
+      { client: createClient({ url: UNREACHABLE_HTTP_URL }) },
+      { retentionDays: 30 },
+    );
 
     await expect(unreachable.insert({ entries: [positioned(1)] })).rejects.toMatchObject({
       code: 'LOG_STORE_UNAVAILABLE',
@@ -196,7 +226,7 @@ describe('ClickHouseJobLogStore against ClickHouse', () => {
     const own = await new ClickHouseContainer(CONTAINER_IMAGES.clickhouse).start();
     const ownClient = createClient({ url: own.getConnectionUrl() });
     await new ClickHouseJobLogSchema({ client: ownClient }, { retentionDays: 30 }).apply();
-    const ownStore = new ClickHouseJobLogStore({ client: ownClient });
+    const ownStore = new ClickHouseJobLogStore({ client: ownClient }, { retentionDays: 30 });
     await own.stop();
 
     await expect(ownStore.insert({ entries: [positioned(1)] })).rejects.toMatchObject({

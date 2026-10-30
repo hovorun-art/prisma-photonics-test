@@ -10,6 +10,7 @@ import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redi
 import { Redis } from 'ioredis';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
+import { JobLogStreamGroupMissingError } from '../../../domain/job-log/errors/job-log-stream-group-missing.error.js';
 import { RedisJobLogStream } from './redis-job-log-stream.js';
 
 const LEASE_MS = 400;
@@ -86,7 +87,7 @@ describe('RedisJobLogStream against Redis', () => {
     });
   });
 
-  it('does not return entries appended before the group was created', async () => {
+  it('returns entries appended before the group was created', async () => {
     await append('before');
     const stream = open();
     await stream.prepare();
@@ -94,7 +95,44 @@ describe('RedisJobLogStream against Redis', () => {
 
     const { records } = await stream.read({ pending: false, count: 10, blockMs: BLOCK_MS });
 
-    expect(records.map((r) => r.body)).toEqual(['after']);
+    expect(records.map((r) => r.body)).toEqual(['before', 'after']);
+  });
+
+  it('rejects a read with JobLogStreamGroupMissingError when the group does not exist', async () => {
+    const stream = open();
+    await stream.prepare();
+    await producer.del(JOB_LOG_STREAM_NAME);
+
+    await expect(
+      stream.read({ pending: false, count: 10, blockMs: BLOCK_MS }),
+    ).rejects.toBeInstanceOf(JobLogStreamGroupMissingError);
+    await expect(stream.read({ pending: true, count: 10, blockMs: 0 })).rejects.toBeInstanceOf(
+      JobLogStreamGroupMissingError,
+    );
+  });
+
+  it('rejects a read on a key of the wrong type, but not as a missing group', async () => {
+    const stream = open();
+    await producer.set(JOB_LOG_STREAM_NAME, 'not a stream');
+
+    const failure = await stream
+      .read({ pending: false, count: 10, blockMs: BLOCK_MS })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(Error);
+    expect(failure).not.toBeInstanceOf(JobLogStreamGroupMissingError);
+  });
+
+  it('reads again after the group is created again', async () => {
+    const stream = open();
+    await stream.prepare();
+    await producer.del(JOB_LOG_STREAM_NAME);
+    await append('one');
+    await stream.prepare();
+
+    const { records } = await stream.read({ pending: false, count: 10, blockMs: BLOCK_MS });
+
+    expect(records.map((r) => r.body)).toEqual(['one']);
   });
 
   it('reads unacknowledged entries again at the next start', async () => {

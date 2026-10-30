@@ -58,8 +58,9 @@ const CLICKHOUSE_CLIENT = Symbol('ClickHouseClient');
     },
     {
       provide: JOB_LOG_STORE,
-      useFactory: (client: ClickHouseClient): JobLogStore => new ClickHouseJobLogStore({ client }),
-      inject: [CLICKHOUSE_CLIENT],
+      useFactory: (client: ClickHouseClient, config: JobServiceConfig): JobLogStore =>
+        new ClickHouseJobLogStore({ client }, { retentionDays: config.jobLogRetentionDays }),
+      inject: [CLICKHOUSE_CLIENT, JOB_SERVICE_CONFIG],
     },
     {
       provide: JOB_LOG_STREAM,

@@ -6,7 +6,10 @@ import type { Closable } from '@job-queue/kernel';
  * read but not confirmed are read again (`read` with `pending`).
  */
 export interface JobLogStream extends Closable {
-  /** Creates the consumer group (and the stream) when missing. */
+  /**
+   * Creates the consumer group (and the stream) when missing. A new group starts at the beginning
+   * of the stream, so entries appended before it existed are read too.
+   */
   prepare(): Promise<PrepareJobLogStreamResponse>;
   /**
    * Takes or renews the writer lease; only one holder at a time, and a lease that is not renewed
@@ -15,7 +18,8 @@ export interface JobLogStream extends Closable {
   lease(): Promise<LeaseJobLogStreamResponse>;
   /**
    * `pending`: this consumer's entries read before but not confirmed, without waiting. Otherwise new
-   * entries, waiting up to `blockMs` when there are none.
+   * entries, waiting up to `blockMs` when there are none. Rejects with
+   * `JobLogStreamGroupMissingError` when the consumer group does not exist (call `prepare` again).
    */
   read(req: ReadJobLogStreamRequest): Promise<ReadJobLogStreamResponse>;
   ack(req: AckJobLogStreamRequest): Promise<AckJobLogStreamResponse>;

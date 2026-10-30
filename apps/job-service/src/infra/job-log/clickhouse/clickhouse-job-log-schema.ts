@@ -1,10 +1,11 @@
 import type { ClickHouseClient } from '@clickhouse/client';
 
-import { LogStoreUnavailableError } from '../../../domain/job-log/errors/log-store-unavailable.error.js';
 import type {
   ApplyJobLogSchemaResponse,
   JobLogSchema,
 } from '../../../domain/job-log/job-log-schema.js';
+import type { LogStoreErrorTranslator } from '../../../domain/job-log/log-store-error-translator.js';
+import { ClickHouseLogStoreErrorTranslator } from './clickhouse-log-store-error-translator.js';
 
 export interface ClickHouseJobLogSchemaDeps {
   client: ClickHouseClient;
@@ -17,6 +18,8 @@ export interface ClickHouseJobLogSchemaParams {
 
 /** Creates the `job_log` table and sets its retention (design §5). */
 export class ClickHouseJobLogSchema implements JobLogSchema {
+  private readonly errors: LogStoreErrorTranslator = new ClickHouseLogStoreErrorTranslator();
+
   constructor(
     private readonly d: ClickHouseJobLogSchemaDeps,
     private readonly p: ClickHouseJobLogSchemaParams,
@@ -45,8 +48,8 @@ export class ClickHouseJobLogSchema implements JobLogSchema {
           TTL ${ttl}`,
       });
       await this.d.client.command({ query: `ALTER TABLE job_log MODIFY TTL ${ttl}` });
-    } catch {
-      throw new LogStoreUnavailableError({ operation: 'schema' });
+    } catch (error) {
+      throw this.errors.translate({ error, operation: 'schema' }).error;
     }
     return {};
   }

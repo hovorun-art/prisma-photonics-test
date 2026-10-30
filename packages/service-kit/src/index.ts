@@ -44,6 +44,16 @@ export {
   type JobLogStreamDestinationParams,
 } from './infra/job-log/job-log-stream-destination.js';
 export {
+  JOB_LOG_DESTINATION,
+  type CreateJobLogDestinationFactoryRequest,
+  type CreateJobLogDestinationFactoryResponse,
+  type JobLogDestination,
+  type JobLogDestinationFactory,
+} from './domain/job-log/job-log-destination.js';
+export { JobLogStreamDestinationFactory } from './infra/job-log/job-log-stream-destination.factory.js';
+export { JobLogDestinationHook } from './app/job-log/job-log-destination.hook.js';
+export { IoRedisClient, type IoRedisClientParams } from './infra/redis/ioredis-client.js';
+export {
   IoRedisJobLogStreamRedis,
   type IoRedisJobLogStreamRedisParams,
 } from './infra/job-log/ioredis-job-log-stream-redis.js';

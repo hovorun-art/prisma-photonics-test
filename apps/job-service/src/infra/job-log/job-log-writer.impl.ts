@@ -2,6 +2,7 @@ import { JobLogStreamMessage } from '@job-queue/contracts';
 import type { Clock, Sleeper } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 
+import { JobLogStreamGroupMissingError } from '../../domain/job-log/errors/job-log-stream-group-missing.error.js';
 import type {
   JobLogWriter,
   StartJobLogWriterResponse,
@@ -50,13 +51,14 @@ interface RetryDelayRequest {
 /**
  * The single loop that moves job log entries from the stream into the store (design §4): it
  * reads, stores, and only then confirms; a store that fails is retried with a growing wait before
- * anything new is read, so entries wait in the stream while the store is down. The store's schema
- * is applied in the loop too, so a store that is down at startup delays the log, not the service.
+ * anything new is read, so entries wait in the stream while the store is down. The stream's group and the store's schema
+ * are prepared in the loop too, so a store that is down at startup delays the log, not the service.
  */
 export class JobLogWriterImpl implements JobLogWriter {
   private readonly stopping = new AbortController();
   private loop: Promise<void> | undefined;
-  private prepared = false;
+  private streamPrepared = false;
+  private schemaApplied = false;
   private roundFailures = 0;
 
   constructor(
@@ -82,6 +84,8 @@ export class JobLogWriterImpl implements JobLogWriter {
         this.roundFailures = 0;
       } catch (error) {
         if (this.isStopping()) return;
+        // The group is gone (the stream was deleted): it is created again before the next read.
+        if (error instanceof JobLogStreamGroupMissingError) this.streamPrepared = false;
         this.d.logger.warn(`Job log writer round failed: ${this.describe(error)}`);
         const ms = this.retryDelay({ failures: this.roundFailures });
         this.roundFailures += 1;
@@ -91,10 +95,14 @@ export class JobLogWriterImpl implements JobLogWriter {
   }
 
   private async round(): Promise<void> {
-    if (!this.prepared) {
-      await this.d.schema.apply();
+    // The stream first: entries appended while the store is down wait in the group.
+    if (!this.streamPrepared) {
       await this.d.stream.prepare();
-      this.prepared = true;
+      this.streamPrepared = true;
+    }
+    if (!this.schemaApplied) {
+      await this.d.schema.apply();
+      this.schemaApplied = true;
     }
     if (!(await this.d.stream.lease()).held) {
       await this.wait({ ms: this.p.flushIntervalMs });

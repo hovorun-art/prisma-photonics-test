@@ -6,6 +6,7 @@ import type { LoggerService } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DeepMockProxy, mockDeep } from 'vitest-mock-extended';
 
+import { JobLogStreamGroupMissingError } from '../../domain/job-log/errors/job-log-stream-group-missing.error.js';
 import { LogStoreUnavailableError } from '../../domain/job-log/errors/log-store-unavailable.error.js';
 import type { JobLogSchema } from '../../domain/job-log/job-log-schema.js';
 import type { JobLogStore } from '../../domain/job-log/job-log-store.js';
@@ -405,6 +406,50 @@ describe('JobLogWriterImpl', () => {
     expect(stream.prepare).toHaveBeenCalledTimes(2);
     expect(sleepDelays()[0]).toBe(RETRY_DELAY_MS);
     expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('prepares the stream before it applies the store schema, so entries wait in the stream while the store is down', async () => {
+    schema.apply.mockReset();
+    schema.apply.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'schema' }));
+    sleeper.sleep.mockResolvedValueOnce({});
+    schema.apply.mockResolvedValueOnce({});
+    endWithIdleRound();
+
+    await startAndWaitUntilParked(2);
+
+    expect(stream.prepare).toHaveBeenCalledOnce();
+    expect(stream.prepare.mock.invocationCallOrder[0]).toBeLessThan(
+      schema.apply.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it('creates the consumer group again on the next round after a read finds it missing', async () => {
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockRejectedValueOnce(new JobLogStreamGroupMissingError());
+    sleeper.sleep.mockResolvedValueOnce({});
+    stream.prepare.mockResolvedValueOnce({});
+    endWithIdleRound();
+
+    await startAndWaitUntilParked(2);
+
+    expect(stream.prepare).toHaveBeenCalledTimes(2);
+    expect(stream.prepare.mock.invocationCallOrder[1]).toBeGreaterThan(
+      stream.read.mock.invocationCallOrder[0] ?? Infinity,
+    );
+    expect(sleepDelays()[0]).toBe(RETRY_DELAY_MS);
+    expect(stream.lease).toHaveBeenCalledTimes(2);
+    expect(schema.apply).toHaveBeenCalledOnce();
+  });
+
+  it('does not create the consumer group again after a round that failed for another reason', async () => {
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockRejectedValueOnce(new Error('redis down'));
+    sleeper.sleep.mockResolvedValueOnce({});
+    endWithIdleRound();
+
+    await startAndWaitUntilParked(2);
+
+    expect(stream.prepare).toHaveBeenCalledOnce();
   });
 
   it('applies the store schema before it reads anything', async () => {

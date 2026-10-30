@@ -1,7 +1,7 @@
 import type { CloseClosableResponse } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
-import { Redis } from 'ioredis';
 
+import { IoRedisClient } from './ioredis-client.js';
 import type {
   PingRedisConnectionResponse,
   RedisConnection,
@@ -25,19 +25,19 @@ export interface IoRedisConnectionParams {
  * logged, never thrown (an outage must not crash the app).
  */
 export class IoRedisConnection implements RedisConnection {
-  private readonly redis: Redis;
+  private readonly client: IoRedisClient;
 
   constructor(
     private readonly d: IoRedisConnectionDeps,
     private readonly p: IoRedisConnectionParams,
   ) {
-    this.redis = new Redis(p.redisUrl, {
+    this.client = new IoRedisClient({
+      redisUrl: p.redisUrl,
       connectionName: p.connectionName,
       maxRetriesPerRequest: 1,
-    });
-    // Without a listener ioredis prints every connection error.
-    this.redis.on('error', (err: unknown) => {
-      this.d.logger.warn({ err }, 'Redis connection error');
+      onError: (err: unknown) => {
+        this.d.logger.warn({ err }, 'Redis connection error');
+      },
     });
   }
 
@@ -46,7 +46,7 @@ export class IoRedisConnection implements RedisConnection {
       try {
         await this.ping();
       } catch (error) {
-        this.redis.disconnect();
+        this.client.redis.disconnect();
         throw error;
       }
     }
@@ -54,17 +54,11 @@ export class IoRedisConnection implements RedisConnection {
   }
 
   async ping(): Promise<PingRedisConnectionResponse> {
-    await this.redis.ping();
+    await this.client.redis.ping();
     return {};
   }
 
-  /** Sends QUIT when connected, so pending replies arrive first; otherwise stops reconnecting. */
   async close(): Promise<CloseClosableResponse> {
-    if (this.redis.status === 'ready') {
-      await this.redis.quit();
-    } else {
-      this.redis.disconnect();
-    }
-    return {};
+    return this.client.close();
   }
 }

@@ -542,7 +542,7 @@ state: append-only, written far more often than read, read per job in time order
 age. So they are stored in ClickHouse, not Postgres: column storage with high compression, fast
 batch inserts, `ORDER BY (job_id, position)` makes "one job's entries in order" a primary-key range
 read, and a `TTL` clause removes entries after the configured retention (`JOB_LOG_RETENTION_DAYS`,
-30). Deleting a job leaves its entries to that retention (the route answers 404 once the job is
+30); reads also skip entries past it, since the TTL only applies when ClickHouse merges. Deleting a job leaves its entries to that retention (the route answers 404 once the job is
 gone), since deleting rows is costly in a store built for appends. *Honestly:* at this task's volume a Postgres table would do; ClickHouse is here to show how the
 log would scale beyond it. *Alternatives:* a Postgres table partitioned by time (no new technology,
 partitions by hand), TimescaleDB (Postgres with retention policies), Loki (cheap, but a job id as a
@@ -577,7 +577,10 @@ insert, and confirms them on the stream only after the insert. While ClickHouse 
 retries the same batch with a growing wait (`JOB_LOG_STORE_RETRY_DELAY_MS` 500 up to
 `..._MAX_DELAY_MS` 30000) and reads nothing new, so entries wait in Redis; the log route answers 503
 `LOG_STORE_UNAVAILABLE` meanwhile, and every other route keeps working. A ClickHouse that is down at
-startup delays the log, not the service: the writer creates the table itself, with the same retry.
+startup delays the log, not the service: the writer creates the table itself, with the same retry,
+and the consumer group starts at the beginning of the stream, so entries written before it existed
+are still stored. Only connection errors and timeouts count as "store unavailable"; an SQL error
+is a bug and surfaces as a logged 500, not a 503.
 *No duplicates:* a batch read again after a writer crash is the same rows, and the table is a
 `ReplacingMergeTree` keyed by job, position and entry id, read with `FINAL`, so each entry appears
 once. *Order:* entries are ordered by their stream id, which Redis assigns on arrival, not by the

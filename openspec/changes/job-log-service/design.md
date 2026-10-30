@@ -82,7 +82,10 @@ a new library, harder to inject ports into and to test).
 ### 3. Transport: a Redis Stream with a consumer group
 
 One stream `job-log` and a consumer group `job-log-writer`, created by the writer with
-`XGROUP CREATE ... $ MKSTREAM` (BUSYGROUP ignored). `MAXLEN ~` keeps Redis memory bounded at the
+`XGROUP CREATE ... 0 MKSTREAM` (BUSYGROUP ignored): the group starts at the beginning of the
+stream, so entries appended before it existed (e.g. while ClickHouse was down at the first start)
+are read too. The writer prepares the stream before the schema, and prepares it again after a read
+fails with `JobLogStreamGroupMissingError` (Redis lost the group). `MAXLEN ~` keeps Redis memory bounded at the
 configured length; entries trimmed before they are read are lost (decided).
 
 The stream id Redis assigns at `XADD` is monotonic for the one stream, so it is the log's order key
@@ -139,7 +142,9 @@ TTL toDateTime(ts) + INTERVAL <retention days> DAY
   Alternative: `insert_deduplication_token` per batch (needs `non_replicated_deduplication_window`
   on a non-replicated table and fails if a retried batch differs, e.g. after trimming); kept as a
   possible addition, not relied on.
-- Retention: the `TTL` clause from config (`JOB_LOG_RETENTION_DAYS`).
+- Retention: the `TTL` clause from config (`JOB_LOG_RETENTION_DAYS`); since the TTL applies only
+  when ClickHouse merges, reads also filter `ts >= now64(3) - INTERVAL <days> DAY`, so expired
+  entries are never returned.
 - Schema: job-service applies it at startup (`CREATE TABLE IF NOT EXISTS`, then `ALTER TABLE ...
   MODIFY TTL` with the configured days) through a `JobLogSchema` port that the writer applies at
   the start of its loop and retries with its backoff, so a ClickHouse that is down at startup
@@ -150,7 +155,10 @@ TTL toDateTime(ts) + INTERVAL <retention days> DAY
   `JOB_SERVICE_SETUP_STEPS`); a ClickHouse migration tool in the `migrate` image (a new library for
   one table).
 - Client: `@clickhouse/client` (decided), behind the `JobLogStore` port
-  (`ClickHouseJobLogStore`). Connection errors and timeouts become `LogStoreUnavailableError`.
+  (`ClickHouseJobLogStore`). Only connection errors and timeouts become `LogStoreUnavailableError`
+  (`ClickHouseLogStoreErrorTranslator`, by system error code; the client's request timeout has no
+  code or class, so it is matched by its fixed message, in one constant). Any other error, such as
+  an SQL error, is rethrown and becomes a logged 500.
 
 ### 6. Read API
 

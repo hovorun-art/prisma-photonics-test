@@ -9,13 +9,17 @@ import {
   SLEEPER,
   type Sleeper,
 } from '@job-queue/kernel';
-import { REDIS_CONNECTION, type RedisConnection } from '@job-queue/service-kit';
+import {
+  type JobLogDestination,
+  REDIS_CONNECTION,
+  type RedisConnection,
+} from '@job-queue/service-kit';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { Logger as PinoLogger } from 'nestjs-pino';
 import { type DeepMockProxy, mockDeep, mockReset } from 'vitest-mock-extended';
 
-import { AppModule, type JobLogDestination } from '../../src/app/app.module.js';
+import { AppModule } from '../../src/app/app.module.js';
 import type { ExecutionConfig } from '../../src/domain/config/execution-config.js';
 import type { InstanceId } from '../../src/domain/instance/instance-id.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../src/domain/jobs/job-repository.js';

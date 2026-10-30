@@ -54,6 +54,7 @@ describe('job-service health, docs and shutdown', () => {
 
     it('job-service stopped', async () => {
       const stopping = await JobServiceUnderTest.start();
+      expect(stopping.jobLogDestination.open).toHaveBeenCalledOnce();
       const databaseClose = vi.spyOn(stopping.app.get(PrismaDatabase), 'close');
       const health = stopping.url(HEALTH_ROUTE.path);
       expect((await fetch(health)).status).toBe(200);
@@ -63,6 +64,16 @@ describe('job-service health, docs and shutdown', () => {
       expect(databaseClose).toHaveBeenCalledOnce();
       expect(stopping.queue.close).toHaveBeenCalledOnce();
       expect(stopping.redis.close).toHaveBeenCalledOnce();
+      expect(stopping.jobLogDestination.close).toHaveBeenCalledOnce();
+      expect(stopping.jobLogStoreMock?.close).toHaveBeenCalledOnce();
+      expect(stopping.jobLogStream.close).toHaveBeenCalledOnce();
+      const destinationClosed = stopping.jobLogDestination.close.mock.invocationCallOrder[0];
+      expect(stopping.jobLogStoreMock?.close.mock.invocationCallOrder[0]).toBeLessThan(
+        destinationClosed ?? 0,
+      );
+      expect(stopping.jobLogStream.close.mock.invocationCallOrder[0]).toBeLessThan(
+        destinationClosed ?? 0,
+      );
       await expect(fetch(health)).rejects.toThrow();
     }, 180_000);
   });

@@ -2,7 +2,8 @@ import type { ClickHouseClient } from '@clickhouse/client';
 import { JobLogStreamMessage } from '@job-queue/contracts';
 import type { CloseClosableResponse } from '@job-queue/kernel';
 
-import { LogStoreUnavailableError } from '../../../domain/job-log/errors/log-store-unavailable.error.js';
+import type { LogStoreErrorTranslator } from '../../../domain/job-log/log-store-error-translator.js';
+import { ClickHouseLogStoreErrorTranslator } from './clickhouse-log-store-error-translator.js';
 import type {
   InsertJobLogStoreRequest,
   InsertJobLogStoreResponse,
@@ -14,6 +15,11 @@ import type {
 
 export interface ClickHouseJobLogStoreDeps {
   client: ClickHouseClient;
+}
+
+export interface ClickHouseJobLogStoreParams {
+  /** Entries older than this are not returned, even before the table's TTL has removed them. */
+  retentionDays: number;
 }
 
 /** A row of `job_log` as ClickHouse returns it in JSON (64-bit integers come as strings). */
@@ -33,7 +39,12 @@ interface JobLogRow {
 
 /** ClickHouse `ReplacingMergeTree` implementation of the job log store (design §5). */
 export class ClickHouseJobLogStore implements JobLogStore {
-  constructor(private readonly d: ClickHouseJobLogStoreDeps) {}
+  private readonly errors: LogStoreErrorTranslator = new ClickHouseLogStoreErrorTranslator();
+
+  constructor(
+    private readonly d: ClickHouseJobLogStoreDeps,
+    private readonly p: ClickHouseJobLogStoreParams,
+  ) {}
 
   async insert(req: InsertJobLogStoreRequest): Promise<InsertJobLogStoreResponse> {
     if (req.entries.length === 0) return {};
@@ -43,8 +54,8 @@ export class ClickHouseJobLogStore implements JobLogStore {
         format: 'JSONEachRow',
         values: req.entries.map((positioned) => this.toRow(positioned)),
       });
-    } catch {
-      throw new LogStoreUnavailableError({ operation: 'insert' });
+    } catch (error) {
+      throw this.errors.translate({ error, operation: 'insert' }).error;
     }
     return {};
   }
@@ -60,12 +71,14 @@ export class ClickHouseJobLogStore implements JobLogStore {
                  message, metadata, source, instance_id
           FROM job_log FINAL
           WHERE job_id = {jobId:UUID}
+            AND ts >= now64(3) - INTERVAL {retentionDays:UInt32} DAY
             AND (seq_ms, seq_n) > ({afterMs:UInt64}, {afterN:UInt32})
             ${levelFilter}
           ORDER BY seq_ms, seq_n, id
           LIMIT {limit:UInt32}`,
         query_params: {
           jobId: req.jobId,
+          retentionDays: this.p.retentionDays,
           afterMs,
           afterN,
           limit: req.limit,
@@ -75,8 +88,8 @@ export class ClickHouseJobLogStore implements JobLogStore {
       });
       const rows = await result.json<JobLogRow>();
       return { entries: rows.map((row) => this.fromRow(row)) };
-    } catch {
-      throw new LogStoreUnavailableError({ operation: 'query' });
+    } catch (error) {
+      throw this.errors.translate({ error, operation: 'query' }).error;
     }
   }
 
