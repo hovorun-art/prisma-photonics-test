@@ -13,6 +13,7 @@ datasource db {
 
 enum JobType {
   email
+  webhook
 
   @@map("job_type")
 }

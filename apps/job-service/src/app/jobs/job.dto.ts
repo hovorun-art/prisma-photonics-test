@@ -8,11 +8,17 @@ import {
 import { createZodDto } from 'nestjs-zod';
 
 /**
- * Request and response classes of the public job routes, generated from the shared Zod schemas. A
- * union with several object shapes cannot be a class; such bodies use `ZodValidationPipe` directly.
+ * Generated DTO bases of the union schemas (one branch per job type). A class cannot extend a
+ * constructor whose instances are a union, so the bases are typed as plain objects; at runtime they
+ * keep the union's schema, which the docs read. Union bodies are validated with `ZodValidationPipe`
+ * on the parameter, against the schema itself.
  */
-export class CreateJobDto extends createZodDto(CreateJobRequest) {}
-export class JobDto extends createZodDto(Job) {}
+const CreateJobDtoBase: new () => object = createZodDto(CreateJobRequest);
+const JobDtoBase: new () => object = createZodDto(Job);
+
+/** Request and response classes of the public job routes, generated from the shared Zod schemas. */
+export class CreateJobDto extends CreateJobDtoBase {}
+export class JobDto extends JobDtoBase {}
 export class JobIdParamsDto extends createZodDto(JobIdParams) {}
 export class QueryJobsDto extends createZodDto(QueryJobsRequest) {}
 export class QueryJobsResponseDto extends createZodDto(QueryJobsResponse) {}

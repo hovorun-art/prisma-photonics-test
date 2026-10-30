@@ -202,6 +202,16 @@ mostly churn that the next step overwrote. *Trade-off:* the scaffold's history i
 step by step; the reasoning behind each turn is kept instead in this file, in the OpenSpec change
 (`openspec/changes/project-scaffold/`: decisions, design and tasks) and in the AI chat logs.
 
+**One error shape for every job type (webhook failures).** The UI design shows a failed webhook's
+error as `{ code, message, status, attempt, retryable }`. We keep the shared
+`JobError { code, message, details }` instead: the HTTP status of the failed call goes into
+`details.statusCode`, the attempt number is the job's `attempts`, and "retryable" is
+`attempts < maxAttempts`, so the UI derives both from fields every job already has. *Why:* one
+error schema for all job types, and no second copy of state the job already holds. *Trade-off:*
+`details` is untyped per job type, so the UI must read `details.statusCode` defensively. The webhook
+type was added to job-service before its handler in job-execution-service. Until the handler
+exists, a queued webhook job is reported as `UNSUPPORTED_JOB_TYPE` and fails after its attempts.
+
 ---
 
 ## 1. Job Pickup Strategy

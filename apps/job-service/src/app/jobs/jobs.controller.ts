@@ -1,4 +1,9 @@
-import { JOBS_ROUTE, type Job, type QueryJobsResponse } from '@job-queue/contracts';
+import {
+  CreateJobRequest,
+  JOBS_ROUTE,
+  type Job,
+  type QueryJobsResponse,
+} from '@job-queue/contracts';
 import {
   Body,
   Controller,
@@ -13,6 +18,7 @@ import {
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
+  ApiBody,
   ApiConflictResponse,
   ApiCreatedResponse,
   ApiNoContentResponse,
@@ -21,6 +27,7 @@ import {
   ApiOperation,
   ApiTags,
 } from '@nestjs/swagger';
+import { ZodValidationPipe } from 'nestjs-zod';
 
 import { JOB_SERVICE, type JobService } from '../../domain/jobs/job-service.js';
 import {
@@ -40,8 +47,11 @@ export class JobsController {
   @Post()
   @ApiOperation({ summary: 'Submit a job; it is stored as pending and put on the queue' })
   @ApiCreatedResponse({ type: JobDto, description: 'The stored job' })
+  @ApiBody({ type: CreateJobDto })
   @ApiBadRequestResponse({ description: 'VALIDATION_FAILED' })
-  async create(@Body() body: CreateJobDto): Promise<Job> {
+  async create(
+    @Body(new ZodValidationPipe(CreateJobRequest)) body: CreateJobRequest,
+  ): Promise<Job> {
     return (await this.jobs.create({ job: body })).job;
   }
 

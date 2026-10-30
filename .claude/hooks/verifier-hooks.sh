@@ -63,12 +63,16 @@ def last_text_from_transcript(path):
     return text
 
 
+VERDICT_LINE = re.compile(r'^\s*\**VERDICT:?\**:?\s*\**(PASS|PARTIAL|FAIL)\b', re.M)
+
+# The last message may be a short note without the trailer while the report itself went back
+# through a SubagentHandback call, so fall back to the transcript unless the message has a verdict.
 message = d.get('last_assistant_message') or ''
-if not message and d.get('agent_transcript_path'):
-    message = last_text_from_transcript(d['agent_transcript_path'])
+if not VERDICT_LINE.search(message) and d.get('agent_transcript_path'):
+    message = last_text_from_transcript(d['agent_transcript_path']) or message
 
 change = re.findall(r'^\s*\**CHANGE:?\**:?\s*`?([A-Za-z0-9._-]+)`?\s*$', message, re.M)
-verdict = re.findall(r'^\s*\**VERDICT:?\**:?\s*\**(PASS|PARTIAL|FAIL)\b', message, re.M)
+verdict = VERDICT_LINE.findall(message)
 folder = os.path.join(root, 'openspec', 'changes', change[-1]) if change else ''
 
 if not (change and verdict and os.path.isdir(folder)):
