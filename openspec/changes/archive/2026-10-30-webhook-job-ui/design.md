@@ -40,7 +40,8 @@ and the cards call `setSearchParams` (push, so Back returns to the previous type
 `SubmitJobPage` renders a `JobForm` for the selected type with `key={type}`, so switching remounts
 the form and the payload starts empty. Priority and Max attempts survive the switch by being lifted
 into page state (`execution`) that seeds the new form's `defaultValues` and is updated by a
-`useWatch` on those two fields.
+`form.subscribe` on the form's values (changed from `useWatch` in the fix that keeps the
+settings across Back).
 *Alternative:* one form with a union of values and `unregister` on switch: messier typing in
 `react-hook-form` and harder to keep the per-type resolver.
 
