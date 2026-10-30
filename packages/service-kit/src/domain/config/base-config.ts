@@ -13,4 +13,6 @@ export interface BaseConfig {
   readonly port: number;
   /** The shared token of the internal API; every backend must hold the same one. */
   readonly internalServiceToken: string;
+  /** Most entries the job log stream keeps (trimmed approximately); older unread ones are lost. */
+  readonly jobLogStreamMaxLength: number;
 }

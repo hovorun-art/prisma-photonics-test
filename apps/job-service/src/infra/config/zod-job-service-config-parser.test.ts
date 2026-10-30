@@ -10,7 +10,24 @@ const ENV = {
   DATABASE_URL: 'postgresql://jobqueue:jobqueue@localhost:5432/jobqueue',
   REDIS_URL: 'redis://localhost:6379',
   INTERNAL_SERVICE_TOKEN: 'a-long-random-token',
+  CLICKHOUSE_URL: 'http://jobqueue:jobqueue@localhost:8123/jobqueue',
 };
+
+/** The job log variables with a value for each, and the setting each one becomes. */
+const JOB_LOG_SETTINGS = [
+  { name: 'JOB_LOG_RETENTION_DAYS', value: '7', setting: 'jobLogRetentionDays' },
+  { name: 'JOB_LOG_QUERY_DEFAULT_LIMIT', value: '50', setting: 'jobLogQueryDefaultLimit' },
+  { name: 'JOB_LOG_QUERY_MAX_LIMIT', value: '500', setting: 'jobLogQueryMaxLimit' },
+  { name: 'JOB_LOG_BATCH_SIZE', value: '200', setting: 'jobLogBatchSize' },
+  { name: 'JOB_LOG_FLUSH_INTERVAL_MS', value: '250', setting: 'jobLogFlushIntervalMs' },
+  { name: 'JOB_LOG_STORE_RETRY_DELAY_MS', value: '100', setting: 'jobLogStoreRetryDelayMs' },
+  {
+    name: 'JOB_LOG_STORE_RETRY_MAX_DELAY_MS',
+    value: '5000',
+    setting: 'jobLogStoreRetryMaxDelayMs',
+  },
+  { name: 'JOB_LOG_WRITER_LEASE_MS', value: '10000', setting: 'jobLogWriterLeaseMs' },
+] as const;
 
 describe('ZodJobServiceConfigParser', () => {
   const parser = new ZodJobServiceConfigParser();
@@ -32,9 +49,93 @@ describe('ZodJobServiceConfigParser', () => {
         bulkMaxJobs: 100,
         statsRecentWindowMinutes: 1440,
         statsThroughputWindowMinutes: 5,
+        jobLogStreamMaxLength: 100000,
+        clickhouseUrl: 'http://jobqueue:jobqueue@localhost:8123/jobqueue',
+        jobLogRetentionDays: 30,
+        jobLogQueryDefaultLimit: 100,
+        jobLogQueryMaxLimit: 1000,
+        jobLogBatchSize: 1000,
+        jobLogFlushIntervalMs: 1000,
+        jobLogStoreRetryDelayMs: 500,
+        jobLogStoreRetryMaxDelayMs: 30000,
+        jobLogWriterLeaseMs: 60000,
       },
     });
   });
+
+  it('reads the configured job log settings', () => {
+    const env = Object.fromEntries(JOB_LOG_SETTINGS.map(({ name, value }) => [name, value]));
+    const expected = Object.fromEntries(
+      JOB_LOG_SETTINGS.map(({ setting, value }) => [setting, Number(value)]),
+    );
+
+    expect(parser.parse({ env: { ...ENV, ...env } })).toMatchObject({ ok: true, config: expected });
+  });
+
+  it.each(
+    JOB_LOG_SETTINGS.flatMap(({ name }) =>
+      ['0', '-1', '1.5', 'many'].map((value) => ({ name, value })),
+    ),
+  )('rejects $name=$value', ({ name, value }) => {
+    const result = parser.parse({ env: { ...ENV, [name]: value } });
+
+    // The field's own line, not a pair check that only names it.
+    expect(result.ok ? '' : result.problems).toContain(`→ at ${name}`);
+  });
+
+  it.each([
+    {
+      name: 'JOB_LOG_QUERY_DEFAULT_LIMIT',
+      env: { JOB_LOG_QUERY_DEFAULT_LIMIT: '200', JOB_LOG_QUERY_MAX_LIMIT: '100' },
+    },
+    {
+      name: 'JOB_LOG_STORE_RETRY_DELAY_MS',
+      env: { JOB_LOG_STORE_RETRY_DELAY_MS: '2000', JOB_LOG_STORE_RETRY_MAX_DELAY_MS: '1000' },
+    },
+    {
+      name: 'JOB_LOG_WRITER_LEASE_MS',
+      env: { JOB_LOG_WRITER_LEASE_MS: '30000', JOB_LOG_STORE_RETRY_MAX_DELAY_MS: '30000' },
+    },
+  ])('rejects $name out of order with its pair', ({ name, env }) => {
+    const result = parser.parse({ env: { ...ENV, ...env } });
+
+    expect(result.ok ? '' : result.problems).toContain(name);
+  });
+
+  it.each([
+    {
+      name: 'JOB_LOG_QUERY_DEFAULT_LIMIT equal to JOB_LOG_QUERY_MAX_LIMIT',
+      env: { JOB_LOG_QUERY_DEFAULT_LIMIT: '100', JOB_LOG_QUERY_MAX_LIMIT: '100' },
+    },
+    {
+      name: 'JOB_LOG_STORE_RETRY_DELAY_MS equal to JOB_LOG_STORE_RETRY_MAX_DELAY_MS',
+      env: { JOB_LOG_STORE_RETRY_DELAY_MS: '1000', JOB_LOG_STORE_RETRY_MAX_DELAY_MS: '1000' },
+    },
+    {
+      name: 'JOB_LOG_WRITER_LEASE_MS just above JOB_LOG_STORE_RETRY_MAX_DELAY_MS',
+      env: { JOB_LOG_WRITER_LEASE_MS: '30001', JOB_LOG_STORE_RETRY_MAX_DELAY_MS: '30000' },
+    },
+  ])('accepts $name', ({ env }) => {
+    expect(parser.parse({ env: { ...ENV, ...env } }).ok).toBe(true);
+  });
+
+  it('accepts an https CLICKHOUSE_URL', () => {
+    const url = 'https://jobqueue:secret@clickhouse.example.com:8443/jobqueue';
+
+    expect(parser.parse({ env: { ...ENV, CLICKHOUSE_URL: url } })).toMatchObject({
+      ok: true,
+      config: { clickhouseUrl: url },
+    });
+  });
+
+  it.each([undefined, 'postgresql://localhost:5432/jobqueue', 'not a url'])(
+    'requires an http or https CLICKHOUSE_URL: %s',
+    (value) => {
+      const result = parser.parse({ env: { ...ENV, CLICKHOUSE_URL: value } });
+
+      expect(result.ok ? '' : result.problems).toContain('CLICKHOUSE_URL');
+    },
+  );
 
   it('reads the configured maximum of jobs per bulk', () => {
     expect(parser.parse({ env: { ...ENV, JOB_SERVICE_BULK_MAX_JOBS: '25' } })).toMatchObject({

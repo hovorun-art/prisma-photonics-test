@@ -25,6 +25,7 @@ export const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<ErrorCode, HttpStatus>> 
   QUEUE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
   // Thrown only inside job-execution-service; the row keeps the table complete.
   JOB_SERVICE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
+  LOG_STORE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
   INTERNAL_ERROR: HttpStatus.INTERNAL_SERVER_ERROR,
 };
 

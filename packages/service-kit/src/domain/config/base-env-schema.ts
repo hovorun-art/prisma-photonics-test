@@ -11,6 +11,7 @@ export type BaseEnvShape<TPortVariable extends string = string> = {
   LOG_LEVEL: z.ZodDefault<z.ZodEnum<{ [K in LogLevel]: K }>>;
   REDIS_URL: z.ZodURL;
   INTERNAL_SERVICE_TOKEN: z.ZodString;
+  JOB_LOG_STREAM_MAX_LENGTH: z.ZodDefault<z.ZodCoercedNumber>;
 } & Record<TPortVariable, z.ZodCoercedNumber>;
 
 /** A parsed environment: what `BaseEnvShape` yields (spelled out, since inference stops at a generic key). */
@@ -19,6 +20,7 @@ export type BaseEnv<TPortVariable extends string = string> = {
   LOG_LEVEL: LogLevel;
   REDIS_URL: string;
   INTERNAL_SERVICE_TOKEN: string;
+  JOB_LOG_STREAM_MAX_LENGTH: number;
 } & Record<TPortVariable, number>;
 
 export interface BaseEnvSchema<TPortVariable extends string = string> {

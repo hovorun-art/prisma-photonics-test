@@ -47,5 +47,17 @@ export {
   WebhookJobPayload,
   WebhookJobResult,
 } from './job.js';
+export {
+  JOB_LOG_LEVELS,
+  JOB_LOG_ROUTE,
+  JOB_LOG_STREAM_NAME,
+  JobLogCursor,
+  JobLogEntry,
+  JobLogLevel,
+  JobLogSource,
+  JobLogStreamMessage,
+  QueryJobLogRequest,
+  QueryJobLogResponse,
+} from './job-log.js';
 export { JOB_QUEUE_NAME, JobQueueAttempt, JobQueueEntryId, JobQueueMessage } from './job-queue.js';
 export { QueryStatsRequest, QueueStats, STATS_ROUTE } from './queue-stats.js';

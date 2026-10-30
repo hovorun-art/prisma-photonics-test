@@ -197,8 +197,9 @@ like the jobs list.
 
 | Variable | Default | Used by |
 |---|---|---|
-| `CLICKHOUSE_URL` | `http://localhost:8123` (compose: `http://clickhouse:8123`) | job-service |
-| `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB` | `jobqueue` | job-service |
+| `CLICKHOUSE_URL` (credentials and database in the URL, like `DATABASE_URL`) | `http://jobqueue:jobqueue@localhost:8123/jobqueue` (compose: host `clickhouse`) | job-service |
+| `CLICKHOUSE_USER`, `CLICKHOUSE_PASSWORD`, `CLICKHOUSE_DB`, `CLICKHOUSE_HTTP_PORT` | `jobqueue` / 8123 | the `clickhouse` container (compose) |
+| `JOB_LOG_WRITER_LEASE_MS` | 60000 (above the retry maximum) | job-service |
 | `JOB_LOG_RETENTION_DAYS` | 30 | job-service |
 | `JOB_LOG_QUERY_DEFAULT_LIMIT` / `JOB_LOG_QUERY_MAX_LIMIT` | 100 / 1000 | job-service |
 | `JOB_LOG_BATCH_SIZE` / `JOB_LOG_FLUSH_INTERVAL_MS` | 1000 / 1000 | job-service |

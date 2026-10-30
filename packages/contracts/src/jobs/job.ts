@@ -271,7 +271,7 @@ export type JobIdParams = z.infer<typeof JobIdParams>;
  * for one occurrence and an array for several, so both become one list without duplicates. As a
  * leading transform it leaves the docs to the list schema piped after it.
  */
-const RepeatedQueryParam = z.transform((value: unknown) => [...new Set([value].flat())]);
+export const RepeatedQueryParam = z.transform((value: unknown) => [...new Set([value].flat())]);
 
 /**
  * Query string of `GET /v1/jobs`. Without `limit` job-service uses its configured default page

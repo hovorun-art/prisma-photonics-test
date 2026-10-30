@@ -22,6 +22,8 @@ export const ERROR_CODES = [
   'QUEUE_UNAVAILABLE',
   /** job-execution-service could not reach job-service (network error, timeout or 5xx). */
   'JOB_SERVICE_UNAVAILABLE',
+  /** The job log store could not be reached; the job itself and its other routes are unaffected. */
+  'LOG_STORE_UNAVAILABLE',
   /** An unexpected failure; details are logged, not returned. */
   'INTERNAL_ERROR',
 ] as const;

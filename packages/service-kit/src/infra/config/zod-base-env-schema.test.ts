@@ -23,8 +23,33 @@ describe('ZodBaseEnvSchema', () => {
       redisUrl: 'redis://localhost:6379',
       port: 3000,
       internalServiceToken: 'a-long-random-token',
+      jobLogStreamMaxLength: 100000,
     });
   });
+
+  it('reads the configured maximum length of the job log stream', () => {
+    const { config } = base.toConfig({
+      env: schema.parse({ ...ENV, JOB_LOG_STREAM_MAX_LENGTH: '5000' }),
+    });
+
+    expect(config.jobLogStreamMaxLength).toBe(5000);
+  });
+
+  it('accepts a job log stream maximum length of 1', () => {
+    const { config } = base.toConfig({
+      env: schema.parse({ ...ENV, JOB_LOG_STREAM_MAX_LENGTH: '1' }),
+    });
+
+    expect(config.jobLogStreamMaxLength).toBe(1);
+  });
+
+  // An empty value (`JOB_LOG_STREAM_MAX_LENGTH=` in a .env) is a mistake, not "use the default".
+  it.each(['0', '-1', '1.5', 'many', ''])(
+    'rejects a job log stream maximum length of %j',
+    (value) => {
+      expect(schema.safeParse({ ...ENV, JOB_LOG_STREAM_MAX_LENGTH: value }).success).toBe(false);
+    },
+  );
 
   it('defaults the environment from its params and the log level to info', () => {
     const production = new ZodBaseEnvSchema({

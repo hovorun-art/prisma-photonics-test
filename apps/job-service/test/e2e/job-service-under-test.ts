@@ -186,6 +186,8 @@ export class JobServiceUnderTest implements Closable {
         DATABASE_URL: postgres.getConnectionUri(),
         // Never connected to: the queue and the Redis connection are mocked.
         REDIS_URL: 'redis://127.0.0.1:1',
+        // Never connected to until the job log module is wired; group 4 points it at a container.
+        CLICKHOUSE_URL: 'http://127.0.0.1:1',
         JOB_SERVICE_QUERY_DEFAULT_LIMIT: String(TEST_CONFIG.queryDefaultLimit),
         JOB_SERVICE_QUERY_MAX_LIMIT: String(TEST_CONFIG.queryMaxLimit),
         JOB_SERVICE_BODY_LIMIT_BYTES: String(TEST_CONFIG.bodyLimitBytes),

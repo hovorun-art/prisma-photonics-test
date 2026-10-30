@@ -9,6 +9,9 @@ import type {
   ToConfigBaseEnvSchemaResponse,
 } from '../../domain/config/base-env-schema.js';
 
+/** Entries the job log stream keeps: minutes of a log store outage at high load. */
+const DEFAULT_JOB_LOG_STREAM_MAX_LENGTH = 100_000;
+
 export interface ZodBaseEnvSchemaParams<TPortVariable extends string> {
   /** Name of the variable holding the service's HTTP port (e.g. `JOB_SERVICE_PORT`). */
   portVariable: TPortVariable;
@@ -17,8 +20,8 @@ export interface ZodBaseEnvSchemaParams<TPortVariable extends string> {
 }
 
 /**
- * `NODE_ENV`, `LOG_LEVEL`, `REDIS_URL`, `INTERNAL_SERVICE_TOKEN` and the port variable as one Zod
- * object.
+ * `NODE_ENV`, `LOG_LEVEL`, `REDIS_URL`, `INTERNAL_SERVICE_TOKEN`, `JOB_LOG_STREAM_MAX_LENGTH` and the
+ * port variable as one Zod object.
  */
 export class ZodBaseEnvSchema<
   TPortVariable extends string,
@@ -33,6 +36,11 @@ export class ZodBaseEnvSchema<
       LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
       REDIS_URL: z.url({ protocol: /^rediss?$/ }),
       INTERNAL_SERVICE_TOKEN: z.string().min(1, 'must be a non-empty service token'),
+      JOB_LOG_STREAM_MAX_LENGTH: z.coerce
+        .number()
+        .int()
+        .positive()
+        .default(DEFAULT_JOB_LOG_STREAM_MAX_LENGTH),
       [this.p.portVariable]: port,
     } as BaseEnvShape<TPortVariable>;
     return { schema: z.object(shape) };
@@ -46,6 +54,7 @@ export class ZodBaseEnvSchema<
         redisUrl: req.env.REDIS_URL,
         port: req.env[this.p.portVariable],
         internalServiceToken: req.env.INTERNAL_SERVICE_TOKEN,
+        jobLogStreamMaxLength: req.env.JOB_LOG_STREAM_MAX_LENGTH,
       },
     };
   }
