@@ -144,14 +144,27 @@ export class JobLogStreamDestination implements LogDestination, Closable {
     const metadata: Record<string, unknown> = {};
     for (const [key, value] of Object.entries(fields)) {
       if (NON_METADATA_FIELDS.has(key)) continue;
-      metadata[key] = key === 'err' ? this.withoutStack(value) : value;
+      if (key !== 'err') {
+        metadata[key] = value;
+        continue;
+      }
+      const err = this.errorKind(value);
+      if (err !== undefined) metadata[key] = err;
     }
     return metadata;
   }
 
-  private withoutStack(err: unknown): unknown {
-    if (typeof err !== 'object' || err === null || Array.isArray(err)) return err;
-    const { stack: _stack, ...rest } = err as Record<string, unknown>;
-    return rest;
+  /**
+   * An error keeps only its type and code: its message and stack can carry internal details (a
+   * host, a path), and the full error stays in the service's own log. An error that is only a
+   * message is left out.
+   */
+  private errorKind(err: unknown): Record<string, unknown> | undefined {
+    if (typeof err !== 'object' || err === null || Array.isArray(err)) return undefined;
+    const { type, code } = err as Record<string, unknown>;
+    return {
+      ...(type === undefined ? {} : { type }),
+      ...(code === undefined ? {} : { code }),
+    };
   }
 }

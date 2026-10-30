@@ -148,15 +148,27 @@ describe('JobLogStreamDestination', () => {
     expect(JSON.parse(call?.[0].data ?? '{}')).toEqual(expect.objectContaining({ message: '' }));
   });
 
-  it('passes an err that is a string through unchanged', () => {
+  it('drops an err that is only a message', () => {
     f.random.uuid.mockReturnValueOnce({ value: ENTRY_ID });
     f.redis.append.mockResolvedValueOnce({});
 
     f.destination.write(f.line({ level: 50, msg: 'm', jobId: JOB_ID, err: 'plain failure' }));
 
     const [call] = f.redis.append.mock.calls;
+    expect(JSON.parse(call?.[0].data ?? '{}')).toEqual(expect.objectContaining({ metadata: {} }));
+  });
+
+  it('keeps only the type of an err without a code', () => {
+    f.random.uuid.mockReturnValueOnce({ value: ENTRY_ID });
+    f.redis.append.mockResolvedValueOnce({});
+
+    f.destination.write(
+      f.line({ level: 50, msg: 'm', jobId: JOB_ID, err: { type: 'Error', message: 'redis:6379' } }),
+    );
+
+    const [call] = f.redis.append.mock.calls;
     expect(JSON.parse(call?.[0].data ?? '{}')).toEqual(
-      expect.objectContaining({ metadata: { err: 'plain failure' } }),
+      expect.objectContaining({ metadata: { err: { type: 'Error' } } }),
     );
   });
 
@@ -170,7 +182,12 @@ describe('JobLogStreamDestination', () => {
         msg: 'Request failed',
         jobId: JOB_ID,
         req: { headers: { authorization: '[Redacted]' } },
-        err: { type: 'Error', message: 'boom', stack: 'Error: boom\n    at secret.ts:1' },
+        err: {
+          type: 'JobQueueUnavailableError',
+          code: 'QUEUE_UNAVAILABLE',
+          message: 'connect ECONNREFUSED redis-internal:6379',
+          stack: 'Error: boom\n    at secret.ts:1',
+        },
       }),
     );
 
@@ -178,9 +195,10 @@ describe('JobLogStreamDestination', () => {
     const entry = JSON.parse(call?.[0].data ?? '{}') as { metadata: Record<string, unknown> };
     expect(entry.metadata).toEqual({
       req: { headers: { authorization: '[Redacted]' } },
-      err: { type: 'Error', message: 'boom' },
+      err: { type: 'JobQueueUnavailableError', code: 'QUEUE_UNAVAILABLE' },
     });
     expect(call?.[0].data).not.toContain('secret.ts');
+    expect(call?.[0].data).not.toContain('redis-internal');
   });
 
   it('Entry cannot be sent', async () => {

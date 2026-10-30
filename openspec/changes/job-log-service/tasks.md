@@ -41,6 +41,7 @@ Owns: `packages/service-kit/src/domain/job-log/**`, `packages/service-kit/src/in
 - [x] 2.3 Write a failing integration test `job-log-stream-destination.int.test.ts` against real Redis (Testcontainers): written lines appear in the stream in order; with a small max length the stream stays near it; a stopped Redis makes `write` return without throwing. See it fail, then make it pass
 - [x] 2.4 Write a failing test in `logging.module.test.ts`: with `jobLog` set, an info line goes to both the main destination and `jobLog`, a debug line only to the main one, and redaction applies to both; implement the `pino.multistream` option in `LoggingModule.forRoot` (pretty stream in development) and export the destination from `index.ts`; verify the test passes
 - [x] 2.5 Run the `test-case-reviewer` subagent on service-kit unit tests (`src/infra/job-log/job-log-stream-destination.test.ts`, `src/app/logging/logging.module.test.ts`) and integration tests (`src/infra/job-log/job-log-stream-destination.int.test.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 2.6 Write a failing test in `job-log-stream-destination.test.ts` named after "Secrets and stacks stay out of the entry": an `err` with `type`, `message`, `code` and `stack` keeps only `type` and `code` in the entry's metadata (decided after group 2 was committed); change the destination to match; verify the service-kit unit tests pass. Committed on its own
 
 ## 3. job-service: ClickHouse store, stream reader and writer
 

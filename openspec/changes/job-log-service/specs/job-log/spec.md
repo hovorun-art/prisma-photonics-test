@@ -53,8 +53,8 @@ worker instance that wrote them.
 ### Requirement: Job log entries come from the services' job-related log lines
 Every log line a service writes at info level or above that names a job SHALL also become an entry
 in that job's log, with the same message and level (`warn` shown as `warning`). The line's other
-fields SHALL become the entry's metadata after secrets are redacted, without error stack traces.
-Lines below info level SHALL NOT become entries.
+fields SHALL become the entry's metadata after secrets are redacted; an error keeps only its type
+and code. Lines below info level SHALL NOT become entries.
 
 #### Scenario: Log line becomes an entry
 - **WHEN** a service writes a warning log line naming a job
@@ -65,8 +65,8 @@ Lines below info level SHALL NOT become entries.
 - **THEN** the job's log has no entry for it
 
 #### Scenario: Secrets and stacks stay out of the entry
-- **WHEN** a log line naming a job carries a field that the log redaction covers and an error with a stack trace
-- **THEN** the entry's metadata shows the field redacted and the error without its stack trace
+- **WHEN** a log line naming a job carries a field that the log redaction covers and an error with a message, a code and a stack trace
+- **THEN** the entry's metadata shows the field redacted and the error with only its type and code
 
 ### Requirement: A log entry describes one step
 Each entry SHALL have an id, the job id, the attempt number (absent for steps outside an attempt), a

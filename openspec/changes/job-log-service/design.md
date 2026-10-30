@@ -61,7 +61,8 @@ already applied; nothing is logged twice in code.
 
 `JobLogStreamDestination` (`packages/service-kit/src/infra/job-log/`, implements `LogDestination`):
 - `write(line)` is synchronous for pino: it parses the line, ignores it without `jobId`, maps the
-  level (30 → `info`, 40 → `warning`, 50/60 → `error`), drops `err.stack`, and builds the stream
+  level (30 → `info`, 40 → `warning`, 50/60 → `error`), reduces `err` to its `type` and `code`
+  (messages can carry internal details such as a host; decisions.md), and builds the stream
   message: `id` (from the kernel `Random` port), `jobId`, `attempt?`, `level`, `message` (`msg`),
   `metadata` (the remaining fields minus pino's own `level`, `time`, `pid`, `hostname`, `msg`,
   `jobId`, `attempt`, `instanceId`), `ts` (pino `time`, ms), `source` (`p.source`) and
@@ -180,7 +181,7 @@ Existing lines already cover some steps. Lines to add or adjust (messages are th
 - job-service: `Job submitted` (no attempt) on create and per bulk item; `Attempt queued`
   (attempt) after enqueue; `Job stays pending: it could not be queued` (warn, exists);
   `Attempt started` on the accepted `processing` report; `Job completed`; `Attempt failed, retry
-  queued` (warn, `code`, `message`); `Job failed for good` (error, `code`, `message`).
+  scheduled` (warn, `code`, `message`); `Job failed for good` (error, `code`, `message`).
 - job-execution-service: `Attempt picked up` (with `instanceId` from the base); `Handler started`;
   `Handler finished` (`durationMs`, from the `Clock` port); `job-service unavailable, retrying`
   (warn, exists); `Skipped: job is no longer pending` (info, exists).
