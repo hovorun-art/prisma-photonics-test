@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 
+import { createClient, type ClickHouseClient } from '@clickhouse/client';
 import {
   ErrorBody,
   FINISHED_JOB_STATUSES,
@@ -8,6 +9,7 @@ import {
   INTERNAL_JOBS_ROUTE,
   JOBS_BULK_ROUTE,
   JOBS_ROUTE,
+  JOB_LOG_ROUTE,
   Job,
   type JobStatus,
   type JobType,
@@ -21,13 +23,18 @@ import { REDIS_CONNECTION, type RedisConnection } from '@job-queue/service-kit';
 import { CONTAINER_IMAGES, PrismaMigrateDeploy } from '@job-queue/test-support';
 import type { INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
+import { ClickHouseContainer, type StartedClickHouseContainer } from '@testcontainers/clickhouse';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { expect } from 'vitest';
 import { type DeepMockProxy, mockDeep, mockReset } from 'vitest-mock-extended';
 
 import { AppModule, type JobLogDestination } from '../../src/app/app.module.js';
 import { JOB_LOG_SCHEMA, type JobLogSchema } from '../../src/domain/job-log/job-log-schema.js';
-import { JOB_LOG_STORE, type JobLogStore } from '../../src/domain/job-log/job-log-store.js';
+import {
+  JOB_LOG_STORE,
+  type JobLogStore,
+  type PositionedJobLogEntry,
+} from '../../src/domain/job-log/job-log-store.js';
 import { JOB_LOG_WRITER, type JobLogWriter } from '../../src/domain/job-log/job-log-writer.js';
 import { JOB_QUEUE, type JobQueue } from '../../src/domain/jobs/job-queue.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../src/domain/jobs/job-repository.js';
@@ -42,6 +49,8 @@ export const TEST_CONFIG = {
   serviceToken: 'e2e-service-token',
   queryDefaultLimit: 3,
   queryMaxLimit: 10,
+  jobLogQueryDefaultLimit: 4,
+  jobLogQueryMaxLimit: 6,
   /** Above the largest valid email body, so only the oversized-body tests hit it. */
   bodyLimitBytes: 32_768,
   bulkMaxJobs: 3,
@@ -121,6 +130,12 @@ export interface CallRequest {
   authorization?: string | null;
 }
 
+export interface JobLogRequest {
+  id: string;
+  /** Query parameters as a client builds them, repeatable. */
+  params?: [string, string][];
+}
+
 export interface ReportRequest extends CallRequest {
   /** A string is sent as it is, so malformed JSON can be sent too. */
   body: unknown;
@@ -150,8 +165,20 @@ type TypedFields = Job extends infer J
     : never
   : never;
 
+export interface StartRequest {
+  /** Run against a real ClickHouse (a Testcontainer) instead of mocks of the job log store. */
+  realJobLogStore?: boolean;
+}
+
+/** The ClickHouse side of an app started with `realJobLogStore`. */
+interface RealJobLogStore {
+  container: StartedClickHouseContainer;
+  client: ClickHouseClient;
+}
+
 interface JobServiceUnderTestDeps {
   postgres: StartedPostgreSqlContainer;
+  jobLogStore: RealJobLogStore | null;
   app: INestApplication;
   baseUrl: string;
   queue: DeepMockProxy<JobQueue>;
@@ -175,7 +202,10 @@ export class JobServiceUnderTest implements Closable {
     this.redis = d.redis;
   }
 
-  static async start(): Promise<JobServiceUnderTest> {
+  static async start(req: StartRequest = {}): Promise<JobServiceUnderTest> {
+    const clickhouse = req.realJobLogStore
+      ? await new ClickHouseContainer(CONTAINER_IMAGES.clickhouse).start()
+      : null;
     const postgres = await new PostgreSqlContainer(CONTAINER_IMAGES.postgres).start();
     await new PrismaMigrateDeploy({ appDir: JOB_SERVICE_DIR }).migrate({
       databaseUrl: postgres.getConnectionUri(),
@@ -189,10 +219,12 @@ export class JobServiceUnderTest implements Closable {
         DATABASE_URL: postgres.getConnectionUri(),
         // Never connected to: the queue and the Redis connection are mocked.
         REDIS_URL: 'redis://127.0.0.1:1',
-        // Never connected to until the job log module is wired; group 4 points it at a container.
-        CLICKHOUSE_URL: 'http://127.0.0.1:1',
+        // Never connected to unless the test asks for a real job log store.
+        CLICKHOUSE_URL: clickhouse?.getConnectionUrl() ?? 'http://127.0.0.1:1',
         JOB_SERVICE_QUERY_DEFAULT_LIMIT: String(TEST_CONFIG.queryDefaultLimit),
         JOB_SERVICE_QUERY_MAX_LIMIT: String(TEST_CONFIG.queryMaxLimit),
+        JOB_LOG_QUERY_DEFAULT_LIMIT: String(TEST_CONFIG.jobLogQueryDefaultLimit),
+        JOB_LOG_QUERY_MAX_LIMIT: String(TEST_CONFIG.jobLogQueryMaxLimit),
         JOB_SERVICE_BODY_LIMIT_BYTES: String(TEST_CONFIG.bodyLimitBytes),
         JOB_SERVICE_BULK_MAX_JOBS: String(TEST_CONFIG.bulkMaxJobs),
         JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES: String(TEST_CONFIG.statsRecentWindowMinutes),
@@ -204,7 +236,7 @@ export class JobServiceUnderTest implements Closable {
     if (!parsed.ok) throw new Error(parsed.problems);
     const queue = mockDeep<JobQueue>();
     const redis = mockDeep<RedisConnection>();
-    const moduleRef = await Test.createTestingModule({
+    let builder = Test.createTestingModule({
       imports: [
         AppModule.forRoot({
           config: parsed.config,
@@ -212,21 +244,36 @@ export class JobServiceUnderTest implements Closable {
         }),
       ],
     })
-      .overrideProvider(JOB_LOG_SCHEMA)
-      .useValue(mockDeep<JobLogSchema>())
-      .overrideProvider(JOB_LOG_STORE)
-      .useValue(mockDeep<JobLogStore>())
       .overrideProvider(JOB_LOG_WRITER)
       .useValue(mockDeep<JobLogWriter>())
       .overrideProvider(JOB_QUEUE)
       .useValue(queue)
       .overrideProvider(REDIS_CONNECTION)
-      .useValue(redis)
-      .compile();
+      .useValue(redis);
+    if (clickhouse === null) {
+      builder = builder
+        .overrideProvider(JOB_LOG_SCHEMA)
+        .useValue(mockDeep<JobLogSchema>())
+        .overrideProvider(JOB_LOG_STORE)
+        .useValue(mockDeep<JobLogStore>());
+    }
+    const moduleRef = await builder.compile();
     const app = moduleRef.createNestApplication({ logger: false });
     for (const step of JOB_SERVICE_SETUP_STEPS) step.apply({ app });
     await app.listen(0, '127.0.0.1');
-    return new JobServiceUnderTest({ postgres, app, baseUrl: await app.getUrl(), queue, redis });
+    // The writer is mocked, so it does not apply the schema: the test does, once.
+    if (clickhouse !== null) await app.get<JobLogSchema>(JOB_LOG_SCHEMA).apply();
+    return new JobServiceUnderTest({
+      postgres,
+      jobLogStore:
+        clickhouse === null
+          ? null
+          : { container: clickhouse, client: createClient({ url: clickhouse.getConnectionUrl() }) },
+      app,
+      baseUrl: await app.getUrl(),
+      queue,
+      redis,
+    });
   }
 
   /** Before each test: no jobs, and mocks that remember no calls and answer nothing. */
@@ -234,12 +281,15 @@ export class JobServiceUnderTest implements Closable {
     mockReset(this.queue);
     mockReset(this.redis);
     await this.app.get(PrismaDatabase).job.deleteMany();
+    await this.d.jobLogStore?.client.command({ query: 'TRUNCATE TABLE job_log' });
   }
 
   /** Closes the app (as a shutdown would), then removes its database. */
   async close(): Promise<CloseClosableResponse> {
     await this.app.close();
     await this.d.postgres.stop();
+    await this.d.jobLogStore?.client.close();
+    await this.d.jobLogStore?.container.stop();
     return {};
   }
 
@@ -286,6 +336,13 @@ export class JobServiceUnderTest implements Closable {
 
   remove(id: string): Promise<Response> {
     return fetch(this.url(`${JOBS_ROUTE}/${id}`), { method: 'DELETE' });
+  }
+
+  /** `GET /v1/jobs/:id/logs` with the query parameters as a client builds them (repeatable). */
+  jobLog(req: JobLogRequest): Promise<Response> {
+    const search = new URLSearchParams(req.params).toString();
+    const path = JOB_LOG_ROUTE.replace(':id', req.id);
+    return fetch(this.url(search === '' ? path : `${path}?${search}`));
   }
 
   async total(): Promise<number> {
@@ -358,6 +415,11 @@ export class JobServiceUnderTest implements Closable {
   }
 
   // --- Data in states no route can create in one step ------------------------------------------
+
+  /** Stores log entries through the app's own job log store (needs `realJobLogStore`). */
+  async seedLog(entries: PositionedJobLogEntry[]): Promise<void> {
+    await this.app.get<JobLogStore>(JOB_LOG_STORE).insert({ entries });
+  }
 
   /** Stores a job in the given state through the app's own repository. */
   async seed({ status, ...options }: SeedRequest): Promise<Job> {

@@ -123,6 +123,24 @@ describe('job-service health, docs and shutdown', () => {
       expect(refs.filter((name) => !Object.hasOwn(components?.schemas ?? {}, name))).toEqual([]);
     });
 
+    it('Log route in the API docs', async () => {
+      const { paths, components } = await docs();
+      const log = paths[`${JOBS_ROUTE}/{id}/logs`]?.get;
+      const schema = log?.responses['200']?.content?.['application/json']?.schema as
+        { $ref?: string } | undefined;
+      const name = schema?.$ref?.replace('#/components/schemas/', '') ?? '';
+      const resolved = components?.schemas?.[name] as
+        { properties: Record<string, unknown> } | undefined;
+
+      expect(log?.parameters?.map((parameter) => parameter.name).sort()).toEqual([
+        'after',
+        'id',
+        'level',
+        'limit',
+      ]);
+      expect(Object.keys(resolved?.properties ?? {}).sort()).toEqual(['items', 'nextCursor']);
+    });
+
     it('Docs list the statistics route', async () => {
       const { paths, components } = await docs();
       const stats = paths[STATS_ROUTE]?.get;
