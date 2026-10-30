@@ -105,6 +105,8 @@ export interface SeedRequest {
   type?: JobType;
   attempts?: number;
   maxAttempts?: number;
+  /** When a finished job finished (ISO 8601); defaults to now. */
+  completedAt?: string;
 }
 
 export interface CallRequest {
@@ -254,13 +256,17 @@ export class JobServiceUnderTest implements Closable {
     return QueryJobsResponse.parse(await (await fetch(this.url(JOBS_ROUTE))).json()).total;
   }
 
-  /** `GET /v1/stats`, sent without any `authorization` header. */
-  statsResponse(): Promise<Response> {
-    return fetch(this.url(STATS_ROUTE));
+  /**
+   * `GET /v1/stats`, sent without any `authorization` header, with the query parameters as a client
+   * builds them (`[['status', 'failed'], ...]`, repeatable).
+   */
+  statsResponse(params: [string, string][] = []): Promise<Response> {
+    const search = new URLSearchParams(params).toString();
+    return fetch(this.url(search === '' ? STATS_ROUTE : `${STATS_ROUTE}?${search}`));
   }
 
-  async stats(): Promise<QueueStats> {
-    const response = await this.statsResponse();
+  async stats(params: [string, string][] = []): Promise<QueueStats> {
+    const response = await this.statsResponse(params);
     expect(response.status).toBe(200);
     return QueueStats.parse(await response.json());
   }
@@ -334,7 +340,7 @@ export class JobServiceUnderTest implements Closable {
         error: null,
         scheduledAt: status === 'scheduled' ? new Date(Date.now() + 3_600_000).toISOString() : null,
         startedAt: notStarted ? null : now,
-        completedAt: finished ? now : null,
+        completedAt: finished ? (options.completedAt ?? now) : null,
       },
     });
     return job;

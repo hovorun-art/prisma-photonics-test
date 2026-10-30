@@ -126,8 +126,25 @@ describe('job-service health, docs and shutdown', () => {
       const resolved = components?.schemas?.[name] as
         { properties: Record<string, { properties?: Record<string, unknown> }> } | undefined;
 
-      expect(stats?.parameters ?? []).toEqual([]);
+      // One optional value per filter, so the parameters are single enums, not lists.
+      const parameter = (name: string): unknown =>
+        stats?.parameters?.find((candidate) => candidate.name === name);
+      expect(stats?.parameters?.map((candidate) => candidate.name).sort()).toEqual([
+        'status',
+        'type',
+      ]);
+      expect(parameter('status')).toMatchObject({
+        in: 'query',
+        required: false,
+        schema: { type: 'string', enum: JobStatus.options },
+      });
+      expect(parameter('type')).toMatchObject({
+        in: 'query',
+        required: false,
+        schema: { type: 'string', enum: JobType.options },
+      });
       expect(Object.keys(resolved?.properties ?? {}).sort()).toEqual([
+        'counts',
         'pending',
         'processing',
         'recent',
@@ -143,6 +160,10 @@ describe('job-service health, docs and shutdown', () => {
         'perMinute',
         'windowMinutes',
       ]);
+      const counts = resolved?.properties.counts?.properties as
+        Record<string, { properties?: Record<string, unknown>; required?: string[] }> | undefined;
+      expect(counts?.status?.required?.toSorted()).toEqual(JobStatus.options.toSorted());
+      expect(counts?.type?.required?.toSorted()).toEqual(JobType.options.toSorted());
     });
 
     it('Docs exclude internal routes', async () => {

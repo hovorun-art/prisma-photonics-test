@@ -157,4 +157,42 @@ describe('PrismaJobCounts against Postgres', () => {
 
     expect(await counts.count(WINDOWS)).toEqual(ZERO);
   });
+
+  describe('countByStatusAndType', () => {
+    /** Cells in a stable order, since `GROUP BY` returns rows in no defined order. */
+    const sortedCells = async () =>
+      (await counts.countByStatusAndType()).cells.toSorted((a, b) =>
+        `${a.status}|${a.type}`.localeCompare(`${b.status}|${b.type}`),
+      );
+
+    it('has no cells for an empty table', async () => {
+      expect(await counts.countByStatusAndType()).toEqual({ cells: [] });
+    });
+
+    it('Counts without filters: one cell per status and type pair that has jobs', async () => {
+      await store({ status: 'failed', type: 'webhook', completedAt: INSIDE_RECENT_ONLY });
+      await store({ status: 'failed', type: 'webhook', completedAt: INSIDE_RECENT_ONLY });
+      await store({ status: 'completed', completedAt: INSIDE_THROUGHPUT });
+      await store({ status: 'pending' });
+      await store({ status: 'scheduled', type: 'flight_transit' });
+
+      expect(await sortedCells()).toEqual([
+        { status: 'completed', type: 'email', count: 1 },
+        { status: 'failed', type: 'webhook', count: 2 },
+        { status: 'pending', type: 'email', count: 1 },
+        { status: 'scheduled', type: 'flight-transit', count: 1 },
+      ]);
+    });
+
+    it('Old finished jobs are counted, whenever they finished', async () => {
+      await store({ status: 'completed', completedAt: BEFORE_RECENT });
+      await store({ status: 'completed', completedAt: '2020-01-01T00:00:00.000Z' });
+      await store({ status: 'cancelled' });
+
+      expect(await sortedCells()).toEqual([
+        { status: 'cancelled', type: 'email', count: 1 },
+        { status: 'completed', type: 'email', count: 2 },
+      ]);
+    });
+  });
 });

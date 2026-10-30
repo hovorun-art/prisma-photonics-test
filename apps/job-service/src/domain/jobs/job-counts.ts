@@ -1,6 +1,10 @@
-/** Counts of stored jobs, read in one consistent snapshot. */
+import type { JobStatus, JobType } from '@job-queue/contracts';
+
+/** Counts of stored jobs; each method reads one consistent snapshot. */
 export interface JobCounts {
   count(req: CountJobCountsRequest): Promise<CountJobCountsResponse>;
+  /** Every stored job, whenever it was created or finished, counted per status and type pair. */
+  countByStatusAndType(): Promise<CountByStatusAndTypeJobCountsResponse>;
 }
 
 export interface CountJobCountsRequest {
@@ -20,6 +24,11 @@ export interface CountJobCountsResponse {
   recentFailed: number;
   /** Jobs in status completed that finished at or after `throughputSince`. */
   throughputCompleted: number;
+}
+
+/** One cell per status and type pair that has jobs; pairs without jobs are left out. */
+export interface CountByStatusAndTypeJobCountsResponse {
+  cells: { status: JobStatus; type: JobType; count: number }[];
 }
 
 export const JOB_COUNTS = Symbol('JobCounts');
