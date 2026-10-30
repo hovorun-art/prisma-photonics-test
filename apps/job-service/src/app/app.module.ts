@@ -1,4 +1,5 @@
 import {
+  ErrorResponseFilter,
   HealthModule,
   LoggingModule,
   RedisModule,
@@ -9,7 +10,6 @@ import { APP_FILTER, APP_PIPE } from '@nestjs/core';
 import { ZodValidationPipe } from 'nestjs-zod';
 
 import { JOB_SERVICE_CONFIG, type JobServiceConfig } from '../domain/config/job-service-config.js';
-import { ErrorResponseFilter } from './errors/error-response.filter.js';
 import { InternalAccessModule } from './internal-access/internal-access.module.js';
 import { JobsModule } from './jobs/jobs.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';

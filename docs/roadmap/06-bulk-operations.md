@@ -9,7 +9,7 @@ jobs, each with its own status, retries and recovery. API only, no UI.
 | Change | Intent | Depends on |
 |---|---|---|
 | `job-bulk-create` | Bulk submit in job-service (`POST /v1/jobs/bulk`, all or nothing, one transaction and one queue call), an optional `groupId` on every job, and a `groupId` filter on the job query | `job-list-filters-service` |
-| `job-group-service` | A new app with its own Postgres database and API: create a group from an array of jobs (one bulk call tagging them with the group's id), get a group with counts per child status; it polls job-service and is `completed` when every child completed, `failed` when any child failed | `job-bulk-create` |
+| `job-group-service` | A new app with its own Postgres schema and API: create an empty group (the client submits its jobs with the group's id and deletes the still-empty group if that fails), get and list groups with their total, completed and failed counts; it polls job-service and is `completed` when every child completed, `failed` when any child failed or was cancelled | `job-bulk-create` |
 
 No bulk cancel, retry, update or delete, and no cancellation of a group's remaining jobs.
 
@@ -18,5 +18,8 @@ No bulk cancel, retry, update or delete, and no cancellation of a group's remain
 - [x] Limits on items per request; whether bulk submit is all-or-nothing or per item. (Answered in
   `job-bulk-create`: all or nothing; a configured maximum of jobs per request, default 100; one body
   limit for every route, `JOB_SERVICE_BODY_LIMIT_BYTES`, its default raised to 1 MB.)
-- [ ] job-group-service: what happens when the group is stored but the bulk call fails (retry or mark
-  the group failed); polling with several instances and after a restart.
+- [x] job-group-service: what happens when the group is stored but the bulk call fails (retry or mark
+  the group failed); polling with several instances and after a restart. (Answered in
+  `job-group-service`: the group is created empty and the client submits the jobs, then deletes the
+  still-empty group if its submit fails; one instance, whose poll reads the stored running groups
+  again after a restart.)

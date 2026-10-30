@@ -1,0 +1,52 @@
+{
+  "name": "@job-queue/job-group-service",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Job Group context: groups of jobs a client follows as one, with counts and a status polled from job-service; its own Postgres schema",
+  "type": "module",
+  "scripts": {
+    "prebuild": "prisma generate",
+    "build": "tsc -p tsconfig.build.json",
+    "predev": "prisma generate",
+    "dev": "prisma migrate dev && nest start --watch",
+    "start": "node dist/main.js",
+    "pretypecheck": "prisma generate",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --max-warnings 0",
+    "pretest": "prisma generate",
+    "test": "vitest run --passWithNoTests",
+    "test:unit": "vitest run --passWithNoTests --project job-group-service:unit",
+    "test:integration": "vitest run --passWithNoTests --project job-group-service:integration",
+    "test:app-e2e": "vitest run --passWithNoTests --project job-group-service:e2e",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate:deploy": "prisma migrate deploy",
+    "postinstall": "prisma generate"
+  },
+  "dependencies": {
+    "@job-queue/contracts": "*",
+    "@job-queue/kernel": "*",
+    "@job-queue/service-kit": "*",
+    "@nestjs/common": "^11.2.8",
+    "@nestjs/core": "^11.2.8",
+    "@nestjs/platform-express": "^11.2.8",
+    "@nestjs/schedule": "^12.0.2",
+    "@nestjs/swagger": "^11.4.7",
+    "@prisma/adapter-pg": "^7.10.1",
+    "@prisma/client": "^7.10.1",
+    "nestjs-zod": "^5.5.0",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@job-queue/test-support": "*",
+    "@nestjs/cli": "^11.0.24",
+    "@nestjs/testing": "^11.2.8",
+    "@swc/core": "^1.16.20",
+    "@testcontainers/postgresql": "^12.2.1",
+    "pino-pretty": "^13.2.0",
+    "prisma": "^7.10.1",
+    "testcontainers": "^12.2.1",
+    "unplugin-swc": "^2.0.0"
+  }
+}

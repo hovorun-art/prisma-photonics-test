@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 
-import { Controller, Get, Module, type INestApplication } from '@nestjs/common';
+import { Body, Controller, Get, Module, Post, type INestApplication } from '@nestjs/common';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ConfigParser } from '../../domain/config/config-parser.js';
@@ -17,6 +17,12 @@ class PingController {
   @Get()
   ping(): { pong: true } {
     return { pong: true };
+  }
+
+  /** Answers with the body it received, so a test sees whether the body was parsed. */
+  @Post()
+  echo(@Body() body: unknown): { body: unknown } {
+    return { body: body ?? null };
   }
 }
 
@@ -45,7 +51,7 @@ describe('NestServiceBootstrap', () => {
 
   it('writes an invalid configuration to stderr, fails the process and starts nothing', async () => {
     const process = new FakeProcess();
-    const createModule = vi.fn(() => TestAppModule);
+    const createModule = vi.fn();
     const parser: ConfigParser<BootstrapConfig> = {
       parse: () => ({ ok: false, problems: 'REDIS_URL: required' }),
     };
@@ -66,15 +72,16 @@ describe('NestServiceBootstrap', () => {
   it('builds the app from the validated config, runs the setup steps in order, then listens', async () => {
     const order: string[] = [];
     const step = (name: string): ServiceSetupStep<INestApplication> => ({
-      apply: vi.fn(() => {
-        order.push(name);
+      apply: vi.fn().mockImplementationOnce(({ app }: { app: INestApplication }) => {
+        const server = app.getHttpServer() as { listening: boolean };
+        order.push(`${name}${server.listening ? ' after listen' : ''}`);
         return {};
       }),
     });
     const first = step('first');
-    const createModule = vi.fn(() => TestAppModule);
+    const createModule = vi.fn().mockReturnValueOnce(TestAppModule);
     const parser: ConfigParser<BootstrapConfig> = {
-      parse: vi.fn(() => ({ ok: true as const, config: { port: 0 } })),
+      parse: vi.fn().mockReturnValueOnce({ ok: true, config: { port: 0 } }),
     };
 
     const result = await new NestServiceBootstrap(
@@ -125,7 +132,12 @@ describe('NestServiceBootstrap', () => {
 
   it('runs the params shutdown steps before closing', async () => {
     const process = new FakeProcess();
-    const run = vi.fn(() => Promise.resolve({}));
+    let answeredDuringStep = false;
+    let url = '';
+    const run = vi.fn().mockImplementationOnce(async () => {
+      answeredDuringStep = (await fetch(new URL('/ping', url))).ok;
+      return {};
+    });
     const result = await new NestServiceBootstrap(
       { parser: validParser, process },
       {
@@ -139,6 +151,7 @@ describe('NestServiceBootstrap', () => {
     ).start();
     if (!result.started) throw new Error('expected the service to start');
     started.push(result.service);
+    url = result.service.url;
 
     process.emit('SIGINT');
     await vi.waitFor(() => {
@@ -146,5 +159,80 @@ describe('NestServiceBootstrap', () => {
     });
 
     expect(run).toHaveBeenCalledOnce();
+    expect(answeredDuringStep).toBe(true);
+    await expect(fetch(new URL('/ping', url))).rejects.toThrow();
+  });
+
+  it('parses JSON bodies by default and ignores them when the body parser is off', async () => {
+    const start = async (bodyParser: boolean | undefined): Promise<StartedService> => {
+      const result = await new NestServiceBootstrap(
+        { parser: validParser, process: new FakeProcess() },
+        {
+          serviceName: 'a-service',
+          env: {},
+          createModule: () => TestAppModule,
+          setupSteps: [],
+          shutdownSteps: [],
+          host: '127.0.0.1',
+          ...(bodyParser === undefined ? {} : { bodyParser }),
+        },
+      ).start();
+      if (!result.started) throw new Error('expected the service to start');
+      started.push(result.service);
+      return result.service;
+    };
+    const post = async (service: StartedService): Promise<unknown> => {
+      const response = await fetch(new URL('/ping', service.url), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ a: 1 }),
+      });
+      return response.json();
+    };
+
+    expect(await post(await start(undefined))).toEqual({ body: { a: 1 } });
+    expect(await post(await start(false))).toEqual({ body: null });
+  });
+
+  it('rejects the start and listens on nothing when a setup step fails', async () => {
+    const failure = new Error('docs could not be built');
+    const failing: ServiceSetupStep<INestApplication> = {
+      apply: vi.fn().mockImplementationOnce(() => {
+        throw failure;
+      }),
+    };
+
+    await expect(
+      new NestServiceBootstrap(
+        { parser: validParser, process: new FakeProcess() },
+        {
+          serviceName: 'a-service',
+          env: {},
+          createModule: () => TestAppModule,
+          setupSteps: [failing],
+          shutdownSteps: [],
+          host: '127.0.0.1',
+        },
+      ).start(),
+    ).rejects.toBe(failure);
+  });
+
+  it('stops answering once the started service is closed', async () => {
+    const result = await new NestServiceBootstrap(
+      { parser: validParser, process: new FakeProcess() },
+      {
+        serviceName: 'a-service',
+        env: {},
+        createModule: () => TestAppModule,
+        setupSteps: [],
+        shutdownSteps: [],
+        host: '127.0.0.1',
+      },
+    ).start();
+    if (!result.started) throw new Error('expected the service to start');
+
+    await result.service.close();
+
+    await expect(fetch(new URL('/ping', result.service.url))).rejects.toThrow();
   });
 });

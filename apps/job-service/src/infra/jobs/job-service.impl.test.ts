@@ -11,20 +11,22 @@ import { InvalidJobFieldError } from '../../domain/jobs/errors/invalid-job-field
 import { InvalidJobPayloadError } from '../../domain/jobs/errors/invalid-job-payload.error.js';
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
 import { JobQueueUnavailableError } from '../../domain/jobs/errors/job-queue-unavailable.error.js';
-import { QueryLimitExceededError } from '../../domain/jobs/errors/query-limit-exceeded.error.js';
+import { type PageLimit, QueryLimitExceededError } from '@job-queue/kernel';
 import type { JobQueue } from '../../domain/jobs/job-queue.js';
 import type { JobRepository } from '../../domain/jobs/job-repository.js';
 import { JobServiceImpl } from './job-service.impl.js';
 
 const JOB_ID = randomUUID();
 const NOW = '2026-10-29T12:00:00.000Z';
-const PARAMS = { queryDefaultLimit: 20, queryMaxLimit: 100, bulkMaxJobs: 3 };
+const PARAMS = { bulkMaxJobs: 3 };
+const PAGE_SIZE = 20;
 
 describe('JobServiceImpl', () => {
   let repository: DeepMockProxy<JobRepository>;
   let queue: DeepMockProxy<JobQueue>;
   let clock: DeepMockProxy<Clock>;
   let logger: DeepMockProxy<Pick<LoggerService, 'warn'>>;
+  let pageLimit: DeepMockProxy<PageLimit>;
   let service: JobServiceImpl;
 
   const storedJob = (overrides: Partial<EmailJob> = {}): EmailJob => ({
@@ -51,6 +53,7 @@ describe('JobServiceImpl', () => {
     queue = mockDeep<JobQueue>();
     clock = mockDeep<Clock>();
     logger = mockDeep<Pick<LoggerService, 'warn'>>();
+    pageLimit = mockDeep<PageLimit>();
     clock.now.mockReturnValueOnce({ now: new Date(NOW) });
     repository.create.mockImplementationOnce((req) =>
       Promise.resolve({
@@ -63,7 +66,7 @@ describe('JobServiceImpl', () => {
         },
       }),
     );
-    service = new JobServiceImpl({ repository, queue, clock, logger }, PARAMS);
+    service = new JobServiceImpl({ repository, queue, clock, logger, pageLimit }, PARAMS);
   });
 
   describe('create', () => {
@@ -370,18 +373,23 @@ describe('JobServiceImpl', () => {
     });
 
     it('passes the requested page through', async () => {
+      pageLimit.resolve.mockReturnValueOnce({ limit: 2 });
+
       await expect(service.query({ limit: 2, offset: 1 })).resolves.toEqual({
         items: [storedJob()],
         total: 1,
       });
+      expect(pageLimit.resolve).toHaveBeenCalledExactlyOnceWith({ limit: 2 });
       expect(repository.query).toHaveBeenCalledExactlyOnceWith({ limit: 2, offset: 1 });
     });
 
     it('passes the status and type filters through with the resolved page', async () => {
+      pageLimit.resolve.mockReturnValueOnce({ limit: PAGE_SIZE });
+
       await service.query({ offset: 3, statuses: ['failed', 'cancelled'], types: ['webhook'] });
 
       expect(repository.query).toHaveBeenCalledExactlyOnceWith({
-        limit: PARAMS.queryDefaultLimit,
+        limit: PAGE_SIZE,
         offset: 3,
         statuses: ['failed', 'cancelled'],
         types: ['webhook'],
@@ -390,11 +398,12 @@ describe('JobServiceImpl', () => {
 
     it('Group filter combines with status and type', async () => {
       const groupId = randomUUID();
+      pageLimit.resolve.mockReturnValueOnce({ limit: PAGE_SIZE });
 
       await service.query({ offset: 0, statuses: ['failed'], types: ['email'], groupId });
 
       expect(repository.query).toHaveBeenCalledExactlyOnceWith({
-        limit: PARAMS.queryDefaultLimit,
+        limit: PAGE_SIZE,
         offset: 0,
         statuses: ['failed'],
         types: ['email'],
@@ -402,30 +411,22 @@ describe('JobServiceImpl', () => {
       });
     });
 
-    it('Default page size', async () => {
+    it('Default page size: asks the page limit for the size when no limit is given', async () => {
+      pageLimit.resolve.mockReturnValueOnce({ limit: PAGE_SIZE });
+
       await service.query({ offset: 0 });
 
-      expect(repository.query).toHaveBeenCalledExactlyOnceWith({
-        limit: PARAMS.queryDefaultLimit,
-        offset: 0,
-      });
+      expect(pageLimit.resolve).toHaveBeenCalledExactlyOnceWith({ limit: undefined });
+      expect(repository.query).toHaveBeenCalledExactlyOnceWith({ limit: PAGE_SIZE, offset: 0 });
     });
 
-    it('accepts a limit exactly at the maximum', async () => {
-      await service.query({ limit: PARAMS.queryMaxLimit, offset: 0 });
-
-      expect(repository.query).toHaveBeenCalledExactlyOnceWith({
-        limit: PARAMS.queryMaxLimit,
-        offset: 0,
+    it('Limit above maximum: the page-limit error is passed on and nothing is queried', async () => {
+      const failure = new QueryLimitExceededError({ maxLimit: 100 });
+      pageLimit.resolve.mockImplementationOnce(() => {
+        throw failure;
       });
-    });
 
-    it('Limit above maximum', async () => {
-      await expect(service.query({ limit: PARAMS.queryMaxLimit + 1, offset: 0 })).rejects.toSatisfy(
-        (error) =>
-          error instanceof QueryLimitExceededError &&
-          JSON.stringify(error.details).includes(`"maximum":${PARAMS.queryMaxLimit}`),
-      );
+      await expect(service.query({ limit: 101, offset: 0 })).rejects.toBe(failure);
       expect(repository.query).not.toHaveBeenCalled();
     });
   });

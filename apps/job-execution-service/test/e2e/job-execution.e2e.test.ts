@@ -1,10 +1,13 @@
 import { randomUUID } from 'node:crypto';
 
-import { JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
+import {
+  JobNotFoundError,
+  JobServiceUnavailableError,
+  JobStatusConflictError,
+} from '@job-queue/kernel';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { InvalidJobError } from '../../src/domain/jobs/errors/invalid-job.error.js';
-import { JobServiceUnavailableError } from '../../src/domain/jobs/errors/job-service-unavailable.error.js';
 import {
   INSTANCE_ID,
   JobExecutionServiceUnderTest,

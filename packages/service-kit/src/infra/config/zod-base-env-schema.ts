@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { LOG_LEVELS, NODE_ENVS, type NodeEnv } from '../../domain/config/base-config.js';
+import type { NodeEnv } from '../../domain/config/base-config.js';
 import type {
   BaseEnvSchema,
   BaseEnvShape,
@@ -8,6 +8,7 @@ import type {
   ToConfigBaseEnvSchemaRequest,
   ToConfigBaseEnvSchemaResponse,
 } from '../../domain/config/base-env-schema.js';
+import { ZodCoreEnvSchema } from './zod-core-env-schema.js';
 
 export interface ZodBaseEnvSchemaParams<TPortVariable extends string> {
   /** Name of the variable holding the service's HTTP port (e.g. `JOB_SERVICE_PORT`). */
@@ -17,8 +18,8 @@ export interface ZodBaseEnvSchemaParams<TPortVariable extends string> {
 }
 
 /**
- * `NODE_ENV`, `LOG_LEVEL`, `REDIS_URL`, `INTERNAL_SERVICE_TOKEN` and the port variable as one Zod
- * object.
+ * The core variables (`ZodCoreEnvSchema`) plus `REDIS_URL` and `INTERNAL_SERVICE_TOKEN`, as one Zod
+ * object: what a backend on the job queue reads.
  */
 export class ZodBaseEnvSchema<
   TPortVariable extends string,
@@ -26,14 +27,10 @@ export class ZodBaseEnvSchema<
   constructor(private readonly p: ZodBaseEnvSchemaParams<TPortVariable>) {}
 
   create(): CreateBaseEnvSchemaResponse<TPortVariable> {
-    const port = z.coerce.number().int().min(0).max(65_535);
-    // The key is only known as a type parameter, so TypeScript widens the computed key.
     const shape = {
-      NODE_ENV: z.enum(NODE_ENVS).default(this.p.defaultNodeEnv),
-      LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
+      ...this.core().create().schema.shape,
       REDIS_URL: z.url({ protocol: /^rediss?$/ }),
       INTERNAL_SERVICE_TOKEN: z.string().min(1, 'must be a non-empty service token'),
-      [this.p.portVariable]: port,
     } as BaseEnvShape<TPortVariable>;
     return { schema: z.object(shape) };
   }
@@ -41,12 +38,14 @@ export class ZodBaseEnvSchema<
   toConfig(req: ToConfigBaseEnvSchemaRequest<TPortVariable>): ToConfigBaseEnvSchemaResponse {
     return {
       config: {
-        nodeEnv: req.env.NODE_ENV,
-        logLevel: req.env.LOG_LEVEL,
+        ...this.core().toConfig({ env: req.env }).config,
         redisUrl: req.env.REDIS_URL,
-        port: req.env[this.p.portVariable],
         internalServiceToken: req.env.INTERNAL_SERVICE_TOKEN,
       },
     };
+  }
+
+  private core(): ZodCoreEnvSchema<TPortVariable> {
+    return new ZodCoreEnvSchema(this.p);
   }
 }

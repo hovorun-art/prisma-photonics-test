@@ -5,17 +5,24 @@ import type {
   ServiceSetupStep,
   StartServiceBootstrapResponse,
 } from '@job-queue/service-kit';
-import { NestServiceBootstrap } from '@job-queue/service-kit';
+import {
+  NestServiceBootstrap,
+  SwaggerApiDocsSetupStep,
+  type SwaggerApiDocsSetupStepParams,
+} from '@job-queue/service-kit';
 import type { DynamicModule, INestApplication, Type } from '@nestjs/common';
 
 import type { JobServiceConfig } from '../../domain/config/job-service-config.js';
 import { ZodJobServiceConfigParser } from '../config/zod-job-service-config-parser.js';
-import {
-  JOB_SERVICE_API_DOCS_PARAMS,
-  SwaggerApiDocsSetupStep,
-} from '../docs/swagger-api-docs-setup-step.js';
 import { RequestBodySetupStep } from '../http/request-body-setup-step.js';
 import { InternalAccessSetupStep } from '../internal-access/internal-access-setup-step.js';
+
+/** How job-service publishes its docs: Swagger UI at `/docs`, the document at `/docs-json`. */
+export const JOB_SERVICE_API_DOCS_PARAMS: SwaggerApiDocsSetupStepParams = {
+  path: 'docs',
+  title: 'job-service',
+  description: 'Job Queue Service API: submit, inspect and manage background jobs.',
+};
 
 /**
  * How job-service's Nest app is set up before it listens, in order: the internal token is checked
