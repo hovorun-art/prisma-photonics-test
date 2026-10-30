@@ -6,9 +6,11 @@ export interface JobQueueConsumer extends Closable {
   start(req: StartJobQueueConsumerRequest): StartJobQueueConsumerResponse;
 }
 
-/** One queue entry: the job and the attempt it was queued for. */
+/** One queue entry: the job, the run and the attempt it was queued for. */
 export interface JobQueueEntry {
   jobId: string;
+  /** The job's run (1, plus one per manual retry); every report of the entry carries it. */
+  run: number;
   attempt: number;
 }
 

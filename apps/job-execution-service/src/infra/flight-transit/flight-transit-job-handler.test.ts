@@ -24,6 +24,7 @@ const JOB: FlightTransitJob = {
   result: null,
   error: null,
   groupId: null,
+  idempotencyKey: null,
   scheduledAt: null,
   startedAt: '2026-10-29T12:00:00.000Z',
   completedAt: null,

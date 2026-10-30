@@ -26,6 +26,11 @@ export const ERROR_CODES = [
   'JOB_GROUP_NOT_FOUND',
   /** The job group cannot be deleted because job-service has jobs with its id; `details.total` holds their number. */
   'JOB_GROUP_NOT_EMPTY',
+  /**
+   * The idempotency key was already used for a different job request; `details.existingJobId`
+   * holds the job the key belongs to, `details.idempotencyKey` the key.
+   */
+  'IDEMPOTENCY_KEY_CONFLICT',
   /** An unexpected failure; details are logged, not returned. */
   'INTERNAL_ERROR',
 ] as const;

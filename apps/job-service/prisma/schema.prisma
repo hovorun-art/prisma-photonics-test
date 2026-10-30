@@ -33,26 +33,30 @@ enum JobStatus {
 
 /// A background job; job-service is the only writer. Timestamps keep milliseconds, like the API.
 model Job {
-  id          String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  type        JobType
-  payload     Json
-  status      JobStatus
+  id                 String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  type               JobType
+  payload            Json
+  status             JobStatus
   /// Higher is more urgent.
-  priority    Int
+  priority           Int
   /// Attempts started so far; counted when an attempt starts.
-  attempts    Int
-  maxAttempts Int       @map("max_attempts")
+  attempts           Int
+  maxAttempts        Int       @map("max_attempts")
   /// 1, plus one per manual retry; queue entry ids carry it, since a retry starts attempts again at 1.
-  run         Int       @default(1)
-  result      Json?
-  error       Json?
+  run                Int       @default(1)
+  result             Json?
+  error              Json?
   /// The group the job was submitted in, as the client gave it; no meaning to job-service.
-  groupId     String?   @map("group_id") @db.Uuid
-  scheduledAt DateTime? @map("scheduled_at") @db.Timestamptz(3)
-  startedAt   DateTime? @map("started_at") @db.Timestamptz(3)
-  completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
-  createdAt   DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
-  updatedAt   DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
+  groupId            String?   @map("group_id") @db.Uuid
+  /// The key the client submitted the job with; unique, so a key holds one job until it is deleted.
+  idempotencyKey     String?   @unique(map: "jobs_idempotency_key_key") @map("idempotency_key") @db.VarChar(255)
+  /// SHA-256 (hex) of the request a keyed job was submitted with: tells a replay from a conflict.
+  requestFingerprint String?   @map("request_fingerprint") @db.Char(64)
+  scheduledAt        DateTime? @map("scheduled_at") @db.Timestamptz(3)
+  startedAt          DateTime? @map("started_at") @db.Timestamptz(3)
+  completedAt        DateTime? @map("completed_at") @db.Timestamptz(3)
+  createdAt          DateTime  @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime  @updatedAt @map("updated_at") @db.Timestamptz(3)
 
   /// The query's order (newest first, id breaks ties so offset paging is stable).
   @@index([createdAt(sort: Desc), id(sort: Desc)], map: "jobs_created_at_id_idx")
@@ -64,5 +68,7 @@ model Job {
   @@index([groupId, createdAt(sort: Desc)], map: "jobs_group_id_created_at_idx")
   /// The statistics' counts of jobs finished within a window.
   @@index([status, completedAt], map: "jobs_status_completed_at_idx")
+  /// The recovery pass: jobs that have been in one status since before an instant.
+  @@index([status, updatedAt], map: "jobs_status_updated_at_idx")
   @@map("jobs")
 }

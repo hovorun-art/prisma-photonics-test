@@ -6,11 +6,27 @@ import type { Job, JobError, JobStatus, JobType } from '@job-queue/contracts';
  * win.
  */
 export interface JobRepository {
+  /** Throws `IdempotencyKeyTakenError` when another job already holds the job's idempotency key. */
   create(req: CreateJobRepositoryRequest): Promise<CreateJobRepositoryResponse>;
-  /** Stores all jobs in one transaction, or none of them; returns them in the order given. */
+  /**
+   * Stores all jobs in one transaction, or none of them; returns them in the order given. Throws
+   * `IdempotencyKeyTakenError` (nothing stored) when another job already holds one of their keys.
+   */
   createMany(req: CreateManyJobRepositoryRequest): Promise<CreateManyJobRepositoryResponse>;
   /** Throws `JobNotFoundError` for an unknown id. */
   get(req: GetJobRepositoryRequest): Promise<GetJobRepositoryResponse>;
+  /** The jobs holding any of the keys, with the fingerprint of the request each was submitted with. */
+  findByIdempotencyKeys(
+    req: FindByIdempotencyKeysJobRepositoryRequest,
+  ): Promise<FindByIdempotencyKeysJobRepositoryResponse>;
+  /**
+   * Jobs waiting to be started that have been in their state since `before` or longer: `pending`
+   * jobs, and `scheduled` jobs whose `scheduledAt` is not after `before`. Oldest change first, at
+   * most `limit`.
+   */
+  findWaitingSince(req: FindSinceJobRepositoryRequest): Promise<FindSinceJobRepositoryResponse>;
+  /** `processing` jobs that have been in that state since `before` or longer, oldest change first, at most `limit`. */
+  findProcessingSince(req: FindSinceJobRepositoryRequest): Promise<FindSinceJobRepositoryResponse>;
   /** Newest first (ties broken by id), with the number of jobs that match the filters. */
   query(req: QueryJobRepositoryRequest): Promise<QueryJobRepositoryResponse>;
   /**
@@ -28,16 +44,28 @@ export interface JobRepository {
 /**
  * A job before it is stored: the id and the updated time are set by the database, and so is the
  * created time unless given (a bulk spaces its jobs apart to keep their order). Without a group the
- * job's `groupId` is `null`.
+ * job's `groupId` is `null`; without a key its `idempotencyKey` and `requestFingerprint` are `null`.
  */
 export type NewJob = Job extends infer J
   ? J extends Job
-    ? Omit<J, 'id' | 'createdAt' | 'updatedAt' | 'groupId'> & {
+    ? Omit<J, 'id' | 'createdAt' | 'updatedAt' | 'groupId' | 'idempotencyKey'> & {
         groupId?: string | null | undefined;
+        idempotencyKey?: string | null | undefined;
+        /** The fingerprint of the request a keyed job was submitted with (`JobRequestFingerprint`). */
+        requestFingerprint?: string | null | undefined;
         createdAt?: string | undefined;
       }
     : never
   : never;
+
+/** A stored job with what only job-service sees: its run and the fingerprint of its request. */
+export interface StoredJob {
+  job: Job;
+  /** The job's run: 1, plus one per manual retry. Queue entries of the job carry it. */
+  run: number;
+  /** The fingerprint of the request the job was submitted with; `null` for a job without a key. */
+  requestFingerprint: string | null;
+}
 
 export interface CreateJobRepositoryRequest {
   job: NewJob;
@@ -61,10 +89,25 @@ export interface GetJobRepositoryRequest {
   id: string;
 }
 
-export interface GetJobRepositoryResponse {
-  job: Job;
-  /** The job's run: 1, plus one per manual retry. Queue entries of the job carry it. */
-  run: number;
+export type GetJobRepositoryResponse = StoredJob;
+
+export interface FindByIdempotencyKeysJobRepositoryRequest {
+  keys: readonly string[];
+}
+
+export interface FindByIdempotencyKeysJobRepositoryResponse {
+  /** One per key that a job holds, in no particular order. */
+  jobs: StoredJob[];
+}
+
+export interface FindSinceJobRepositoryRequest {
+  /** Only jobs whose last change is not after this instant. */
+  before: Date;
+  limit: number;
+}
+
+export interface FindSinceJobRepositoryResponse {
+  jobs: StoredJob[];
 }
 
 export interface QueryJobRepositoryRequest {
@@ -97,6 +140,7 @@ export interface JobChanges {
   error?: JobError | null;
   startedAt?: string | null;
   completedAt?: string | null;
+  scheduledAt?: string | null;
   run?: number;
 }
 

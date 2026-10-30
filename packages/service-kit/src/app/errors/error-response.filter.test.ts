@@ -108,6 +108,22 @@ describe('ErrorResponseFilter', () => {
     }
   });
 
+  it('maps IDEMPOTENCY_KEY_CONFLICT to 409 with the key and the existing job id', () => {
+    const error = new CodedError('IDEMPOTENCY_KEY_CONFLICT', {
+      idempotencyKey: 'receipt-1',
+      existingJobId: randomUUID(),
+    });
+
+    new ErrorResponseFilter().catch(error, host);
+
+    expect(reply.status).toBe(409);
+    expect(ErrorBody.parse(reply.body)).toEqual({
+      code: 'IDEMPOTENCY_KEY_CONFLICT',
+      message: error.message,
+      details: error.details,
+    });
+  });
+
   it('maps an unknown error to 500 INTERNAL_ERROR without leaking it, and logs it', () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementationOnce(() => undefined);
     const failure = new Error('connection pool exhausted');

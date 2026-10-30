@@ -32,9 +32,80 @@ describe('ZodJobServiceConfigParser', () => {
         bulkMaxJobs: 100,
         statsRecentWindowMinutes: 1440,
         statsThroughputWindowMinutes: 5,
+        retryDelay: { minMs: 5000, maxMs: 30000, capMs: 300000 },
+        recovery: { intervalMs: 30000, minAgeMs: 30000, batchSize: 100 },
+        maxProcessingMs: { email: 30000, webhook: 30000, 'flight-transit': 60000 },
       },
     });
   });
+
+  it('reads the configured retry delays, recovery settings and maximum processing times', () => {
+    const env = {
+      ...ENV,
+      JOB_SERVICE_RETRY_MIN_DELAY_MS: '500',
+      JOB_SERVICE_RETRY_MAX_DELAY_MS: '1000',
+      JOB_SERVICE_RETRY_CAP_DELAY_MS: '3000',
+      JOB_SERVICE_RECOVERY_INTERVAL_MS: '2000',
+      JOB_SERVICE_RECOVERY_MIN_AGE_MS: '1500',
+      JOB_SERVICE_RECOVERY_BATCH_SIZE: '10',
+      JOB_SERVICE_MAX_PROCESSING_MS_EMAIL: '100',
+      JOB_SERVICE_MAX_PROCESSING_MS_WEBHOOK: '200',
+      JOB_SERVICE_MAX_PROCESSING_MS_FLIGHT_TRANSIT: '300',
+    };
+
+    expect(parser.parse({ env })).toMatchObject({
+      ok: true,
+      config: {
+        retryDelay: { minMs: 500, maxMs: 1000, capMs: 3000 },
+        recovery: { intervalMs: 2000, minAgeMs: 1500, batchSize: 10 },
+        maxProcessingMs: { email: 100, webhook: 200, 'flight-transit': 300 },
+      },
+    });
+  });
+
+  it('accepts retry delays that are all equal', () => {
+    const env = {
+      ...ENV,
+      JOB_SERVICE_RETRY_MIN_DELAY_MS: '1000',
+      JOB_SERVICE_RETRY_MAX_DELAY_MS: '1000',
+      JOB_SERVICE_RETRY_CAP_DELAY_MS: '1000',
+    };
+
+    expect(parser.parse({ env }).ok).toBe(true);
+  });
+
+  it('rejects a first-retry minimum above its maximum, and a maximum above the cap', () => {
+    const minAboveMax = parser.parse({
+      env: { ...ENV, JOB_SERVICE_RETRY_MIN_DELAY_MS: '40000' },
+    });
+    const maxAboveCap = parser.parse({
+      env: { ...ENV, JOB_SERVICE_RETRY_CAP_DELAY_MS: '20000' },
+    });
+
+    expect(minAboveMax.ok ? '' : minAboveMax.problems).toContain('JOB_SERVICE_RETRY_MIN_DELAY_MS');
+    expect(maxAboveCap.ok ? '' : maxAboveCap.problems).toContain('JOB_SERVICE_RETRY_MAX_DELAY_MS');
+  });
+
+  it.each(['0', '-1', '1.5', 'often'])(
+    'rejects a retry, recovery or processing time setting of %s',
+    (value) => {
+      for (const name of [
+        'JOB_SERVICE_RETRY_MIN_DELAY_MS',
+        'JOB_SERVICE_RETRY_MAX_DELAY_MS',
+        'JOB_SERVICE_RETRY_CAP_DELAY_MS',
+        'JOB_SERVICE_RECOVERY_INTERVAL_MS',
+        'JOB_SERVICE_RECOVERY_MIN_AGE_MS',
+        'JOB_SERVICE_RECOVERY_BATCH_SIZE',
+        'JOB_SERVICE_MAX_PROCESSING_MS_EMAIL',
+        'JOB_SERVICE_MAX_PROCESSING_MS_WEBHOOK',
+        'JOB_SERVICE_MAX_PROCESSING_MS_FLIGHT_TRANSIT',
+      ]) {
+        const result = parser.parse({ env: { ...ENV, [name]: value } });
+
+        expect(result.ok ? '' : result.problems).toContain(name);
+      }
+    },
+  );
 
   it('reads the configured maximum of jobs per bulk', () => {
     expect(parser.parse({ env: { ...ENV, JOB_SERVICE_BULK_MAX_JOBS: '25' } })).toMatchObject({

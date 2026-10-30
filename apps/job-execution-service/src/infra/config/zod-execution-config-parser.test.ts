@@ -43,9 +43,35 @@ describe('ZodExecutionConfigParser', () => {
         reportRetryMaxDelayMs: 5000,
         jobServiceTimeoutMs: 5000,
         shutdownGraceMs: 10000,
+        lockDurationMs: 30000,
+        stalledIntervalMs: 30000,
       },
     });
   });
+
+  it('reads the configured queue lock duration and stalled check interval', () => {
+    const env = {
+      ...ENV,
+      JOB_QUEUE_LOCK_DURATION_MS: '2000',
+      JOB_QUEUE_STALLED_INTERVAL_MS: '1500',
+    };
+
+    expect(parser.parse({ env })).toMatchObject({
+      ok: true,
+      config: { lockDurationMs: 2000, stalledIntervalMs: 1500 },
+    });
+  });
+
+  it.each(['0', '-1', '1.5', 'long'])(
+    'rejects a lock duration or stalled interval of %s',
+    (value) => {
+      for (const name of ['JOB_QUEUE_LOCK_DURATION_MS', 'JOB_QUEUE_STALLED_INTERVAL_MS']) {
+        const result = parser.parse({ env: { ...ENV, [name]: value } });
+
+        expect(result.ok ? '' : result.problems).toContain(name);
+      }
+    },
+  );
 
   it('reads the configured execution settings', () => {
     const env = {

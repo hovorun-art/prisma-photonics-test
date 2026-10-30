@@ -16,15 +16,21 @@ export interface JobService {
   /**
    * Stores a new job, `scheduled` when its `scheduledAt` is in the future and `pending` otherwise,
    * and puts its first attempt on the queue with the job's priority, not handed out before its
-   * `scheduledAt`. Throws `InvalidJobPayloadError` for a flight transit whose departure day (UTC) is
-   * over, or `InvalidJobFieldError` listing every broken rule when the `scheduledAt` is more than the
+   * `scheduledAt`. A request whose idempotency key belongs to a job submitted with the same request
+   * answers that job (`created: false`) before any other rule is checked. Throws
+   * `IdempotencyKeyConflictError` when the key belongs to a job submitted with another request,
+   * `InvalidJobPayloadError` for a flight transit whose departure day (UTC) is over, or
+   * `InvalidJobFieldError` listing every broken rule when the `scheduledAt` is more than the
    * contract's maximum ahead.
    */
   create(req: CreateJobServiceRequest): Promise<CreateJobServiceResponse>;
   /**
    * Stores all jobs as `create` would, all or none, and puts their first attempts on the queue in
-   * one call. Throws `BulkLimitExceededError` above the configured maximum number of jobs, or
-   * `InvalidJobFieldError` with each failing item's position when any item breaks a rule of `create`.
+   * one call. An item whose idempotency key belongs to a job submitted with the same request answers
+   * that job at its position and is not stored or queued again. Throws `BulkLimitExceededError`
+   * above the configured maximum number of jobs, `IdempotencyKeyConflictError` (nothing stored) when
+   * an item's key belongs to a job submitted with another request, or `InvalidJobFieldError` with
+   * each failing item's position when any item breaks a rule of `create`.
    */
   createMany(req: CreateManyJobServiceRequest): Promise<CreateManyJobServiceResponse>;
   /** Throws `JobNotFoundError` for an unknown id. */
@@ -49,6 +55,8 @@ export interface CreateJobServiceRequest {
 
 export interface CreateJobServiceResponse {
   job: Job;
+  /** `false` when the job already existed under the request's idempotency key. */
+  created: boolean;
 }
 
 export interface CreateManyJobServiceRequest {
@@ -56,8 +64,10 @@ export interface CreateManyJobServiceRequest {
 }
 
 export interface CreateManyJobServiceResponse {
-  /** The stored jobs in the order of the request. */
+  /** The stored or already existing jobs in the order of the request. */
   jobs: Job[];
+  /** `true` when at least one job was stored; `false` when every item matched an existing job. */
+  created: boolean;
 }
 
 export interface GetJobServiceRequest {
