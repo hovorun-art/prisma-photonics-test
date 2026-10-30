@@ -14,6 +14,7 @@
 - Airport codes are upper case only; `lhr` answers 400 (user)
 - Roadmap milestone 3 gains a `flight-transit-job-execution` change (generate the transit report in job-execution-service) between `flight-transit-job` and `flight-transit-map`; `flight-transit-map` then depends on it (user)
 - job-ui only compiles with the new type: a type label, nothing transit-specific (the list's Details cell stays empty for transit jobs); the Aircraft transit card stays disabled; no job-ui spec change (user)
+- A failed transit job's Details cell shows its error message, like every failed job (the generic rule); "empty" applies to waiting, running and completed transit jobs (user, during apply)
 - Each bundled airport has IATA code, name, city, country, latitude, longitude and IANA time zone; the ~50 hubs are spread over every inhabited continent and include LHR and JFK from the design (user confirmed assumption)
 - An invalid payload (missing field, code not three upper-case letters, a date that is not a real calendar date such as `2026-02-30`) answers 400 `VALIDATION_FAILED` with an issue per field, like the other types (user confirmed assumption)
 - Result field names and units: `flight` (string), `aircraft { model, registration }`, `origin` / `destination { iata, name, city, timeZone, lat, lon }` plus `departureAt` / `arrivalAt` (ISO timestamps), `distanceKm`, `durationMin`, `cruiseAltitudeFt`, `path` as `[lat, lon]` pairs, `waypoints[] { name, at, lat, lon, altitudeFt, groundSpeedKmh, distanceFlownKm }` (user confirmed assumption)

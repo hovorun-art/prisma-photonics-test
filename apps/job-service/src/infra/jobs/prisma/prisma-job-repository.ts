@@ -1,4 +1,4 @@
-import { Job } from '@job-queue/contracts';
+import { Job, type JobType } from '@job-queue/contracts';
 
 import { JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
 import type {
@@ -15,7 +15,12 @@ import type {
   UpdateJobRepositoryRequest,
   UpdateJobRepositoryResponse,
 } from '../../../domain/jobs/job-repository.js';
-import { Prisma, type PrismaClient, type Job as JobRow } from '../../prisma/generated/client.js';
+import {
+  Prisma,
+  type PrismaClient,
+  type Job as JobRow,
+  type JobType as JobRowType,
+} from '../../prisma/generated/client.js';
 
 export interface PrismaJobRepositoryDeps {
   /** job-service's one connection pool (`PrismaDatabase`). */
@@ -24,6 +29,19 @@ export interface PrismaJobRepositoryDeps {
 
 /** "An operation failed because it depends on one or more records that were required but not found." */
 const RECORD_NOT_FOUND = 'P2025';
+
+/** Prisma names an enum value by its schema name, which cannot hold the `-` of `flight-transit`. */
+const ROW_TYPES: Readonly<Record<JobType, JobRowType>> = {
+  email: 'email',
+  webhook: 'webhook',
+  'flight-transit': 'flight_transit',
+};
+
+const JOB_TYPES: Readonly<Record<JobRowType, JobType>> = {
+  email: 'email',
+  webhook: 'webhook',
+  flight_transit: 'flight-transit',
+};
 
 /**
  * Jobs in the `jobs` table. Conditional writes put the expected state into the `WHERE` clause of
@@ -37,7 +55,7 @@ export class PrismaJobRepository implements JobRepository {
     const { job } = req;
     const row = await this.d.prisma.job.create({
       data: {
-        type: job.type,
+        type: ROW_TYPES[job.type],
         payload: job.payload,
         status: job.status,
         priority: job.priority,
@@ -137,7 +155,7 @@ export class PrismaJobRepository implements JobRepository {
   private toJob(row: JobRow): Job {
     return Job.parse({
       id: row.id,
-      type: row.type,
+      type: JOB_TYPES[row.type],
       payload: row.payload,
       status: row.status,
       priority: row.priority,

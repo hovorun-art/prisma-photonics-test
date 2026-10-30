@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { INTERNAL_API_PREFIX } from '../internal.js';
+import { AIRPORT_CODES, IataCode, Latitude, Longitude } from './airports.js';
 
 /** Public job routes of job-service. */
 export const JOBS_ROUTE = '/v1/jobs';
@@ -96,14 +97,79 @@ export const WebhookJobResult = z.object({
 });
 export type WebhookJobResult = z.infer<typeof WebhookJobResult>;
 
+/** An IATA code of an airport in the bundled list (upper case only). */
+export const AirportCode = z.enum(AIRPORT_CODES);
+export type AirportCode = z.infer<typeof AirportCode>;
+
+/**
+ * The flight a transit job describes: two different bundled airports and a calendar day. Whether
+ * that day is already over is checked by job-service against its clock, not here.
+ */
+export const FlightTransitJobPayload = z
+  .object({
+    origin: AirportCode,
+    destination: AirportCode,
+    departureDate: z.iso.date(),
+  })
+  .refine((payload) => payload.origin !== payload.destination, {
+    path: ['destination'],
+    message: 'Destination must differ from origin',
+  });
+export type FlightTransitJobPayload = z.infer<typeof FlightTransitJobPayload>;
+
+const NonNegative = z.number().min(0);
+
+/** An airport card of a transit report; not checked against the bundled list. */
+export const TransitAirport = z.object({
+  iata: IataCode,
+  name: z.string().min(1),
+  city: z.string().min(1),
+  timeZone: z.string().min(1),
+  lat: Latitude,
+  lon: Longitude,
+});
+export type TransitAirport = z.infer<typeof TransitAirport>;
+
+/** A point of the route the aircraft passes, with what the map shows on hover. */
+export const TransitWaypoint = z.object({
+  name: z.string().min(1),
+  at: z.iso.datetime(),
+  lat: Latitude,
+  lon: Longitude,
+  altitudeFt: NonNegative,
+  groundSpeedKmh: NonNegative,
+  distanceFlownKm: NonNegative,
+});
+export type TransitWaypoint = z.infer<typeof TransitWaypoint>;
+
+/**
+ * What a completed transit job returns: the generated flight, its airports and times, and the
+ * great-circle path (`[lat, lon]` pairs) with its waypoints (at least departure and arrival).
+ */
+export const FlightTransitJobResult = z.object({
+  flight: z.string().min(1),
+  aircraft: z.object({ model: z.string().min(1), registration: z.string().min(1) }),
+  origin: TransitAirport,
+  destination: TransitAirport,
+  departureAt: z.iso.datetime(),
+  arrivalAt: z.iso.datetime(),
+  distanceKm: NonNegative,
+  durationMin: NonNegative,
+  cruiseAltitudeFt: NonNegative,
+  path: z.array(z.tuple([Latitude, Longitude])).min(2),
+  waypoints: z.array(TransitWaypoint).min(2),
+});
+export type FlightTransitJobResult = z.infer<typeof FlightTransitJobResult>;
+
 /** The closed list of job types; each later job type adds itself here. */
-export const JobType = z.enum(['email', 'webhook']);
+export const JobType = z.enum(['email', 'webhook', 'flight-transit']);
 export type JobType = z.infer<typeof JobType>;
 
 /** The result schema of each job type, checked when job-execution-service reports a completion. */
 export const JOB_RESULT_SCHEMAS: Readonly<Record<JobType, z.ZodType>> = {
   email: EmailJobResult,
   webhook: WebhookJobResult,
+  'flight-transit': FlightTransitJobResult,
 };
 
 const Timestamp = z.iso.datetime();
@@ -137,8 +203,15 @@ export const WebhookJob = JobBase.extend({
 });
 export type WebhookJob = z.infer<typeof WebhookJob>;
 
+export const FlightTransitJob = JobBase.extend({
+  type: z.literal('flight-transit'),
+  payload: FlightTransitJobPayload,
+  result: FlightTransitJobResult.nullable(),
+});
+export type FlightTransitJob = z.infer<typeof FlightTransitJob>;
+
 /** A job as every job route returns it; the type decides the payload and result shapes. */
-export const Job = z.discriminatedUnion('type', [EmailJob, WebhookJob]);
+export const Job = z.discriminatedUnion('type', [EmailJob, WebhookJob, FlightTransitJob]);
 export type Job = z.infer<typeof Job>;
 
 /** Options every job type accepts on submit; omitted ones get the defaults of `JOB_LIMITS`. */
@@ -157,10 +230,16 @@ export const CreateWebhookJobRequest = CreateJobOptions.extend({
   payload: WebhookJobPayload,
 });
 
+export const CreateFlightTransitJobRequest = CreateJobOptions.extend({
+  type: z.literal('flight-transit'),
+  payload: FlightTransitJobPayload,
+});
+
 /** Body of `POST /v1/jobs`: one branch per job type. */
 export const CreateJobRequest = z.discriminatedUnion('type', [
   CreateEmailJobRequest,
   CreateWebhookJobRequest,
+  CreateFlightTransitJobRequest,
 ]);
 export type CreateJobRequest = z.infer<typeof CreateJobRequest>;
 

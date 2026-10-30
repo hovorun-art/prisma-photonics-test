@@ -14,6 +14,8 @@ datasource db {
 enum JobType {
   email
   webhook
+  /// `flight-transit` in the API and in Postgres; Prisma enum names cannot contain `-`.
+  flight_transit @map("flight-transit")
 
   @@map("job_type")
 }

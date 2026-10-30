@@ -4,7 +4,7 @@ import { Job } from '@job-queue/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { JobQueueUnavailableError } from '../../src/domain/jobs/errors/job-queue-unavailable.error.js';
-import { JobServiceUnderTest } from './job-service-under-test.js';
+import { JobServiceUnderTest, TRANSIT_REPORT } from './job-service-under-test.js';
 
 const UNKNOWN_ID = randomUUID();
 const ERROR = { code: 'SEND_FAILED', message: 'Mailbox unavailable' };
@@ -351,6 +351,71 @@ describe('job-service internal job routes', () => {
         maxAttempts: 3,
         error,
       });
+    });
+  });
+
+  describe('flight transit results', () => {
+    it('Transit report is stored', async () => {
+      const job = await service.seed({ status: 'processing', type: 'flight-transit' });
+      const body = { status: 'completed', result: TRANSIT_REPORT };
+
+      const response = await service.report({ id: job.id, body });
+
+      expect(response.status).toBe(200);
+      expect(Job.parse(await response.json())).toMatchObject({
+        status: 'completed',
+        result: TRANSIT_REPORT,
+      });
+      expect(Job.parse(await (await service.get(job.id)).json()).result).toEqual(TRANSIT_REPORT);
+    });
+
+    it('Report for other airports than the payload is stored', async () => {
+      const job = await service.seed({ status: 'processing', type: 'flight-transit' });
+      const result = { ...TRANSIT_REPORT, origin: { ...TRANSIT_REPORT.origin, iata: 'CDG' } };
+
+      const response = await service.report({ id: job.id, body: { status: 'completed', result } });
+
+      expect(response.status).toBe(200);
+      expect(Job.parse(await response.json())).toMatchObject({ status: 'completed', result });
+      expect(Job.parse(await (await service.get(job.id)).json()).result).toEqual(result);
+    });
+
+    const { aircraft: _aircraft, ...withoutAircraft } = TRANSIT_REPORT;
+    it.each([
+      ['no aircraft', withoutAircraft, ['result', 'aircraft']],
+      ['a webhook result', { statusCode: 200, responseBody: {} }, ['result', 'flight']],
+    ])('Transit report does not match (%s)', async (_case, result, path) => {
+      const job = await service.seed({ status: 'processing', type: 'flight-transit' });
+
+      const response = await service.report({ id: job.id, body: { status: 'completed', result } });
+
+      expect(await service.issuePaths(response)).toContainEqual(path);
+      expect(await service.stored(job.id)).toEqual(job);
+    });
+
+    it('Failed transit error is returned as sent', async () => {
+      const job = await service.seed({
+        status: 'processing',
+        type: 'flight-transit',
+        attempts: 3,
+        maxAttempts: 3,
+      });
+      const error = {
+        code: 'TRANSIT_GENERATION_FAILED',
+        message: 'No route between the airports',
+        details: { origin: 'LHR', destination: 'JFK' },
+      };
+
+      const response = await service.report({ id: job.id, body: { status: 'failed', error } });
+
+      expect(response.status).toBe(200);
+      expect(Job.parse(await (await service.get(job.id)).json())).toMatchObject({
+        status: 'failed',
+        attempts: 3,
+        maxAttempts: 3,
+        error,
+      });
+      expect(service.queue.enqueue).not.toHaveBeenCalled();
     });
   });
 });

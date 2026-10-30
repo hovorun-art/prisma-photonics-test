@@ -6,6 +6,7 @@ import {
   CreateJobRequest,
   EMAIL_LIMITS,
   EmailJobResult,
+  FlightTransitJobResult,
   Job,
   JOB_LIMITS,
   JobIdParams,
@@ -340,6 +341,309 @@ describe('Job', () => {
       completedAt: timestamp,
       createdAt: timestamp,
       updatedAt: timestamp,
+    };
+
+    expect(Job.parse(job)).toEqual(job);
+  });
+});
+
+const validTransitJob = {
+  type: 'flight-transit',
+  payload: { origin: 'LHR', destination: 'JFK', departureDate: '2030-06-15' },
+  priority: 5,
+  maxAttempts: 3,
+};
+
+const validTransitReport = {
+  flight: 'BA117',
+  aircraft: { model: 'Boeing 777-300ER', registration: 'G-STBA' },
+  origin: {
+    iata: 'LHR',
+    name: 'Heathrow Airport',
+    city: 'London',
+    timeZone: 'Europe/London',
+    lat: 51.47,
+    lon: -0.4543,
+  },
+  destination: {
+    iata: 'JFK',
+    name: 'John F. Kennedy International Airport',
+    city: 'New York',
+    timeZone: 'America/New_York',
+    lat: 40.6413,
+    lon: -73.7781,
+  },
+  departureAt: '2030-06-15T08:20:00.000Z',
+  arrivalAt: '2030-06-15T16:05:00.000Z',
+  distanceKm: 5555,
+  durationMin: 465,
+  cruiseAltitudeFt: 37000,
+  path: [
+    [51.47, -0.4543],
+    [52.1, -40.5],
+    [40.6413, -73.7781],
+  ],
+  waypoints: [
+    {
+      name: 'Departure',
+      at: '2030-06-15T08:20:00.000Z',
+      lat: 51.47,
+      lon: -0.4543,
+      altitudeFt: 0,
+      groundSpeedKmh: 0,
+      distanceFlownKm: 0,
+    },
+    {
+      name: 'Arrival',
+      at: '2030-06-15T16:05:00.000Z',
+      lat: 40.6413,
+      lon: -73.7781,
+      altitudeFt: 0,
+      groundSpeedKmh: 0,
+      distanceFlownKm: 5555,
+    },
+  ],
+};
+
+describe('CreateJobRequest for a flight transit job', () => {
+  const issuePaths = (input: unknown): PropertyKey[][] =>
+    CreateJobRequest.safeParse(input).error?.issues.map((issue) => issue.path) ?? [];
+  const withPayload = (payload: Record<string, unknown>): unknown => ({
+    ...validTransitJob,
+    payload: { ...validTransitJob.payload, ...payload },
+  });
+
+  it('Valid flight transit job is accepted', () => {
+    expect(CreateJobRequest.parse(validTransitJob)).toEqual(validTransitJob);
+  });
+
+  it('Unknown airport code', () => {
+    expect(issuePaths(withPayload({ origin: 'XXX' }))).toEqual([['payload', 'origin']]);
+  });
+
+  it('Lower-case airport code', () => {
+    expect(issuePaths(withPayload({ destination: 'jfk' }))).toEqual([['payload', 'destination']]);
+  });
+
+  it('Same airport twice', () => {
+    expect(issuePaths(withPayload({ destination: 'LHR' }))).toEqual([['payload', 'destination']]);
+  });
+
+  it('Missing payload fields', () => {
+    expect(issuePaths({ ...validTransitJob, payload: {} })).toEqual([
+      ['payload', 'origin'],
+      ['payload', 'destination'],
+      ['payload', 'departureDate'],
+    ]);
+  });
+
+  it('Airport code of the wrong form', () => {
+    for (const origin of ['LH', 'LHRX', '', 123]) {
+      expect(issuePaths(withPayload({ origin }))).toEqual([['payload', 'origin']]);
+    }
+  });
+
+  it('Departure date is not a calendar date', () => {
+    for (const departureDate of [
+      '2026-02-30',
+      '2025-02-29',
+      '30/10/2026',
+      '2030-06-15T08:00:00.000Z',
+      '',
+      null,
+      20300615,
+    ]) {
+      expect(issuePaths(withPayload({ departureDate }))).toEqual([['payload', 'departureDate']]);
+    }
+  });
+
+  it('accepts a leap day', () => {
+    expect(CreateJobRequest.safeParse(withPayload({ departureDate: '2028-02-29' })).success).toBe(
+      true,
+    );
+  });
+});
+
+describe('FlightTransitJobResult', () => {
+  it('Transit report is stored', () => {
+    expect(FlightTransitJobResult.parse(validTransitReport)).toEqual(validTransitReport);
+  });
+
+  it('Report for other airports than the payload is stored', () => {
+    const report = {
+      ...validTransitReport,
+      origin: { ...validTransitReport.origin, iata: 'CDG' },
+    };
+
+    expect(FlightTransitJobResult.parse(report)).toEqual(report);
+  });
+
+  it('Transit report does not match', () => {
+    const { aircraft: _aircraft, ...withoutAircraft } = validTransitReport;
+    const [departure, arrival] = validTransitReport.waypoints as [
+      (typeof validTransitReport.waypoints)[number],
+      (typeof validTransitReport.waypoints)[number],
+    ];
+    const { at: _at, ...waypointWithoutAt } = departure;
+    const { distanceFlownKm: _flown, ...waypointWithoutDistance } = departure;
+    const { timeZone: _timeZone, ...originWithoutTimeZone } = validTransitReport.origin;
+    const report = (changes: Record<string, unknown>): unknown => ({
+      ...validTransitReport,
+      ...changes,
+    });
+    const issuePaths = (input: unknown): PropertyKey[][] =>
+      FlightTransitJobResult.safeParse(input).error?.issues.map((issue) => issue.path) ?? [];
+
+    const cases: [unknown, PropertyKey[]][] = [
+      [report({ flight: undefined }), ['flight']],
+      [report({ flight: '' }), ['flight']],
+      [report({ destination: undefined }), ['destination']],
+      [report({ aircraft: { registration: 'G-STBA' } }), ['aircraft', 'model']],
+      [report({ distanceKm: '5555' }), ['distanceKm']],
+      [report({ path: [] }), ['path']],
+      [
+        report({ waypoints: [{ ...departure, name: undefined }, arrival] }),
+        ['waypoints', 0, 'name'],
+      ],
+      [report({ waypoints: [{ ...departure, lat: undefined }, arrival] }), ['waypoints', 0, 'lat']],
+      [
+        report({ waypoints: [{ ...departure, altitudeFt: undefined }, arrival] }),
+        ['waypoints', 0, 'altitudeFt'],
+      ],
+      [
+        report({ waypoints: [{ ...departure, groundSpeedKmh: undefined }, arrival] }),
+        ['waypoints', 0, 'groundSpeedKmh'],
+      ],
+      [withoutAircraft, ['aircraft']],
+      [report({ aircraft: { model: 'Boeing 777' } }), ['aircraft', 'registration']],
+      [report({ origin: { ...validTransitReport.origin, lat: 91 } }), ['origin', 'lat']],
+      [report({ origin: { ...validTransitReport.origin, iata: 'lhr' } }), ['origin', 'iata']],
+      [report({ origin: originWithoutTimeZone }), ['origin', 'timeZone']],
+      [
+        report({ destination: { ...validTransitReport.destination, lon: -181 } }),
+        ['destination', 'lon'],
+      ],
+      [report({ distanceKm: -1 }), ['distanceKm']],
+      [report({ durationMin: -1 }), ['durationMin']],
+      [report({ cruiseAltitudeFt: -1 }), ['cruiseAltitudeFt']],
+      [report({ departureAt: 'tomorrow' }), ['departureAt']],
+      [report({ arrivalAt: '2030-06-15' }), ['arrivalAt']],
+      [report({ path: [[51.47, -0.4543]] }), ['path']],
+      [
+        report({
+          path: [
+            [91, 0],
+            [0, 0],
+          ],
+        }),
+        ['path', 0, 0],
+      ],
+      [
+        report({
+          path: [
+            [0, 0],
+            [0, 181],
+          ],
+        }),
+        ['path', 1, 1],
+      ],
+      [
+        report({
+          path: [
+            [0, -181],
+            [0, 0],
+          ],
+        }),
+        ['path', 0, 1],
+      ],
+      [
+        report({
+          path: [
+            [0, 0, 0],
+            [0, 0],
+          ],
+        }),
+        ['path', 0],
+      ],
+      [report({ waypoints: [departure] }), ['waypoints']],
+      [report({ waypoints: [{ ...departure, lat: -91 }, arrival] }), ['waypoints', 0, 'lat']],
+      [report({ waypoints: [departure, { ...arrival, lon: 181 }] }), ['waypoints', 1, 'lon']],
+      [
+        report({ waypoints: [{ ...departure, altitudeFt: -1 }, arrival] }),
+        ['waypoints', 0, 'altitudeFt'],
+      ],
+      [
+        report({ waypoints: [{ ...departure, groundSpeedKmh: -1 }, arrival] }),
+        ['waypoints', 0, 'groundSpeedKmh'],
+      ],
+      [
+        report({ waypoints: [departure, { ...arrival, distanceFlownKm: -1 }] }),
+        ['waypoints', 1, 'distanceFlownKm'],
+      ],
+      [report({ waypoints: [waypointWithoutAt, arrival] }), ['waypoints', 0, 'at']],
+      [report({ waypoints: [{ ...departure, at: 'noon' }, arrival] }), ['waypoints', 0, 'at']],
+      [
+        report({ waypoints: [waypointWithoutDistance, arrival] }),
+        ['waypoints', 0, 'distanceFlownKm'],
+      ],
+    ];
+    for (const [input, path] of cases) {
+      expect(issuePaths(input)).toEqual([path]);
+    }
+  });
+});
+
+describe('Job for a flight transit job', () => {
+  const timestamp = new Date().toISOString();
+  const base = {
+    id: randomUUID(),
+    type: 'flight-transit',
+    priority: 5,
+    maxAttempts: 3,
+    payload: validTransitJob.payload,
+    scheduledAt: null,
+    startedAt: timestamp,
+    completedAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
+
+  it('parses a completed transit job with its report', () => {
+    const job = {
+      ...base,
+      status: 'completed',
+      attempts: 1,
+      result: validTransitReport,
+      error: null,
+    };
+
+    expect(Job.parse(job)).toEqual(job);
+  });
+
+  it("rejects a transit job with another type's result or payload", () => {
+    const completed = { ...base, status: 'completed', attempts: 1, error: null };
+    const issuePaths = (input: unknown): PropertyKey[][] =>
+      Job.safeParse(input).error?.issues.map((issue) => issue.path.slice(0, 1)) ?? [];
+
+    expect(
+      issuePaths({ ...completed, result: { statusCode: 200, responseBody: {} } }),
+    ).toContainEqual(['result']);
+    expect(
+      issuePaths({
+        ...completed,
+        result: validTransitReport,
+        payload: { to: 'ada@example.com', subject: 'Hi', body: 'Hi' },
+      }),
+    ).toContainEqual(['payload']);
+  });
+
+  it('Failed transit error is returned as sent', () => {
+    const job = {
+      ...base,
+      status: 'failed',
+      attempts: 3,
+      result: null,
+      error: { code: 'TRANSIT_GENERATION_FAILED', message: 'No route', details: { origin: 'LHR' } },
     };
 
     expect(Job.parse(job)).toEqual(job);

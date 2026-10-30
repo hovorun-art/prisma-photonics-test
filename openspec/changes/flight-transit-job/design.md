@@ -67,7 +67,9 @@ branch; the barrel (`jobs/index.ts`) exports the new names.
 with the UTC date of `clock.now()` (`toISOString().slice(0, 10)`; ISO dates compare as strings) and
 throws a new `InvalidJobPayloadError` (code `VALIDATION_FAILED`, `details.issues` with path
 `['payload', 'departureDate']`), the counterpart of `InvalidJobResultError`. The filter already maps
-`VALIDATION_FAILED` to 400, so no new error code. Alternatives: a Zod refine reading `new Date()`
+`VALIDATION_FAILED` to 400, so no new error code. Found during apply: both errors share one base,
+`InvalidJobFieldError` (`field: 'payload' | 'result'` prefixes the issue paths), so the mapping is
+written once. Alternatives: a Zod refine reading `new Date()`
 in contracts (rejected: contracts stay free of time, and tests would need real time); a separate
 `JobSubmissionPolicy` port per type (rejected for now: one rule does not justify a port; revisit
 when a second type gets a clock rule, e.g. scheduled jobs' `runAt`).

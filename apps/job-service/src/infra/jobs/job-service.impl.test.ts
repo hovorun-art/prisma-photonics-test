@@ -6,6 +6,7 @@ import type { LoggerService } from '@nestjs/common';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 
+import { InvalidJobPayloadError } from '../../domain/jobs/errors/invalid-job-payload.error.js';
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
 import { JobQueueUnavailableError } from '../../domain/jobs/errors/job-queue-unavailable.error.js';
 import { QueryLimitExceededError } from '../../domain/jobs/errors/query-limit-exceeded.error.js';
@@ -95,6 +96,54 @@ describe('JobServiceImpl', () => {
         expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
         expect.any(String),
       );
+    });
+  });
+
+  describe('create a flight transit job', () => {
+    const transitRequest = (departureDate: string) =>
+      ({
+        type: 'flight-transit',
+        payload: { origin: 'LHR', destination: 'JFK', departureDate },
+        priority: 5,
+        maxAttempts: 3,
+      }) as const;
+    const at = (iso: string): void => {
+      clock.now.mockReset();
+      clock.now.mockReturnValueOnce({ now: new Date(iso) });
+    };
+
+    it('Departure today is accepted', async () => {
+      at('2026-10-29T23:59:59.999Z');
+      queue.enqueue.mockResolvedValueOnce({});
+
+      const { job } = await service.create({ job: transitRequest('2026-10-29') });
+
+      expect(job).toMatchObject({ type: 'flight-transit', status: 'pending' });
+      expect(repository.create).toHaveBeenCalledOnce();
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: JOB_ID, attempt: 1 });
+    });
+
+    it('accepts a departure on a later day', async () => {
+      at('2026-10-29T00:00:00.000Z');
+      queue.enqueue.mockResolvedValueOnce({});
+
+      await service.create({ job: transitRequest('2027-01-01') });
+
+      expect(repository.create).toHaveBeenCalledOnce();
+    });
+
+    it('Departure yesterday is rejected', async () => {
+      at('2026-10-30T00:00:00.000Z');
+
+      const rejection = service.create({ job: transitRequest('2026-10-29') });
+
+      await expect(rejection).rejects.toBeInstanceOf(InvalidJobPayloadError);
+      await expect(rejection).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: { issues: [expect.objectContaining({ path: ['payload', 'departureDate'] })] },
+      });
+      expect(repository.create).not.toHaveBeenCalled();
+      expect(queue.enqueue).not.toHaveBeenCalled();
     });
   });
 

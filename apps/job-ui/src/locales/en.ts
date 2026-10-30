@@ -30,6 +30,7 @@ export const en = {
   jobTypes: {
     email: 'email',
     webhook: 'webhook',
+    'flight-transit': 'flight transit',
   },
   errors: {
     network: 'Could not reach the API. Check your connection and try again.',
