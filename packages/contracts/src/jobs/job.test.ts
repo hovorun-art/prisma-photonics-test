@@ -12,6 +12,7 @@ import {
   QueryJobsRequest,
   UpdateJobRequest,
   WEBHOOK_LIMITS,
+  WEBHOOK_METHODS,
   WebhookJobResult,
 } from './job.js';
 
@@ -40,13 +41,29 @@ describe('CreateJobRequest', () => {
   });
 
   it('Unknown job type', () => {
+    const { type: _type, ...withoutType } = validEmailJob;
+    const { payload: _payload, ...withoutPayload } = validEmailJob;
+
     expect(issuePaths({ ...validEmailJob, type: 'fax' })).toContainEqual(['type']);
+    expect(issuePaths(withoutType)).toContainEqual(['type']);
+    expect(issuePaths(withoutPayload)).toContainEqual(['payload']);
+    expect(
+      issuePaths({ ...validEmailJob, payload: { method: 'POST', url: 'https://example.com/' } }),
+    ).toContainEqual(['payload', 'to']);
   });
 
   it('Invalid email address', () => {
-    expect(
-      issuePaths({ ...validEmailJob, payload: { ...validEmailJob.payload, to: 'not-an-email' } }),
-    ).toContainEqual(['payload', 'to']);
+    for (const to of ['not-an-email', '', undefined]) {
+      expect(
+        issuePaths({ ...validEmailJob, payload: { ...validEmailJob.payload, to } }),
+      ).toContainEqual(['payload', 'to']);
+    }
+  });
+
+  it('accepts an empty email body', () => {
+    const job = { ...validEmailJob, payload: { ...validEmailJob.payload, body: '' } };
+
+    expect(CreateJobRequest.parse(job)).toEqual(job);
   });
 
   it('Empty subject', () => {
@@ -69,8 +86,22 @@ describe('CreateJobRequest', () => {
     );
   });
 
+  it('accepts email fields at their maximum length', () => {
+    const subject = 'a'.repeat(EMAIL_LIMITS.subjectMaxLength);
+    const body = 'a'.repeat(EMAIL_LIMITS.bodyMaxLength);
+    const job = { ...validEmailJob, payload: { ...validEmailJob.payload, subject, body } };
+
+    expect(CreateJobRequest.parse(job)).toEqual(job);
+  });
+
   it('Priority out of range', () => {
-    for (const priority of [JOB_LIMITS.priority.min - 1, JOB_LIMITS.priority.max + 1, 2.5]) {
+    for (const priority of [
+      JOB_LIMITS.priority.min - 1,
+      JOB_LIMITS.priority.max + 1,
+      2.5,
+      'high',
+      null,
+    ]) {
       expect(issuePaths({ ...validEmailJob, priority })).toContainEqual(['priority']);
     }
   });
@@ -80,8 +111,22 @@ describe('CreateJobRequest', () => {
       JOB_LIMITS.maxAttempts.min - 1,
       JOB_LIMITS.maxAttempts.max + 1,
       1.5,
+      'three',
+      null,
     ]) {
       expect(issuePaths({ ...validEmailJob, maxAttempts })).toContainEqual(['maxAttempts']);
+    }
+  });
+
+  it('accepts priority and max attempts at their limits', () => {
+    for (const limit of ['min', 'max'] as const) {
+      const job = {
+        ...validEmailJob,
+        priority: JOB_LIMITS.priority[limit],
+        maxAttempts: JOB_LIMITS.maxAttempts[limit],
+      };
+
+      expect(CreateJobRequest.parse(job)).toEqual(job);
     }
   });
 });
@@ -109,6 +154,12 @@ describe('CreateJobRequest for a webhook job', () => {
     expect(CreateJobRequest.parse(validWebhookJob)).toEqual(validWebhookJob);
   });
 
+  it('accepts every allowed method', () => {
+    for (const method of WEBHOOK_METHODS) {
+      expect(CreateJobRequest.safeParse(withPayload({ method })).success).toBe(true);
+    }
+  });
+
   it('Webhook job without a body is accepted', () => {
     const job = { ...validWebhookJob, payload: { method: 'GET', url: 'http://example.com/ping' } };
 
@@ -116,7 +167,7 @@ describe('CreateJobRequest for a webhook job', () => {
   });
 
   it('Method not allowed', () => {
-    for (const method of ['DELETE', 'post']) {
+    for (const method of ['DELETE', 'post', '']) {
       expect(issuePaths(withPayload({ method }))).toContainEqual(['payload', 'method']);
     }
   });
@@ -145,10 +196,11 @@ describe('CreateJobRequest for a webhook job', () => {
     const url = prefix + 'a'.repeat(WEBHOOK_LIMITS.urlMaxLength - prefix.length + 1);
 
     expect(issuePaths(withPayload({ url }))).toContainEqual(['payload', 'url']);
+    expect(CreateJobRequest.safeParse(withPayload({ url: url.slice(0, -1) })).success).toBe(true);
   });
 
   it('Body is not a JSON object', () => {
-    for (const body of [['a'], 'text']) {
+    for (const body of [['a'], 'text', null]) {
       expect(issuePaths(withPayload({ body }))).toContainEqual(['payload', 'body']);
     }
   });
@@ -164,9 +216,11 @@ describe('QueryJobsRequest', () => {
   });
 
   it('Negative offset', () => {
-    const result = QueryJobsRequest.safeParse({ offset: '-1' });
+    for (const offset of ['-1', '1.5', 'abc']) {
+      const result = QueryJobsRequest.safeParse({ offset });
 
-    expect(result.error?.issues.map((issue) => issue.path)).toContainEqual(['offset']);
+      expect(result.error?.issues.map((issue) => issue.path)).toContainEqual(['offset']);
+    }
   });
 
   it('rejects a limit that is not a positive integer', () => {
@@ -213,8 +267,19 @@ describe('UpdateJobRequest', () => {
     }
   });
 
-  it('rejects a failure without an error', () => {
+  it('rejects a report without a status', () => {
+    expect(UpdateJobRequest.safeParse({}).success).toBe(false);
+  });
+
+  it('rejects a failure without an error, or with an error without a code', () => {
     expect(UpdateJobRequest.safeParse({ status: 'failed' }).success).toBe(false);
+    expect(UpdateJobRequest.safeParse({ status: 'failed', error: { message: 'x' } }).success).toBe(
+      false,
+    );
+  });
+
+  it('rejects a completion without a result', () => {
+    expect(UpdateJobRequest.safeParse({ status: 'completed' }).success).toBe(false);
   });
 });
 
@@ -225,14 +290,17 @@ describe('EmailJobResult', () => {
 
   it('Result does not match the job type', () => {
     expect(EmailJobResult.safeParse({ id: 'm-1' }).success).toBe(false);
+    expect(EmailJobResult.safeParse({ messageId: '' }).success).toBe(false);
   });
 });
 
 describe('WebhookJobResult', () => {
   it('Webhook result is stored', () => {
-    const result = { statusCode: 200, responseBody: { received: true } };
+    for (const statusCode of [200, 299]) {
+      const result = { statusCode, responseBody: { received: true } };
 
-    expect(WebhookJobResult.parse(result)).toEqual(result);
+      expect(WebhookJobResult.parse(result)).toEqual(result);
+    }
   });
 
   it('Webhook result does not match', () => {
@@ -240,7 +308,10 @@ describe('WebhookJobResult', () => {
       { responseBody: {} },
       { statusCode: 404, responseBody: {} },
       { statusCode: 199, responseBody: {} },
+      { statusCode: 300, responseBody: {} },
+      { statusCode: 503, responseBody: {} },
       { statusCode: 200, responseBody: ['a'] },
+      { statusCode: 200, responseBody: 'ok' },
     ]) {
       expect(WebhookJobResult.safeParse(result).success).toBe(false);
     }

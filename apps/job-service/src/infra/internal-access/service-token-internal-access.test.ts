@@ -20,9 +20,9 @@ describe('ServiceTokenInternalAccess', () => {
     expect(() => access.authorize({ authorization: `${SERVICE_TOKEN_SCHEME} ` })).toThrow(
       UnauthorizedInternalAccessError,
     );
-    expect(() => access.authorize({ authorization: `Basic ${CONFIGURED_TOKEN}` })).toThrow(
-      UnauthorizedInternalAccessError,
-    );
+    for (const authorization of [`Basic ${CONFIGURED_TOKEN}`, CONFIGURED_TOKEN, '']) {
+      expect(() => access.authorize({ authorization })).toThrow(UnauthorizedInternalAccessError);
+    }
   });
 
   it('Wrong token: rejects a token of the same length that differs from the configured one', () => {

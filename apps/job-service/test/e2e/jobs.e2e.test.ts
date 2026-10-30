@@ -2,23 +2,19 @@ import { randomUUID } from 'node:crypto';
 
 import {
   EMAIL_LIMITS,
-  ErrorBody,
   JOB_LIMITS,
   JOBS_ROUTE,
   Job,
   QueryJobsResponse,
+  WEBHOOK_LIMITS,
 } from '@job-queue/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { ContainerDependencies } from './support/container-dependencies.js';
-import { UNREACHABLE_REDIS_URL } from './support/dependencies.js';
-import { InProcessJobService } from './support/in-process-job-service.js';
-import { ContainerJobFixtures } from './support/job-fixtures.js';
-import { JOB_SERVICE_TEST_ENV } from './support/running-job-service.js';
+import { JobQueueUnavailableError } from '../../src/domain/jobs/errors/job-queue-unavailable.error.js';
+import { JobServiceUnderTest, TEST_CONFIG } from './job-service-under-test.js';
 
-const QUERY_DEFAULT_LIMIT = 3;
-const QUERY_MAX_LIMIT = 10;
 const UNKNOWN_ID = randomUUID();
+const ERROR = { code: 'SEND_FAILED', message: 'Mailbox unavailable' };
 
 const EMAIL_JOB = {
   type: 'email',
@@ -36,59 +32,33 @@ const WEBHOOK_JOB = {
   },
 };
 
-describe('job-service public job routes (the real app over HTTP)', () => {
-  let dependencies: ContainerDependencies;
-  let service: InProcessJobService;
-  let fixtures: ContainerJobFixtures;
-  let env: Record<string, string>;
+describe('job-service public job routes', () => {
+  let service: JobServiceUnderTest;
 
-  const url = (path = ''): string => service.url({ path: `${JOBS_ROUTE}${path}` }).url;
+  /** A submission rejected for `path`, after which nothing is stored or queued. */
+  const expectRejected = async (body: unknown, path: unknown[]): Promise<void> => {
+    expect(await service.issuePaths(await service.submit(body))).toContainEqual(path);
+    expect(await service.total()).toBe(0);
+    expect(service.queue.enqueue).not.toHaveBeenCalled();
+  };
 
-  const submit = (body: unknown, target = service): Promise<Response> =>
-    fetch(target.url({ path: JOBS_ROUTE }).url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-
-  const submitted = async (body: unknown = EMAIL_JOB): Promise<Job> =>
-    Job.parse(await (await submit(body)).json());
-
-  const issuePaths = async (response: Response): Promise<unknown[]> => {
-    const body = ErrorBody.parse(await response.json());
-    expect(body.code).toBe('VALIDATION_FAILED');
-    const issues = body.details.issues as { path: unknown[] }[];
-    return issues.map((issue) => issue.path);
+  const expectNotFound = async (response: Response): Promise<void> => {
+    await service.errorBody({ response, status: 404, code: 'JOB_NOT_FOUND' });
   };
 
   beforeAll(async () => {
-    ({ dependencies } = await ContainerDependencies.start());
-    env = {
-      ...JOB_SERVICE_TEST_ENV,
-      DATABASE_URL: dependencies.databaseUrl,
-      REDIS_URL: dependencies.redisUrl,
-      JOB_SERVICE_QUERY_DEFAULT_LIMIT: String(QUERY_DEFAULT_LIMIT),
-      JOB_SERVICE_QUERY_MAX_LIMIT: String(QUERY_MAX_LIMIT),
-      JOB_SERVICE_ENQUEUE_TIMEOUT_MS: '300',
-    };
-    ({ service } = await InProcessJobService.start({ env }));
-    fixtures = new ContainerJobFixtures({
-      databaseUrl: dependencies.databaseUrl,
-      redisUrl: dependencies.redisUrl,
-    });
+    service = await JobServiceUnderTest.start();
   }, 180_000);
   beforeEach(async () => {
-    await fixtures.clear();
+    await service.clear();
   });
   afterAll(async () => {
-    await fixtures.close();
     await service.close();
-    await dependencies.stop();
   });
 
   describe('submit', () => {
     it('Valid email job is accepted', async () => {
-      const response = await submit(EMAIL_JOB);
+      const response = await service.submit(EMAIL_JOB);
 
       expect(response.status).toBe(201);
       const job = Job.parse(await response.json());
@@ -109,137 +79,125 @@ describe('job-service public job routes (the real app over HTTP)', () => {
     });
 
     it('Defaults are applied', async () => {
-      const job = await submitted({ type: 'email', payload: EMAIL_JOB.payload });
+      const job = await service.submitted({ type: 'email', payload: EMAIL_JOB.payload });
 
       expect(job.priority).toBe(JOB_LIMITS.priority.default);
       expect(job.maxAttempts).toBe(JOB_LIMITS.maxAttempts.default);
     });
 
     it('Submitted job can be read back', async () => {
-      const job = await submitted();
+      const job = await service.submitted(EMAIL_JOB);
 
-      const response = await fetch(url(`/${job.id}`));
-
-      expect(Job.parse(await response.json())).toEqual(job);
+      expect(Job.parse(await (await service.get(job.id)).json())).toEqual(job);
     });
 
-    it('Unknown job type', async () => {
-      const response = await submit({ ...EMAIL_JOB, type: 'fax' });
+    it.each([EMAIL_JOB, WEBHOOK_JOB])('Submitted job is queued ($type)', async (body) => {
+      const job = await service.submitted(body);
 
-      expect(response.status).toBe(400);
-      expect(await issuePaths(response)).toContainEqual(['type']);
-      const page = QueryJobsResponse.parse(await (await fetch(url())).json());
-      expect(page.total).toBe(0);
-    });
-
-    it('Invalid email address', async () => {
-      const response = await submit({
-        ...EMAIL_JOB,
-        payload: { ...EMAIL_JOB.payload, to: 'not-an-email' },
-      });
-
-      expect(response.status).toBe(400);
-      expect(await issuePaths(response)).toContainEqual(['payload', 'to']);
-    });
-
-    it('Empty subject', async () => {
-      const response = await submit({
-        ...EMAIL_JOB,
-        payload: { ...EMAIL_JOB.payload, subject: '' },
-      });
-
-      expect(response.status).toBe(400);
-      expect(await issuePaths(response)).toContainEqual(['payload', 'subject']);
-    });
-
-    it('Email field too long', async () => {
-      const response = await submit({
-        ...EMAIL_JOB,
-        payload: { ...EMAIL_JOB.payload, body: 'a'.repeat(EMAIL_LIMITS.bodyMaxLength + 1) },
-      });
-
-      expect(response.status).toBe(400);
-      expect(await issuePaths(response)).toContainEqual(['payload', 'body']);
-    });
-
-    it('Priority out of range', async () => {
-      const response = await submit({ ...EMAIL_JOB, priority: JOB_LIMITS.priority.max + 1 });
-
-      expect(response.status).toBe(400);
-      expect(await issuePaths(response)).toContainEqual(['priority']);
-    });
-
-    it('Max attempts out of range', async () => {
-      const response = await submit({ ...EMAIL_JOB, maxAttempts: JOB_LIMITS.maxAttempts.min - 1 });
-
-      expect(response.status).toBe(400);
-      expect(await issuePaths(response)).toContainEqual(['maxAttempts']);
-    });
-
-    it('Submitted job is queued', async () => {
-      const job = await submitted();
-
-      expect((await fixtures.queued({ jobId: job.id })).attempts).toEqual([1]);
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
     });
 
     it('Queue unavailable during submit', async () => {
-      const { service: withoutQueue } = await InProcessJobService.start({
-        env: { ...env, REDIS_URL: UNREACHABLE_REDIS_URL },
-      });
-      try {
-        const response = await submit(EMAIL_JOB, withoutQueue);
+      service.queue.enqueue.mockImplementationOnce(({ jobId, attempt }) =>
+        Promise.reject(new JobQueueUnavailableError({ jobId, attempt })),
+      );
 
-        expect(response.status).toBe(201);
-        const job = Job.parse(await response.json());
-        expect(job.status).toBe('pending');
-        const later = Job.parse(await (await fetch(url(`/${job.id}`))).json());
-        expect(later.status).toBe('pending');
-      } finally {
-        await withoutQueue.close();
+      const response = await service.submit(EMAIL_JOB);
+
+      expect(response.status).toBe(201);
+      const job = Job.parse(await response.json());
+      expect(job.status).toBe('pending');
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+      expect(await service.stored(job.id)).toEqual(job);
+    });
+
+    it('Concurrent submissions are separate jobs', async () => {
+      const jobs = await Promise.all([
+        service.submitted(EMAIL_JOB),
+        service.submitted(EMAIL_JOB),
+        service.submitted(EMAIL_JOB),
+      ]);
+
+      expect(new Set(jobs.map((job) => job.id)).size).toBe(3);
+      expect(service.queue.enqueue).toHaveBeenCalledTimes(3);
+      for (const job of jobs) {
+        expect(service.queue.enqueue).toHaveBeenCalledWith({ jobId: job.id, attempt: 1 });
       }
+      expect(await service.total()).toBe(3);
+    });
+
+    it('Unknown job type', async () => {
+      await expectRejected({ ...EMAIL_JOB, type: 'fax' }, ['type']);
+    });
+
+    it('Priority out of range', async () => {
+      await expectRejected({ ...EMAIL_JOB, priority: JOB_LIMITS.priority.max + 1 }, ['priority']);
+    });
+
+    it('Max attempts out of range', async () => {
+      await expectRejected({ ...EMAIL_JOB, maxAttempts: JOB_LIMITS.maxAttempts.min - 1 }, [
+        'maxAttempts',
+      ]);
+    });
+
+    it('Fields the server owns are ignored on submit', async () => {
+      const job = await service.submitted({
+        ...EMAIL_JOB,
+        id: UNKNOWN_ID,
+        status: 'completed',
+        attempts: 5,
+        result: { messageId: 'forged' },
+        error: ERROR,
+        startedAt: new Date().toISOString(),
+      });
+
+      expect(job.id).not.toBe(UNKNOWN_ID);
+      expect(job).toMatchObject({
+        status: 'pending',
+        attempts: 0,
+        result: null,
+        error: null,
+        startedAt: null,
+      });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
     });
   });
 
-  describe('get', () => {
-    it('Existing job', async () => {
-      const { job } = await fixtures.seed({ status: 'completed' });
-
-      const response = await fetch(url(`/${job.id}`));
-
-      expect(response.status).toBe(200);
-      expect(Job.parse(await response.json())).toEqual(job);
+  describe('submit an email job', () => {
+    const withPayload = (payload: Record<string, unknown>): unknown => ({
+      ...EMAIL_JOB,
+      payload: { ...EMAIL_JOB.payload, ...payload },
     });
 
-    it('Unknown job', async () => {
-      const response = await fetch(url(`/${UNKNOWN_ID}`));
-
-      expect(response.status).toBe(404);
-      expect(ErrorBody.parse(await response.json()).code).toBe('JOB_NOT_FOUND');
+    it('Invalid email address', async () => {
+      await expectRejected(withPayload({ to: 'not-an-email' }), ['payload', 'to']);
     });
 
-    it('Malformed id', async () => {
-      const response = await fetch(url('/abc'));
+    it('Empty subject', async () => {
+      await expectRejected(withPayload({ subject: '' }), ['payload', 'subject']);
+    });
 
-      expect(response.status).toBe(400);
-      expect(await issuePaths(response)).toContainEqual(['id']);
+    it('Email field too long', async () => {
+      await expectRejected(withPayload({ body: 'a'.repeat(EMAIL_LIMITS.bodyMaxLength + 1) }), [
+        'payload',
+        'body',
+      ]);
     });
   });
 
   describe('submit a webhook job', () => {
-    const rejected = async (payload: Record<string, unknown>, field: string): Promise<void> => {
-      const response = await submit({
-        ...WEBHOOK_JOB,
-        payload: { ...WEBHOOK_JOB.payload, ...payload },
-      });
+    const withPayload = (payload: Record<string, unknown>): unknown => ({
+      ...WEBHOOK_JOB,
+      payload: { ...WEBHOOK_JOB.payload, ...payload },
+    });
 
-      expect(response.status).toBe(400);
-      expect(await issuePaths(response)).toContainEqual(['payload', field]);
-      const page = QueryJobsResponse.parse(await (await fetch(url())).json());
-      expect(page.total).toBe(0);
+    const urlOfLength = (length: number): string => {
+      const prefix = 'https://hooks.example.com/';
+      return prefix + 'a'.repeat(length - prefix.length);
     };
 
     it('Valid webhook job is accepted', async () => {
-      const response = await submit(WEBHOOK_JOB);
+      const response = await service.submit(WEBHOOK_JOB);
 
       expect(response.status).toBe(201);
       expect(Job.parse(await response.json())).toMatchObject({
@@ -255,46 +213,80 @@ describe('job-service public job routes (the real app over HTTP)', () => {
     it('Webhook job without a body is accepted', async () => {
       const payload = { method: 'GET', url: 'http://example.com/ping' };
 
-      const response = await submit({ type: 'webhook', payload });
+      const job = await service.submitted({ type: 'webhook', payload });
 
-      expect(response.status).toBe(201);
-      expect(Job.parse(await response.json()).payload).toEqual(payload);
+      expect(job.payload).toEqual(payload);
     });
 
     it('Webhook job is read and listed like any job', async () => {
-      const email = await submitted(EMAIL_JOB);
-      const webhook = await submitted(WEBHOOK_JOB);
+      const email = await service.submitted(EMAIL_JOB);
+      const webhook = await service.submitted(WEBHOOK_JOB);
 
-      const read = Job.parse(await (await fetch(url(`/${webhook.id}`))).json());
-      const page = QueryJobsResponse.parse(await (await fetch(url())).json());
+      const read = Job.parse(await (await service.get(webhook.id)).json());
+      const page = QueryJobsResponse.parse(await (await fetch(service.url(JOBS_ROUTE))).json());
 
       expect(read).toEqual(webhook);
       expect(page.items).toEqual([webhook, email]);
     });
 
     it('Method not allowed', async () => {
-      await rejected({ method: 'DELETE' }, 'method');
-      await rejected({ method: 'post' }, 'method');
+      await expectRejected(withPayload({ method: 'DELETE' }), ['payload', 'method']);
     });
 
     it('URL with another scheme', async () => {
-      await rejected({ url: 'ftp://example.com/hook' }, 'url');
+      await expectRejected(withPayload({ url: 'ftp://example.com/hook' }), ['payload', 'url']);
+    });
+
+    it('URL missing or not a URL', async () => {
+      await expectRejected(withPayload({ url: 'not a url' }), ['payload', 'url']);
+    });
+
+    it('URL too long', async () => {
+      await expectRejected(withPayload({ url: urlOfLength(WEBHOOK_LIMITS.urlMaxLength + 1) }), [
+        'payload',
+        'url',
+      ]);
     });
 
     it('Body is not a JSON object', async () => {
-      await rejected({ body: ['a'] }, 'body');
+      await expectRejected(withPayload({ body: ['a'] }), ['payload', 'body']);
+    });
+  });
+
+  describe('get', () => {
+    it('Existing job', async () => {
+      const job = await service.seed({ status: 'completed' });
+
+      const response = await service.get(job.id);
+
+      expect(response.status).toBe(200);
+      expect(Job.parse(await response.json())).toEqual(job);
+    });
+
+    it('Unknown job', async () => {
+      await expectNotFound(await service.get(UNKNOWN_ID));
+    });
+
+    it('Malformed id', async () => {
+      expect(await service.issuePaths(await service.get('abc'))).toContainEqual(['id']);
     });
   });
 
   describe('query', () => {
     const query = async (search = ''): Promise<QueryJobsResponse> => {
-      const response = await fetch(url(search));
+      const response = await fetch(service.url(`${JOBS_ROUTE}${search}`));
       expect(response.status).toBe(200);
       return QueryJobsResponse.parse(await response.json());
     };
 
+    const submittedInOrder = async (count: number): Promise<Job[]> => {
+      const jobs: Job[] = [];
+      for (let i = 0; i < count; i += 1) jobs.push(await service.submitted(EMAIL_JOB));
+      return jobs;
+    };
+
     it('Newest first', async () => {
-      const jobs = [await submitted(), await submitted(), await submitted()];
+      const jobs = await submittedInOrder(3);
 
       const page = await query();
 
@@ -303,19 +295,38 @@ describe('job-service public job routes (the real app over HTTP)', () => {
     });
 
     it('Paging', async () => {
-      const jobs: Job[] = [];
-      for (let i = 0; i < 5; i += 1) jobs.push(await submitted());
+      const jobs = await submittedInOrder(5);
 
       const page = await query('?limit=2&offset=1');
+      const last = await query('?limit=2&offset=4');
+      const past = await query('?limit=2&offset=5');
 
       expect(page.items.map((job) => job.id)).toEqual([jobs[3]!.id, jobs[2]!.id]);
       expect(page.total).toBe(5);
+      expect(last.items.map((job) => job.id)).toEqual([jobs[0]!.id]);
+      expect(past).toEqual({ items: [], total: 5 });
     });
 
     it('Default page size', async () => {
-      for (let i = 0; i < QUERY_DEFAULT_LIMIT + 1; i += 1) await submitted();
+      const jobs = await submittedInOrder(TEST_CONFIG.queryDefaultLimit + 1);
 
-      expect((await query()).items).toHaveLength(QUERY_DEFAULT_LIMIT);
+      const page = await query();
+
+      expect(page.items.map((job) => job.id)).toEqual(
+        jobs
+          .slice(1)
+          .map((job) => job.id)
+          .reverse(),
+      );
+      expect(page.total).toBe(TEST_CONFIG.queryDefaultLimit + 1);
+    });
+
+    it('Maximum page size is accepted', async () => {
+      await submittedInOrder(TEST_CONFIG.queryMaxLimit + 1);
+
+      expect((await query(`?limit=${TEST_CONFIG.queryMaxLimit}`)).items).toHaveLength(
+        TEST_CONFIG.queryMaxLimit,
+      );
     });
 
     it('Empty query result', async () => {
@@ -323,53 +334,63 @@ describe('job-service public job routes (the real app over HTTP)', () => {
     });
 
     it('Limit above maximum', async () => {
-      const response = await fetch(url(`?limit=${QUERY_MAX_LIMIT + 1}`));
+      const response = await fetch(
+        service.url(`${JOBS_ROUTE}?limit=${TEST_CONFIG.queryMaxLimit + 1}`),
+      );
 
-      expect(response.status).toBe(400);
-      expect(ErrorBody.parse(await response.clone().json()).code).toBe('VALIDATION_FAILED');
-      expect(await issuePaths(response)).toContainEqual(['limit']);
+      expect(await service.issuePaths(response)).toContainEqual(['limit']);
     });
 
     it('Negative offset', async () => {
-      const response = await fetch(url('?offset=-1'));
+      const response = await fetch(service.url(`${JOBS_ROUTE}?offset=-1`));
 
-      expect(response.status).toBe(400);
-      expect(await issuePaths(response)).toContainEqual(['offset']);
+      expect(await service.issuePaths(response)).toContainEqual(['offset']);
     });
   });
 
   describe('delete', () => {
     it('Delete a finished job', async () => {
-      for (const status of ['completed', 'failed', 'cancelled'] as const) {
-        const { job } = await fixtures.seed({ status });
+      const status = 'completed';
+      const job = await service.seed({ status });
 
-        const response = await fetch(url(`/${job.id}`), { method: 'DELETE' });
+      const response = await service.remove(job.id);
 
-        expect(response.status).toBe(204);
-        expect(await response.text()).toBe('');
-        expect((await fetch(url(`/${job.id}`))).status).toBe(404);
-      }
+      expect(response.status).toBe(204);
+      expect(await response.text()).toBe('');
+      await expectNotFound(await service.get(job.id));
+      await expectNotFound(await service.remove(job.id));
+    });
+
+    it('Delete a finished webhook job', async () => {
+      const job = await service.seed({ status: 'completed', type: 'webhook' });
+
+      expect((await service.remove(job.id)).status).toBe(204);
+      await expectNotFound(await service.get(job.id));
     });
 
     it('Delete a job that has not finished', async () => {
-      for (const status of ['pending', 'processing'] as const) {
-        const { job } = await fixtures.seed({ status });
+      const status = 'pending';
+      const job = await service.seed({ status });
 
-        const response = await fetch(url(`/${job.id}`), { method: 'DELETE' });
+      await service.expectConflict({ response: await service.remove(job.id), status });
+      expect(await service.stored(job.id)).toEqual(job);
+    });
 
-        expect(response.status).toBe(409);
-        const body = ErrorBody.parse(await response.json());
-        expect(body.code).toBe('JOB_STATUS_CONFLICT');
-        expect(body.details).toMatchObject({ status });
-        expect(Job.parse(await (await fetch(url(`/${job.id}`))).json())).toEqual(job);
-      }
+    it('Two clients delete the same job', async () => {
+      const job = await service.seed({ status: 'completed' });
+
+      const responses = await Promise.all([service.remove(job.id), service.remove(job.id)]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([204, 404]);
+      await expectNotFound(responses.find((response) => response.status === 404)!);
     });
 
     it('Delete an unknown job', async () => {
-      const response = await fetch(url(`/${UNKNOWN_ID}`), { method: 'DELETE' });
+      await expectNotFound(await service.remove(UNKNOWN_ID));
+    });
 
-      expect(response.status).toBe(404);
-      expect(ErrorBody.parse(await response.json()).code).toBe('JOB_NOT_FOUND');
+    it('Delete with a malformed id', async () => {
+      expect(await service.issuePaths(await service.remove('abc'))).toContainEqual(['id']);
     });
   });
 });

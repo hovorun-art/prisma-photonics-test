@@ -158,7 +158,13 @@ describe('JobServiceImpl', () => {
     });
 
     it('Start a job that is not pending', async () => {
-      for (const status of ['processing', 'completed', 'failed'] as const) {
+      for (const status of [
+        'scheduled',
+        'processing',
+        'completed',
+        'failed',
+        'cancelled',
+      ] as const) {
         repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }) });
 
         const update = service.update({ id: JOB_ID, update: { status: 'processing' } });
@@ -221,7 +227,7 @@ describe('JobServiceImpl', () => {
     });
 
     it('Complete a job that is not processing', async () => {
-      for (const status of ['pending', 'completed', 'failed'] as const) {
+      for (const status of ['scheduled', 'pending', 'completed', 'failed', 'cancelled'] as const) {
         repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }) });
 
         await expect(
@@ -288,7 +294,7 @@ describe('JobServiceImpl', () => {
     });
 
     it('Fail a job that is not processing', async () => {
-      for (const status of ['pending', 'completed', 'failed'] as const) {
+      for (const status of ['scheduled', 'pending', 'completed', 'failed', 'cancelled'] as const) {
         repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }) });
 
         await expect(
