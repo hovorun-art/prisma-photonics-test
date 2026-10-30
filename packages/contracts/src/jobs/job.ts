@@ -30,10 +30,20 @@ export const FINISHED_JOB_STATUSES = [
   'cancelled',
 ] as const satisfies readonly JobStatus[];
 
-/** Ranges and defaults of a job's priority (higher = more urgent) and max attempts. */
+/** Statuses a worker may start a job from; a `scheduled` job's entry only arrives when it is due. */
+export const STARTABLE_JOB_STATUSES = [
+  'scheduled',
+  'pending',
+] as const satisfies readonly JobStatus[];
+
+/**
+ * Ranges and defaults of a job's priority (higher = more urgent) and max attempts, and how far ahead
+ * a job may be scheduled.
+ */
 export const JOB_LIMITS = {
   priority: { min: 1, max: 10, default: 5 },
   maxAttempts: { min: 1, max: 10, default: 3 },
+  scheduledAt: { maxAheadDays: 30 },
 } as const;
 
 /** Length limits of an email job, shared by job-service validation and the job-ui form. */
@@ -225,6 +235,11 @@ const CreateJobOptions = z.object({
   maxAttempts: JobMaxAttempts.default(JOB_LIMITS.maxAttempts.default),
   /** Ties the job to a group (e.g. one campaign); stored and returned as given. */
   groupId: z.uuid().optional(),
+  /**
+   * When the job may run, with a time zone (`Z` or an offset). A future time makes the job
+   * `scheduled`; how far ahead is checked by job-service against its clock.
+   */
+  scheduledAt: z.iso.datetime({ offset: true }).optional(),
 });
 
 export const CreateEmailJobRequest = CreateJobOptions.extend({

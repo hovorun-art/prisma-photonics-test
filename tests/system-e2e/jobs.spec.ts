@@ -25,6 +25,35 @@ test('Submitted email job completes end to end: API, Postgres, queue, execution,
   expect(job.attempts).toBe(1);
 });
 
+test('Scheduled job waits, then Scheduled job runs after its time: completes no earlier than it', async ({
+  request,
+}) => {
+  // Far enough ahead to read the job while it waits, close enough for a test.
+  const scheduledAt = new Date(Date.now() + 5_000).toISOString();
+  const submitted = await request.post(`${JOB_SERVICE_URL}${JOBS_ROUTE}`, {
+    data: {
+      type: 'email',
+      payload: { to: 'ada@example.com', subject: 'Later', body: 'Hi Ada' },
+      scheduledAt,
+    },
+  });
+  expect(submitted.status()).toBe(201);
+  const { id } = Job.parse(await submitted.json());
+
+  const read = async (): Promise<Job> =>
+    Job.parse(await (await request.get(`${JOB_SERVICE_URL}${JOBS_ROUTE}/${id}`)).json());
+
+  // Scheduled job waits: while its time has not come, a free worker leaves it alone.
+  const waiting = await read();
+  expect(Date.now()).toBeLessThan(Date.parse(scheduledAt));
+  expect(waiting).toMatchObject({ status: 'scheduled', attempts: 0, startedAt: null, scheduledAt });
+
+  await expect.poll(async () => (await read()).status, { timeout: 30_000 }).toBe('completed');
+  const job = await read();
+  expect(job.attempts).toBe(1);
+  expect(Date.parse(job.startedAt ?? '')).toBeGreaterThanOrEqual(Date.parse(scheduledAt));
+});
+
 test('Queue statistics through the stack: the API answers and the jobs list shows them', async ({
   page,
   request,

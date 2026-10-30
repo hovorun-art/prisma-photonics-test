@@ -42,6 +42,32 @@ describe('CreateJobRequest', () => {
     expect(parsed.maxAttempts).toBe(JOB_LIMITS.maxAttempts.default);
   });
 
+  it('Job without an execution time', () => {
+    expect(CreateJobRequest.parse(validEmailJob).scheduledAt).toBeUndefined();
+  });
+
+  it('Execution time with a time zone offset', () => {
+    for (const scheduledAt of ['2026-11-02T08:30:00Z', '2026-11-02T10:30:00.250+02:00']) {
+      expect(CreateJobRequest.parse({ ...validEmailJob, scheduledAt }).scheduledAt).toBe(
+        scheduledAt,
+      );
+    }
+  });
+
+  // Only full timestamps with seconds and an offset as `Z` or `±hh:mm` are accepted; `null` is not
+  // "no time", leaving the field out is.
+  it.each([
+    '2026-11-02',
+    '2026-11-02T08:30:00',
+    '2026-11-02T08:30Z',
+    '2026-11-02T08:30:00+0200',
+    'tomorrow',
+    1793611800000,
+    null,
+  ])('Execution time is not a timestamp: %s', (scheduledAt) => {
+    expect(issuePaths({ ...validEmailJob, scheduledAt })).toEqual([['scheduledAt']]);
+  });
+
   it('Unknown job type', () => {
     const { type: _type, ...withoutType } = validEmailJob;
     const { payload: _payload, ...withoutPayload } = validEmailJob;
@@ -441,6 +467,34 @@ describe('Job', () => {
     };
 
     expect(Job.parse(job)).toEqual(job);
+  });
+
+  it('returns the execution time of a scheduled job in UTC only', () => {
+    const timestamp = new Date().toISOString();
+    const job = {
+      id: randomUUID(),
+      type: 'email',
+      status: 'scheduled',
+      priority: 5,
+      attempts: 0,
+      maxAttempts: 3,
+      payload: validEmailJob.payload,
+      result: null,
+      error: null,
+      groupId: null,
+      scheduledAt: '2026-11-02T08:30:00.000Z',
+      startedAt: null,
+      completedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    expect(Job.parse(job)).toEqual(job);
+    expect(
+      Job.safeParse({ ...job, scheduledAt: '2026-11-02T10:30:00.000+02:00' }).error?.issues.map(
+        (issue) => issue.path,
+      ),
+    ).toEqual([['scheduledAt']]);
   });
 
   it('returns the group id of a job in a group, and requires the field', () => {

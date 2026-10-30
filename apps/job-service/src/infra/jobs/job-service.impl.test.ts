@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import { type EmailJob, FINISHED_JOB_STATUSES, type Job } from '@job-queue/contracts';
+import { type EmailJob, FINISHED_JOB_STATUSES, type Job, JOB_LIMITS } from '@job-queue/contracts';
 import { type Clock, JobStatusConflictError } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -20,6 +20,8 @@ const JOB_ID = randomUUID();
 const NOW = '2026-10-29T12:00:00.000Z';
 const PARAMS = { bulkMaxJobs: 3 };
 const PAGE_SIZE = 20;
+/** The furthest a job may be scheduled ahead of `NOW`, in milliseconds. */
+const MAX_AHEAD_MS = JOB_LIMITS.scheduledAt.maxAheadDays * 24 * 60 * 60 * 1000;
 
 describe('JobServiceImpl', () => {
   let repository: DeepMockProxy<JobRepository>;
@@ -47,6 +49,9 @@ describe('JobServiceImpl', () => {
     updatedAt: '2026-10-29T11:00:00.000Z',
     ...overrides,
   });
+
+  /** `NOW` plus the given milliseconds, as an execution time. */
+  const atNowPlus = (ms: number): string => new Date(Date.parse(NOW) + ms).toISOString();
 
   beforeEach(() => {
     repository = mockDeep<JobRepository>();
@@ -95,7 +100,12 @@ describe('JobServiceImpl', () => {
       queue.enqueue.mockResolvedValueOnce({});
       await service.create({ job: request });
 
-      expect(queue.enqueue).toHaveBeenCalledWith({ jobId: JOB_ID, attempt: 1 });
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: JOB_ID,
+        attempt: 1,
+        priority: 7,
+        runAt: null,
+      });
     });
 
     it('Queue unavailable during submit', async () => {
@@ -106,7 +116,139 @@ describe('JobServiceImpl', () => {
       const { job } = await service.create({ job: request });
 
       expect(job.status).toBe('pending');
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(repository.update).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
+        expect.any(String),
+      );
+    });
+
+    it('Job with a future execution time is scheduled', async () => {
+      const scheduledAt = atNowPlus(60_000);
+      queue.enqueue.mockResolvedValueOnce({});
+
+      const { job } = await service.create({ job: { ...request, scheduledAt } });
+
+      expect(repository.create).toHaveBeenCalledExactlyOnceWith({
+        job: expect.objectContaining({ status: 'scheduled', attempts: 0, scheduledAt }) as unknown,
+      });
+      expect(job).toMatchObject({ status: 'scheduled', attempts: 0, scheduledAt });
+    });
+
+    it('Scheduled job is queued for its time', async () => {
+      const scheduledAt = atNowPlus(60_000);
+      queue.enqueue.mockResolvedValueOnce({});
+
+      await service.create({ job: { ...request, scheduledAt } });
+
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: JOB_ID,
+        attempt: 1,
+        priority: 7,
+        runAt: scheduledAt,
+      });
+    });
+
+    it.each([
+      ['a minute before', atNowPlus(-60_000)],
+      ['exactly at', NOW],
+      // One minute before `NOW` as an instant, though its wall-clock text sorts after `NOW`.
+      ['a minute before, written with an offset,', '2026-10-29T13:59:00.000+02:00'],
+    ])('Job with a past execution time runs at once (%s now)', async (_when, scheduledAt) => {
+      queue.enqueue.mockResolvedValueOnce({});
+
+      const { job } = await service.create({ job: { ...request, scheduledAt } });
+
+      expect(job).toMatchObject({ status: 'pending', scheduledAt });
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: JOB_ID,
+        attempt: 1,
+        priority: 7,
+        runAt: scheduledAt,
+      });
+    });
+
+    it('Job without an execution time', async () => {
+      queue.enqueue.mockResolvedValueOnce({});
+
+      const { job } = await service.create({ job: request });
+
+      expect(job).toMatchObject({ status: 'pending', scheduledAt: null });
+    });
+
+    it('Execution time too far ahead', async () => {
+      const rejection = service.create({
+        job: { ...request, scheduledAt: atNowPlus(MAX_AHEAD_MS + 1) },
+      });
+
+      await expect(rejection).rejects.toBeInstanceOf(InvalidJobFieldError);
+      await expect(rejection).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: {
+          issues: [
+            expect.objectContaining({
+              path: ['scheduledAt'],
+              message: expect.stringContaining(
+                `${String(JOB_LIMITS.scheduledAt.maxAheadDays)} days`,
+              ) as unknown,
+            }),
+          ],
+        },
+      });
+      expect(repository.create).not.toHaveBeenCalled();
+      expect(queue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it.each([
+      ['in UTC', atNowPlus(MAX_AHEAD_MS)],
+      ['written with an offset', '2026-11-28T14:00:00.000+02:00'],
+    ])('Execution time at the maximum (%s)', async (_written, scheduledAt) => {
+      queue.enqueue.mockResolvedValueOnce({});
+
+      const { job } = await service.create({ job: { ...request, scheduledAt } });
+
+      expect(job.status).toBe('scheduled');
+      expect(repository.create).toHaveBeenCalledOnce();
+    });
+
+    it('Execution time too far ahead on a transit whose departure day is over', async () => {
+      const rejection = service.create({
+        job: {
+          type: 'flight-transit',
+          payload: { origin: 'LHR', destination: 'JFK', departureDate: '2026-10-28' },
+          priority: 5,
+          maxAttempts: 3,
+          scheduledAt: atNowPlus(MAX_AHEAD_MS + 1),
+        },
+      });
+
+      await expect(rejection).rejects.toBeInstanceOf(InvalidJobFieldError);
+      await expect(rejection).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: {
+          issues: [
+            expect.objectContaining({ path: ['payload', 'departureDate'] }),
+            expect.objectContaining({ path: ['scheduledAt'] }),
+          ],
+        },
+      });
+      expect(repository.create).not.toHaveBeenCalled();
+      expect(queue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('Queue unavailable during a scheduled submit', async () => {
+      queue.enqueue.mockRejectedValueOnce(
+        new JobQueueUnavailableError({ jobId: JOB_ID, attempt: 1 }),
+      );
+
+      const { job } = await service.create({ job: { ...request, scheduledAt: atNowPlus(60_000) } });
+
+      expect(job.status).toBe('scheduled');
+      expect(repository.create).toHaveBeenCalledExactlyOnceWith({
+        job: expect.objectContaining({ status: 'scheduled' }) as unknown,
+      });
+      expect(repository.update).not.toHaveBeenCalled();
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
         expect.any(String),
       );
@@ -226,8 +368,8 @@ describe('JobServiceImpl', () => {
 
       expect(queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
         entries: [
-          { jobId: ids[0], attempt: 1 },
-          { jobId: ids[1], attempt: 1 },
+          { jobId: ids[0], attempt: 1, priority: 7, runAt: null },
+          { jobId: ids[1], attempt: 1, priority: 5, runAt: null },
         ],
       });
       expect(queue.enqueue).not.toHaveBeenCalled();
@@ -302,6 +444,47 @@ describe('JobServiceImpl', () => {
       expect(queue.enqueueMany).not.toHaveBeenCalled();
     });
 
+    it('Bulk items with and without an execution time', async () => {
+      const scheduledAt = atNowPlus(60_000);
+      queue.enqueueMany.mockResolvedValueOnce({});
+
+      const { jobs } = await service.createMany({ jobs: [{ ...email, scheduledAt }, webhook] });
+
+      expect(jobs.map((job) => [job.status, job.scheduledAt])).toEqual([
+        ['scheduled', scheduledAt],
+        ['pending', null],
+      ]);
+      expect(queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
+        entries: [
+          { jobId: ids[0], attempt: 1, priority: 7, runAt: scheduledAt },
+          { jobId: ids[1], attempt: 1, priority: 5, runAt: null },
+        ],
+      });
+    });
+
+    it('Bulk item with an execution time too far ahead', async () => {
+      const rejection = service.createMany({
+        jobs: [
+          { ...email, scheduledAt: atNowPlus(MAX_AHEAD_MS) },
+          { ...webhook, scheduledAt: atNowPlus(MAX_AHEAD_MS + 1) },
+          transit('2026-10-28'),
+        ],
+      });
+
+      await expect(rejection).rejects.toBeInstanceOf(InvalidJobFieldError);
+      await expect(rejection).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: {
+          issues: [
+            expect.objectContaining({ path: ['jobs', 1, 'scheduledAt'] }),
+            expect.objectContaining({ path: ['jobs', 2, 'payload', 'departureDate'] }),
+          ],
+        },
+      });
+      expect(repository.createMany).not.toHaveBeenCalled();
+      expect(queue.enqueueMany).not.toHaveBeenCalled();
+    });
+
     it('accepts a flight transit departing today', async () => {
       queue.enqueueMany.mockResolvedValueOnce({});
 
@@ -332,7 +515,12 @@ describe('JobServiceImpl', () => {
 
       expect(job).toMatchObject({ type: 'flight-transit', status: 'pending' });
       expect(repository.create).toHaveBeenCalledOnce();
-      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: JOB_ID, attempt: 1 });
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: JOB_ID,
+        attempt: 1,
+        priority: 5,
+        runAt: null,
+      });
     });
 
     it('accepts a departure on a later day', async () => {
@@ -455,14 +643,25 @@ describe('JobServiceImpl', () => {
       expect(job.status).toBe('processing');
     });
 
+    it('Start a scheduled job', async () => {
+      const scheduledAt = '2026-10-29T11:30:00.000Z';
+      acceptsWrite();
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({ status: 'scheduled', attempts: 0, scheduledAt }),
+      });
+
+      const { job } = await service.update({ id: JOB_ID, update: { status: 'processing' } });
+
+      expect(repository.update).toHaveBeenCalledExactlyOnceWith({
+        id: JOB_ID,
+        expected: { status: 'scheduled', attempts: 0 },
+        changes: { status: 'processing', attempts: 1, startedAt: NOW },
+      });
+      expect(job.status).toBe('processing');
+    });
+
     it('Start a job that is not pending', async () => {
-      for (const status of [
-        'scheduled',
-        'processing',
-        'completed',
-        'failed',
-        'cancelled',
-      ] as const) {
+      for (const status of ['processing', 'completed', 'failed', 'cancelled'] as const) {
         repository.get.mockResolvedValueOnce({ job: storedJob({ status, attempts: 1 }) });
 
         const update = service.update({ id: JOB_ID, update: { status: 'processing' } });
@@ -482,6 +681,12 @@ describe('JobServiceImpl', () => {
       await expect(
         service.update({ id: JOB_ID, update: { status: 'processing' } }),
       ).rejects.toBeInstanceOf(JobStatusConflictError);
+      expect(repository.update).toHaveBeenCalledExactlyOnceWith({
+        id: JOB_ID,
+        expected: { status: 'pending', attempts: 0 },
+        changes: { status: 'processing', attempts: 1, startedAt: NOW },
+      });
+      expect(queue.enqueue).not.toHaveBeenCalled();
     });
 
     it('Complete a processing job', async () => {
@@ -553,7 +758,35 @@ describe('JobServiceImpl', () => {
         changes: { status: 'pending', error, completedAt: null },
       });
       expect(job.status).toBe('pending');
-      expect(queue.enqueue).toHaveBeenCalledWith({ jobId: JOB_ID, attempt: 2 });
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: JOB_ID,
+        attempt: 2,
+        priority: 5,
+        runAt: null,
+      });
+    });
+
+    it('Retried high-priority job overtakes waiting low-priority jobs', async () => {
+      acceptsWrite();
+      queue.enqueue.mockResolvedValueOnce({});
+      repository.get.mockResolvedValueOnce({
+        job: storedJob({
+          status: 'processing',
+          attempts: 1,
+          maxAttempts: 3,
+          priority: JOB_LIMITS.priority.max,
+          scheduledAt: '2026-10-29T11:30:00.000Z',
+        }),
+      });
+
+      await service.update({ id: JOB_ID, update: { status: 'failed', error } });
+
+      expect(queue.enqueue).toHaveBeenCalledExactlyOnceWith({
+        jobId: JOB_ID,
+        attempt: 2,
+        priority: JOB_LIMITS.priority.max,
+        runAt: null,
+      });
     });
 
     it('Retry survives an unavailable queue', async () => {
@@ -568,7 +801,7 @@ describe('JobServiceImpl', () => {
       const { job } = await service.update({ id: JOB_ID, update: { status: 'failed', error } });
 
       expect(job.status).toBe('pending');
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ jobId: JOB_ID, attempt: 2 }),
         expect.any(String),
       );

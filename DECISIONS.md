@@ -558,8 +558,8 @@ the next attempt.
 
 **Trade-offs:** every job costs two extra calls to job-service before it runs (read, start). A
 worker never touches the database, so a job-service outage stops all progress; calls are retried a
-configured number of times, then given up. Ordering across the queue is BullMQ's (FIFO for now;
-priority comes with its own change).
+configured number of times, then given up. Ordering across the queue is BullMQ's: higher priority
+first, first in first out within one priority (section 3).
 
 ---
 
@@ -587,9 +587,49 @@ them back to pending (or fail them on their last attempt).
 
 ## 3. Priority Queue Implementation
 
-**Approach chosen:** TBD
+**Approach chosen:** BullMQ's own priority, set on every queue entry. A job's priority is 1–10,
+higher = more urgent (the task's rule, and the scale the API and UI use). BullMQ's scale runs the
+other way (1 is its most urgent), so the adapter maps ours as `11 - priority`: 10 → 1, 1 → 10. Every
+entry gets a priority, the default 5 included, because BullMQ hands out entries *without* one before
+all prioritised entries; a single entry without a priority would jump the whole queue. Within one
+priority BullMQ keeps the order entries were added (first in, first out). A retry is a new entry
+with the job's own priority, so a failed high-priority job goes back ahead of waiting lower ones.
 
-**Why:** TBD
+**Why:** pickup is already BullMQ's atomic move from waiting to active (section 1), so ordering has
+to happen in the same place: a priority kept anywhere else (Postgres, a second queue) would be read
+by a worker only after BullMQ had already chosen an entry. BullMQ's prioritised set is one sorted
+set in Redis, so taking the most urgent entry stays one atomic step. What is ours: the scale and its
+mapping, the rule that every entry carries a priority, and that a retry keeps it. Integration tests
+against a real Redis take entries one at a time and check the order (highest first, FIFO on ties, a
+due scheduled entry slots in by its priority).
+
+**Trade-offs:** strict priority without ageing. Under a steady stream of high-priority jobs, low-
+priority jobs wait for as long as the stream lasts; ageing (raising a job's priority while it
+waits) is the fix if that ever matters. A job's priority cannot be changed once it is queued
+(editing jobs is its own change). *Alternatives considered:* one queue per priority level, polled
+from high to low (more of our own logic and up to ten Redis round trips per pickup); ordering in
+Postgres with `ORDER BY priority DESC, created_at ... FOR UPDATE SKIP LOCKED` (moves pickup out of
+BullMQ, a redesign of section 1).
+
+**Scheduled jobs.** The task's fifth critical detail has no section of its own in this template, so
+it is here. A job submitted with a `scheduledAt` in the future is stored as `scheduled`, and its
+first queue entry is a BullMQ *delayed* entry (delay = `scheduledAt` minus job-service's clock),
+with the job's priority. When the time comes BullMQ moves the entry into the prioritised set, where
+it competes by priority like any other; a worker starts the job straight from `scheduled` to
+`processing`, as the task's lifecycle diagram allows, with the same single-winner conditional write
+as a pending job. A `scheduledAt` now or in the past runs at once (`pending`); one more than 30 days
+ahead is rejected, so a typo cannot park an entry in Redis for years. A retry of a scheduled job
+runs at once: its time has passed.
+*Why delayed entries:* exact timing with no extra moving part. The alternative was a loop in
+job-service that every second moves due `scheduled` jobs to `pending` in one atomic `UPDATE` and
+queues them; it keeps the schedule in Postgres but adds a loop and up to one interval of lateness.
+*What we gave up:* the schedule lives in Redis. If Redis loses its data, or the delayed entry
+cannot be queued at submit (Redis down), the job stays `scheduled` with nothing on the queue to
+wake it; the submit is logged and still succeeds. The recovery sweep planned in `crash-recovery`
+re-queues such jobs from Postgres, the same way it handles `pending` jobs whose entry never landed.
+Clock skew between job-service and Redis only shifts the start by that skew; a worker does not
+check the time again, because a second check could drop a due entry over a few milliseconds and
+leave the job stuck.
 
 ---
 
