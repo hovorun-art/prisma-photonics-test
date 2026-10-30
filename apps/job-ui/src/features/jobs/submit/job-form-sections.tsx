@@ -1,5 +1,5 @@
 import { JOB_LIMITS } from '@job-queue/contracts';
-import type { ReactNode } from 'react';
+import { type ReactNode, useContext } from 'react';
 import { type FieldValues, type Path, useFormContext } from 'react-hook-form';
 
 import { Button } from '@/components/ui/button';
@@ -9,12 +9,15 @@ import { en } from '@/locales';
 
 import { ComingSoon } from '../../app-frame/coming-soon';
 import type { JobFormDraft } from '../model/job-form-draft';
+import { FieldIdPrefixContext } from './field-id-prefix-context';
 
 /** Error type of a message the API sent, shown as it is (not replaced by job-ui's own message). */
 export const API_ERROR = 'api';
 
 /** What a type's payload fields need from the form: input props and the error of a field. */
 export interface JobFormFields<Field extends string> {
+  /** The element id of the field's input. */
+  id(name: Field): string;
   /** Props for the field's input: id, ARIA state and the form registration. */
   input(name: Field): Record<string, unknown>;
   error(name: Field): string | undefined;
@@ -35,6 +38,8 @@ export function JobFormSections<Values extends FieldValues, Field extends Path<V
   payload: (fields: JobFormFields<Field>) => ReactNode;
 }) {
   const form = useFormContext<Values>();
+  const idPrefix = useContext(FieldIdPrefixContext);
+  const id = (name: Field) => `${idPrefix}-${name}`;
 
   const errorOf = (name: Field): string | undefined => {
     const error = form.getFieldState(name, form.formState).error;
@@ -44,9 +49,9 @@ export function JobFormSections<Values extends FieldValues, Field extends Path<V
       : draft.fieldMessage({ field: name, values: form.getValues() }).message;
   };
   const input = (name: Field, options?: { valueAsNumber: true }) => ({
-    id: `field-${name}`,
+    id: id(name),
     'aria-invalid': errorOf(name) ? true : undefined,
-    'aria-describedby': errorOf(name) ? `field-${name}-error` : undefined,
+    'aria-describedby': errorOf(name) ? `${id(name)}-error` : undefined,
     ...form.register(name, options),
   });
   // The execution fields are on every form; typed through the draft's own field names.
@@ -57,7 +62,7 @@ export function JobFormSections<Values extends FieldValues, Field extends Path<V
     <>
       <Section legend={en.submit.typeSection}>{picker}</Section>
       <Section legend={en.submit.payloadSection}>
-        {payload({ input: (name) => input(name), error: errorOf })}
+        {payload({ id, input: (name) => input(name), error: errorOf })}
       </Section>
       <Section legend={en.submit.executionSection} last>
         <div className="grid grid-cols-[repeat(auto-fit,minmax(180px,1fr))] gap-4">
@@ -167,14 +172,15 @@ export function FormField({
   hint?: string;
   children: ReactNode;
 }) {
+  const id = `${useContext(FieldIdPrefixContext)}-${name}`;
   return (
     <div className={`flex flex-col gap-1.5 ${error ? 'text-destructive' : ''}`}>
-      <Label htmlFor={`field-${name}`} className="text-[13px]">
+      <Label htmlFor={id} className="text-[13px]">
         {label}
       </Label>
       {children}
       {error ? (
-        <span id={`field-${name}-error`} className="text-xs">
+        <span id={`${id}-error`} className="text-xs">
           {error}
         </span>
       ) : (

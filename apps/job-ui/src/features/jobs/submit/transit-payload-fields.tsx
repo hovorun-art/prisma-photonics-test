@@ -22,11 +22,11 @@ export function TransitPayloadFields({ fields }: { fields: JobFormFields<Transit
         name={name}
         render={({ field }) => (
           <AirportCombobox
-            id={`field-${name}`}
+            id={fields.id(name)}
             value={field.value}
             onChange={field.onChange}
             invalid={fields.error(name) !== undefined}
-            describedBy={fields.error(name) ? `field-${name}-error` : undefined}
+            describedBy={fields.error(name) ? `${fields.id(name)}-error` : undefined}
           />
         )}
       />
