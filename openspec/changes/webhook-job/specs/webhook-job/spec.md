@@ -10,7 +10,7 @@ JSON body), how a submission is validated, and the result and error a webhook jo
 ### Requirement: Clients can submit a webhook job
 `POST /v1/jobs` with type `webhook`, a webhook payload (`method`, `url` and an optional JSON object
 `body`) and optionally a priority and max attempts SHALL store a new job and answer HTTP 201 with
-the job, just as for an email job: UUID id, status `pending`, zero attempts, unused fields `null`.
+the job, as described for any job in job-management.
 
 #### Scenario: Valid webhook job is accepted
 - **WHEN** a client submits a job with type `webhook`, method `POST`, an https URL and a JSON object body

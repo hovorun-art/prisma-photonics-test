@@ -15,6 +15,7 @@
 - `method` is upper case only (`POST`, `PUT`, `GET`); `url` is at most 2048 characters (user confirmed assumption)
 - No separate webhook body limit: the existing configured request body limit (413 `PAYLOAD_TOO_LARGE`) covers it (user confirmed assumption)
 - Result `statusCode` is a 2xx integer and `responseBody` a JSON object; the executor will report code `WEBHOOK_HTTP_ERROR`, job-service stores any non-empty code as today and does not check it (user confirmed assumption)
+- After the planning commit: job-management is made type-generic and the email-specific submit and validation rules move into the email-job spec (same scenario names, no behaviour change), mirroring webhook-job (user)
 
 ## Assumed
 

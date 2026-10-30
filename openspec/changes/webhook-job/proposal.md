@@ -27,8 +27,10 @@ Running them (the simulated call with random failures) is a later step in job-ex
   validated on submit, and the result and error it reports.
 
 ### Modified Capabilities
-None. `job-management`'s rules (unknown type, priority and attempt limits) are already generic; only
-its Purpose line ("Today the only job type is email") is updated in the main spec.
+- `job-management`: submission and its validation become type-generic (known type, payload valid for
+  it, priority and max attempts limits); the email-specific requirement and scenarios move out.
+- `email-job`: gains the email submit and payload validation rules moved from job-management, so
+  each job type's spec holds its own payload rules, like `webhook-job`. No behaviour change.
 
 ## Impact
 

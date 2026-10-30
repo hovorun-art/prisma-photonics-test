@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Defines what running an email job does: it simulates sending the email and returns a mock message
-id, so the whole job path can be exercised without a real mail server.
+Defines the email job type: its payload and how it is validated on submit, and what running it
+does: it simulates sending the email and returns a mock message id, so the whole job path can be
+exercised without a real mail server.
 
 ## Requirements
 
