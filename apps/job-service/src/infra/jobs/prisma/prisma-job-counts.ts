@@ -1,4 +1,7 @@
+import type { JobStatus, JobType } from '@job-queue/contracts';
+
 import type {
+  CountByStatusAndTypeJobCountsResponse,
   CountJobCountsRequest,
   CountJobCountsResponse,
   JobCounts,
@@ -12,7 +15,9 @@ export interface PrismaJobCountsDeps {
 
 /**
  * Counts jobs with one `SELECT` of `count(*) FILTER (...)` columns, so every number comes from the
- * same snapshot. The `(status, created_at)` and `(status, completed_at)` indexes keep it from
+ * same snapshot. `countByStatusAndType` is one `GROUP BY` over the whole table (at most one row per
+ * status and type pair); the cast to `text` returns the enum values as Postgres stores them, which
+ * are the API's. The `(status, created_at)` and `(status, completed_at)` indexes keep it from
  * scanning all finished jobs; `::int` makes Postgres return numbers instead of bigints.
  */
 export class PrismaJobCounts implements JobCounts {
@@ -44,5 +49,15 @@ export class PrismaJobCounts implements JobCounts {
     const [counts] = rows;
     if (counts === undefined) throw new Error('A count query returned no row');
     return counts;
+  }
+
+  async countByStatusAndType(): Promise<CountByStatusAndTypeJobCountsResponse> {
+    const cells = await this.d.prisma.$queryRaw<
+      { status: JobStatus; type: JobType; count: number }[]
+    >`
+      SELECT status::text AS "status", type::text AS "type", count(*)::int AS "count"
+      FROM jobs
+      GROUP BY status, type`;
+    return { cells };
   }
 }

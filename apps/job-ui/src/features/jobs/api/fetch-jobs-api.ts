@@ -16,9 +16,11 @@ import type {
   DeleteJobsApiResponse,
   GetJobsApiRequest,
   GetJobsApiResponse,
+  JobListFilters,
   JobsApi,
   QueryJobsApiRequest,
   QueryJobsApiResponse,
+  StatsJobsApiRequest,
   StatsJobsApiResponse,
 } from './jobs-api';
 
@@ -35,7 +37,7 @@ export class FetchJobsApi implements JobsApi {
 
   async query(req: QueryJobsApiRequest): Promise<QueryJobsApiResponse> {
     const response = await this.send({
-      path: `${JOBS_ROUTE}?offset=${req.offset}`,
+      path: `${JOBS_ROUTE}?${this.search({ offset: String(req.offset), ...this.filters(req) })}`,
       init: { method: 'GET' },
     });
     return this.parse({ schema: QueryJobsResponse, response });
@@ -63,9 +65,25 @@ export class FetchJobsApi implements JobsApi {
     return { id: req.id };
   }
 
-  async stats(): Promise<StatsJobsApiResponse> {
-    const response = await this.send({ path: STATS_ROUTE, init: { method: 'GET' } });
+  async stats(req: StatsJobsApiRequest): Promise<StatsJobsApiResponse> {
+    const search = this.search(this.filters(req));
+    const response = await this.send({
+      path: search === '' ? STATS_ROUTE : `${STATS_ROUTE}?${search}`,
+      init: { method: 'GET' },
+    });
     return { stats: await this.parse({ schema: QueueStats, response }) };
+  }
+
+  /** The filters that are set, as query parameters. */
+  private filters(req: JobListFilters): Record<string, string> {
+    return {
+      ...(req.status === undefined ? {} : { status: req.status }),
+      ...(req.type === undefined ? {} : { type: req.type }),
+    };
+  }
+
+  private search(params: Record<string, string>): string {
+    return new URLSearchParams(params).toString();
   }
 
   private jobPath(id: string): string {

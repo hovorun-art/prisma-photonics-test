@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { QueueStats } from './queue-stats.js';
+import { QueryStatsRequest, QueueStats } from './queue-stats.js';
 
 const validStats = {
   pending: 3,
@@ -8,6 +8,10 @@ const validStats = {
   scheduled: 0,
   recent: { windowMinutes: 1440, completed: 12, failed: 2 },
   throughput: { windowMinutes: 5, perMinute: 2.4 },
+  counts: {
+    status: { scheduled: 0, pending: 3, processing: 1, completed: 40, failed: 2, cancelled: 1 },
+    type: { email: 30, webhook: 15, 'flight-transit': 2 },
+  },
 };
 
 describe('QueueStats', () => {
@@ -25,6 +29,10 @@ describe('QueueStats', () => {
       scheduled: 0,
       recent: { windowMinutes: 1440, completed: 0, failed: 0 },
       throughput: { windowMinutes: 5, perMinute: 0 },
+      counts: {
+        status: { scheduled: 0, pending: 0, processing: 0, completed: 0, failed: 0, cancelled: 0 },
+        type: { email: 0, webhook: 0, 'flight-transit': 0 },
+      },
     };
 
     expect(QueueStats.parse(empty)).toEqual(empty);
@@ -101,5 +109,91 @@ describe('QueueStats', () => {
     const { scheduled: _scheduled, ...withoutScheduled } = validStats;
 
     expect(issuePaths(withoutScheduled)).toEqual([['scheduled']]);
+  });
+
+  it('rejects counts without a known status or type key', () => {
+    const { failed: _failed, ...statusWithoutFailed } = validStats.counts.status;
+    const { webhook: _webhook, ...typeWithoutWebhook } = validStats.counts.type;
+
+    expect(
+      issuePaths({ ...validStats, counts: { ...validStats.counts, status: statusWithoutFailed } }),
+    ).toEqual([['counts', 'status', 'failed']]);
+    expect(
+      issuePaths({ ...validStats, counts: { ...validStats.counts, type: typeWithoutWebhook } }),
+    ).toEqual([['counts', 'type', 'webhook']]);
+  });
+
+  it('rejects a count for an unknown status or type', () => {
+    expect(
+      issuePaths({
+        ...validStats,
+        counts: { ...validStats.counts, type: { ...validStats.counts.type, batch: 1 } },
+      }),
+    ).toEqual([['counts', 'type']]);
+    expect(
+      issuePaths({
+        ...validStats,
+        counts: { ...validStats.counts, status: { ...validStats.counts.status, archived: 1 } },
+      }),
+    ).toEqual([['counts', 'status']]);
+  });
+
+  it('rejects counts without the status or the type part', () => {
+    expect(issuePaths({ ...validStats, counts: { type: validStats.counts.type } })).toEqual([
+      ['counts', 'status'],
+    ]);
+    expect(issuePaths({ ...validStats, counts: { status: validStats.counts.status } })).toEqual([
+      ['counts', 'type'],
+    ]);
+  });
+
+  it('rejects a negative or fractional job count', () => {
+    expect(
+      issuePaths({
+        ...validStats,
+        counts: { ...validStats.counts, status: { ...validStats.counts.status, failed: -1 } },
+      }),
+    ).toEqual([['counts', 'status', 'failed']]);
+    expect(
+      issuePaths({
+        ...validStats,
+        counts: { ...validStats.counts, type: { ...validStats.counts.type, email: 1.5 } },
+      }),
+    ).toEqual([['counts', 'type', 'email']]);
+  });
+
+  it('rejects a missing counts part', () => {
+    const { counts: _counts, ...withoutCounts } = validStats;
+
+    expect(issuePaths(withoutCounts)).toEqual([['counts']]);
+  });
+});
+
+describe('QueryStatsRequest', () => {
+  const issuePaths = (input: unknown): PropertyKey[][] =>
+    QueryStatsRequest.safeParse(input).error?.issues.map((issue) => issue.path) ?? [];
+
+  it('accepts no filters', () => {
+    expect(QueryStatsRequest.parse({})).toEqual({});
+  });
+
+  it('accepts one status, one type, or both', () => {
+    expect(QueryStatsRequest.parse({ status: 'failed' })).toEqual({ status: 'failed' });
+    expect(QueryStatsRequest.parse({ type: 'flight-transit' })).toEqual({ type: 'flight-transit' });
+    expect(QueryStatsRequest.parse({ status: 'failed', type: 'webhook' })).toEqual({
+      status: 'failed',
+      type: 'webhook',
+    });
+  });
+
+  it.each([
+    { field: 'status', value: 'unknown' },
+    { field: 'type', value: 'batch' },
+    { field: 'status', value: '' },
+    { field: 'type', value: '' },
+    { field: 'status', value: ['failed', 'cancelled'] },
+    { field: 'type', value: ['email', 'email'] },
+  ])('rejects $field = $value with an issue on that field', ({ field, value }) => {
+    expect(issuePaths({ [field]: value })).toEqual([[field]]);
   });
 });

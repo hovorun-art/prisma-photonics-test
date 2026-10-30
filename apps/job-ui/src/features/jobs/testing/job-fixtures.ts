@@ -101,6 +101,17 @@ export class DistinctQueueStatsFixtures implements QueueStatsFixtures {
       scheduled: 7,
       recent: { windowMinutes: 1440, completed: 1234, failed: 5 },
       throughput: { windowMinutes: 5, perMinute: 2.4 },
+      counts: {
+        status: {
+          scheduled: 7,
+          pending: 12,
+          processing: 3,
+          completed: 1234,
+          failed: 5,
+          cancelled: 2,
+        },
+        type: { email: 1200, webhook: 60, 'flight-transit': 3 },
+      },
       ...req,
     };
   }
