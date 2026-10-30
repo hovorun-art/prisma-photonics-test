@@ -18,13 +18,13 @@ Owns: `apps/job-ui/package.json`, `package-lock.json`, `apps/job-ui/src/config/u
 `apps/job-ui/src/components/ui/popover.tsx`, `apps/job-ui/src/features/jobs/testing/job-fixtures.ts`,
 `docs/roadmap/03-all-job-types.md`, `DECISIONS.md` · Depends on: none · Parallel with: none
 
-- [ ] 1.1 Add `cmdk`, `leaflet`, `react-leaflet` and `@job-queue/kernel` to job-ui's dependencies and `@types/leaflet` to its dev dependencies; verify `npm install` and `npm run typecheck -w @job-queue/job-ui` succeed
-- [ ] 1.2 Add the shadcn `command.tsx` (on `cmdk`) and `popover.tsx` (on `radix-ui`) primitives; verify `npm run lint -w @job-queue/job-ui` passes
-- [ ] 1.3 Add `mapTileUrl` and `mapTileAttribution` to `UiConfig` with the OSM defaults; verify typecheck
-- [ ] 1.4 Add every new string of the change to `locales/en.ts` (transit type card, transit form labels, note, airport option, "No airport found", field messages, transit Details, report title/subtitle, tiles, cards, waypoint card, legend, Download JSON, Run again); verify typecheck
-- [ ] 1.5 Add `transitJob()` fixtures (LHR → JFK completed with a full report, and a Pacific route crossing the antimeridian) to `job-fixtures.ts`, built from `randomUUID()` and parsed with `FlightTransitJob`; verify an existing job-ui test still passes
-- [ ] 1.6 Replace the roadmap's `flight-transit-map` row with `flight-transit-job-ui` and record the `cmdk` choice with its numbers and reason in `DECISIONS.md`; verify the files read as decided
-- [ ] 1.7 Show the stage's diff and commit message (`chore(job-ui): add transit dependencies, config, strings and fixtures`) and commit after the user's approval
+- [x] 1.1 Add `cmdk`, `leaflet`, `react-leaflet` and `@job-queue/kernel` to job-ui's dependencies and `@types/leaflet` to its dev dependencies; verify `npm install` and `npm run typecheck -w @job-queue/job-ui` succeed
+- [x] 1.2 Add the shadcn `command.tsx` (on `cmdk`) and `popover.tsx` (on `radix-ui`) primitives; verify `npm run lint -w @job-queue/job-ui` passes
+- [x] 1.3 Add `mapTileUrl` and `mapTileAttribution` to `UiConfig` with the OSM defaults; verify typecheck
+- [x] 1.4 Add every new string of the change to `locales/en.ts` (transit type card, transit form labels, note, airport option, "No airport found", field messages, transit Details, report title/subtitle, tiles, cards, waypoint card, legend, Download JSON, Run again); verify typecheck
+- [x] 1.5 Add `transitJob()` fixtures (LHR → JFK completed with a full report, and a Pacific route crossing the antimeridian) to `job-fixtures.ts`, built from `randomUUID()` and parsed with `FlightTransitJob`; verify an existing job-ui test still passes
+- [x] 1.6 Replace the roadmap's `flight-transit-map` row with `flight-transit-job-ui` and record the `cmdk` choice with its numbers and reason in `DECISIONS.md`; verify the files read as decided
+- [x] 1.7 Show the stage's diff and commit message (`chore(job-ui): add transit dependencies, config, strings and fixtures`) and commit after the user's approval
 
 ## 2. Transit form
 
