@@ -7,7 +7,7 @@ trade-offs are in [DECISIONS.md](DECISIONS.md), AI usage in `AI_USAGE.md`.
 > Status: email jobs run end to end: submit from the UI or the API, a job-execution-service
 > instance picks the job from the queue and runs it, and the job ends `completed` with a mock
 > message id. job-ui lists jobs, shows a job, submits email jobs and deletes finished ones, and
-follows job groups (a list of groups and a page per group with its progress). Next
+> follows job groups (a list of groups and a page per group with its progress). Next
 > steps are in [docs/roadmap/](docs/roadmap/). The full API is documented at
 > http://localhost:3000/docs.
 

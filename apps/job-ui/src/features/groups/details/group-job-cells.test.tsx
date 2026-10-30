@@ -57,6 +57,13 @@ describe('GroupJobCells', () => {
       screen.getByRole('link', { name: cellName(j) }).getAttribute('data-kind'),
     );
     expect(kinds).toEqual(['completed', 'failed', 'failed', 'remaining', 'remaining']);
+    // The design's colours: completed blue, failed red, remaining grey (tokens in `index.css`).
+    const colours = jobs.map((j) => screen.getByRole('link', { name: cellName(j) }).className);
+    expect(colours[0]).toContain('bg-status-processing');
+    expect(colours[1]).toContain('bg-status-failed');
+    expect(colours[2]).toContain('bg-status-failed');
+    expect(colours[3]).toContain('bg-border');
+    expect(colours[4]).toContain('bg-border');
   });
 
   it('Cell tooltip: hovering a cell shows the job’s short id and status', async () => {

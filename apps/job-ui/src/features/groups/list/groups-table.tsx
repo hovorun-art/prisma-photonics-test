@@ -1,10 +1,10 @@
 import type { JobGroup } from '@job-queue/contracts';
 import { Link } from 'react-router';
 
-import { Skeleton } from '@/components/ui/skeleton';
 import { en } from '@/locales';
 
 import { useJobPresenter } from '../../jobs/hooks/use-job-presenter';
+import { LIST_CELL as CELL, ListTable } from '../../jobs/list/list-table';
 import { StatusBadge } from '../../jobs/list/status-badge';
 import { GroupProgressImpl } from '../model/group-progress.impl';
 
@@ -15,45 +15,19 @@ const COLUMNS = [
   en.groups.columns.created,
   en.groups.columns.finished,
 ];
-const SKELETON_ROWS = 5;
-const CELL = 'px-2 py-3 first:pl-5 last:pr-5';
 const progress = new GroupProgressImpl();
 
 /** The groups table, styled like the jobs table (design "Main"); scrolls on narrow screens. */
 export function GroupsTable({ groups }: { groups: readonly JobGroup[] | undefined }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[720px] border-collapse text-left">
-        <thead className="h-10 bg-surface-muted text-xs font-medium tracking-[0.04em] text-muted-foreground uppercase">
-          <tr>
-            {COLUMNS.map((column) => (
-              <th key={column} scope="col" className={`${CELL} font-medium`}>
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        {groups ? (
-          <tbody>
-            {groups.map((group) => (
-              <GroupRow key={group.id} group={group} />
-            ))}
-          </tbody>
-        ) : (
-          <tbody aria-label={en.groups.loading} aria-busy="true">
-            {Array.from({ length: SKELETON_ROWS }, (_, i) => (
-              <tr key={i} className="border-t border-border-soft">
-                {COLUMNS.map((column) => (
-                  <td key={column} className={CELL}>
-                    <Skeleton className="h-4 w-full" />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        )}
-      </table>
-    </div>
+    <ListTable
+      columns={COLUMNS}
+      rows={groups?.map((group) => (
+        <GroupRow key={group.id} group={group} />
+      ))}
+      loadingLabel={en.groups.loading}
+      minWidth="min-w-[720px]"
+    />
   );
 }
 

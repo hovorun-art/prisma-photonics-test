@@ -1,15 +1,16 @@
-import { Link, useParams } from 'react-router';
+import { useParams } from 'react-router';
 
-import { Skeleton } from '@/components/ui/skeleton';
 import { en } from '@/locales';
 
 import { ApiError } from '../../jobs/api/api-error';
+import { Breadcrumb } from '../../jobs/details/breadcrumb';
+import { DetailsSkeleton } from '../../jobs/details/details-skeleton';
+import { NotFoundCard } from '../../jobs/details/not-found-card';
 import { LiveIndicator } from '../../jobs/list/live-indicator';
 import { StatusBadge } from '../../jobs/list/status-badge';
 import { useGroup } from '../hooks/use-group';
 import { useGroupJobs } from '../hooks/use-group-jobs';
 import { GroupDetailsList } from './group-details-list';
-import { GroupNotFound } from './group-not-found';
 import { GroupProgressCard } from './group-progress-card';
 
 /**
@@ -23,21 +24,21 @@ export function GroupPage() {
   const notFound =
     !query.isValidId ||
     (query.error instanceof ApiError && query.error.code === 'JOB_GROUP_NOT_FOUND');
-  if (notFound) return <GroupNotFound />;
+  if (notFound) {
+    return (
+      <NotFoundCard
+        title={en.group.notFoundTitle}
+        hint={en.group.notFoundHint}
+        to="/groups"
+        linkLabel={en.group.backToGroups}
+      />
+    );
+  }
 
   const group = query.data;
   return (
     <>
-      <nav
-        aria-label={en.group.breadcrumb}
-        className="flex gap-2 text-[13px] text-muted-foreground"
-      >
-        <Link to="/groups" className="text-muted-foreground">
-          {en.group.groups}
-        </Link>
-        <span aria-hidden="true">/</span>
-        <span className="font-mono text-xs text-foreground">{id}</span>
-      </nav>
+      <Breadcrumb label={en.group.breadcrumb} parent={en.group.groups} to="/groups" id={id} />
       {group ? (
         <>
           <div className="flex flex-wrap items-center justify-between gap-4">
@@ -57,14 +58,7 @@ export function GroupPage() {
           </div>
         </>
       ) : (
-        <div
-          aria-label={en.group.loading}
-          aria-busy="true"
-          className="flex flex-wrap items-start gap-5"
-        >
-          <Skeleton className="h-64 min-w-0 flex-[999_1_560px] rounded-xl" />
-          <Skeleton className="h-64 min-w-0 flex-[1_1_300px] rounded-xl" />
-        </div>
+        <DetailsSkeleton label={en.group.loading} />
       )}
     </>
   );

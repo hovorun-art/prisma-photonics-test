@@ -35,8 +35,9 @@ none
 - [x] 1.3 Add optional `groupId` and `limit` to `QueryJobsApiRequest` and send them in
   `FetchJobsApi.query`; verify 1.2 passes
 - [x] 1.4 Write failing `fetch-groups-api.test.ts` (MSW): `query({ offset })` returns the parsed
-  page; `get({ id })` returns the parsed group; a 404 throws `ApiError` with
-  `JOB_GROUP_NOT_FOUND`; a network failure throws `ApiError` without a code
+  page; `get({ id })` returns the parsed group; an answer that breaks the group contract throws
+  `ApiError`. Error bodies (e.g. 404 `JOB_GROUP_NOT_FOUND`) and network failures are tested once,
+  in `fetch-json-api-client.test.ts`, since both feature APIs share that client (test review)
 - [x] 1.5 Add `GroupsApi` (`groups-api.ts`, Request/Response types), `FetchGroupsApi`,
   `GroupsApiContext` and `useGroupsApi`; provide a groups API in `test-providers.tsx`; add
   `groupFixtures` in `src/features/groups/testing/`; verify 1.4 passes

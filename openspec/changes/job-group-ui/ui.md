@@ -60,3 +60,19 @@ Top to bottom (seen):
 Tokens: the job details page already uses this design's palette (`text-muted-foreground`,
 `bg-secondary`, `Card`, `border-[#F3F3F1]`); the group page reuses those. Fidelity is "same layout
 and feel" with the project's tokens (decided), not pixel-exact.
+
+## Comparison with the built page
+
+Done in task 4.6: the built app (`vite preview`) at 1440×1280 with mocked APIs, a running group of
+250 jobs (158 completed, 2 failed), screenshot compared region by region with `BatchJob`. The
+screenshots are working files and are not committed.
+
+- Match: breadcrumb "Groups / <id>"; mono id with the status pill; the two columns (main and
+  Details aside) and their wrapping; the progress card with the 44px percentage, "160 of 250 jobs",
+  the 8px bar on the light blue track, three tiles with swatches and mono values, "Jobs 1–250" and
+  the 25-column grid of square cells (blue, red, grey); the Details card's key/value rows.
+- Differs, on purpose: no type badge, Cancel, Rate/Elapsed/ETA, checkpoint text, Result, Worker
+  lease or Payload (decided); the live indicator on the title row (decided); the Remaining swatch
+  and remaining cells use the `border` token (`#E6E6E3`) for the design's `#DADAD6` swatch
+  (project tokens, decided "same layout and feel").
+- The groups list has no design of its own; it matches the jobs list's table, pager and header.
