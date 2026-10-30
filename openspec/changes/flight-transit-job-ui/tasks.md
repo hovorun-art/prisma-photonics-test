@@ -75,8 +75,8 @@ Depends on: 1, 3 · Parallel with: none
 Owns: none beyond fixes the checks require · Depends on: 1, 2, 3, 4 · Parallel with: none
 
 - [x] 5.1 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`) and `npm run test:e2e`; verify all pass
-- [ ] 5.2 Run the `change-verifier` subagent in the foreground; verify it returns PASS
-- [ ] 5.3 If 5.1 or 5.2 needed fixes, show them and commit after the user's approval (`fix(job-ui): ...`)
+- [x] 5.2 Run the `change-verifier` subagent in the foreground; verify it returns PASS
+- [x] 5.3 If 5.1 or 5.2 needed fixes, show them and commit after the user's approval (`fix(job-ui): ...`)
 
 ## 6. Shared UTC departure-day rule (added during apply)
 
@@ -85,7 +85,7 @@ Owns: `packages/kernel/src/domain/jobs/departure-day.ts`, `packages/kernel/src/i
 - [x] 6.1 Write failing kernel unit tests for `UtcDepartureDay` (today in UTC, earlier days over, today and later not over, just after midnight UTC); see them fail
 - [x] 6.2 Implement `DepartureDay` and `UtcDepartureDay` in the kernel and use them from job-service's submit check and job-ui's transit form, dropping both local copies; verify the full checks pass
 - [x] 6.3 Run the `test-case-reviewer` subagent on the kernel unit tests of `utc-departure-day`; add the missing cases it reports or note why they belong elsewhere
-- [ ] 6.4 Merge `master` (with `flight-transit-job-execution`) into the branch after the user's approval, correct the proposal's outdated lines, and verify the full checks and the change-verifier pass
+- [x] 6.4 Merge `master` (with `flight-transit-job-execution`) into the branch after the user's approval, correct the proposal's outdated lines, and verify the full checks and the change-verifier pass
 
 ## Workflow follow-up
 

@@ -13,8 +13,8 @@ See proposal.md for the motivation and `specs/job-ui/spec.md` for the behaviour.
   `packages/contracts`; job-service checks the departure day against UTC.
 - job-ui's Playwright suite (`test/e2e/jobs.spec.ts`) runs the built app against a job-service
   mocked with `page.route`, without network.
-- Nothing produces completed transit jobs yet (`flight-transit-job-execution` is a later change), so
-  every report test runs on fixture jobs.
+- When this change was planned nothing produced completed transit jobs (`flight-transit-job-execution`
+  was built in parallel and merged during apply), so every report test runs on fixture jobs.
 
 ## Goals / Non-Goals
 
@@ -26,7 +26,8 @@ See proposal.md for the motivation and `specs/job-ui/spec.md` for the behaviour.
   components only lay out what they return.
 
 **Non-Goals:**
-- No backend or contract change; no worker.
+- No contract or API change and no worker; the only backend change is moving job-service's "departure
+  day not over in UTC" rule into the kernel so job-ui shares it (no behaviour change).
 - No offline tiles or own tile server; the tile source is only configurable.
 
 ## Decisions
@@ -151,8 +152,9 @@ completed (`Intl.NumberFormat('en-GB')`, rounded km).
   needs a real layout (line drawn, short way across 180°) is asserted in Playwright.
 - [OSM tile usage policy: public tiles are for light use and need attribution] → attribution shown;
   the tile URL is config, so a deployment can switch servers; tests never hit the network.
-- [Completed transit jobs cannot be produced until the worker exists] → all report tests use
-  fixtures that pass `FlightTransitJobResult`; the system e2e is added with the worker change.
+- [The worker (`flight-transit-job-execution`) was built in parallel and merged into `master` during
+  apply] → the report tests run on fixtures that pass `FlightTransitJobResult`, the same contract the
+  worker's reports are checked against; no system e2e is added in this change (decided).
 - [Local time-zone abbreviations depend on the browser's ICU data (e.g. `GMT+1` instead of `BST`)]
   → tests assert zones whose names are stable in Node and Chromium (`GMT`, `EDT`); the value is
   still correct where the abbreviation differs.

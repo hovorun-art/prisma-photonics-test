@@ -20,8 +20,8 @@ submit a transit job from the UI and read its report, route included, there.
   disabled. Transit jobs that wait, run or failed keep the normal job page.
 - The Aircraft transit job type is no longer listed among the disabled features.
 - This change also takes over the roadmap's `flight-transit-map` change.
-- Out of scope: generating the report (`flight-transit-job-execution`); until it is built, transit
-  jobs do not complete in a running system.
+- Out of scope: generating the report, which `flight-transit-job-execution` does (merged into
+  `master` while this change was built, so transit jobs now complete in a running system).
 
 ## Capabilities
 
