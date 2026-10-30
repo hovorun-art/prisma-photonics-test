@@ -1,3 +1,5 @@
+import type { WholeNumberFormat } from '@/lib/whole-number-format';
+
 import type {
   CountStatsFormatRequest,
   StatsFormat,
@@ -5,23 +7,30 @@ import type {
   ThroughputStatsFormatRequest,
 } from './stats-format';
 
+export interface IntlStatsFormatDeps {
+  /** job-ui's shared whole-number format, so counts are grouped like every other number. */
+  readonly wholeNumbers: WholeNumberFormat;
+}
+
 export interface IntlStatsFormatParams {
   /** Written right after the throughput, e.g. `/min`. */
   readonly perMinuteUnit: string;
 }
 
-/** `StatsFormat` with `Intl.NumberFormat` in English (`1,234`, `2.4/min`). */
+/** `StatsFormat` with job-ui's whole-number format for counts and one decimal for rates. */
 export class IntlStatsFormat implements StatsFormat {
-  private readonly counts = new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 });
-  private readonly rates = new Intl.NumberFormat('en-US', {
+  private readonly rates = new Intl.NumberFormat('en-GB', {
     minimumFractionDigits: 1,
     maximumFractionDigits: 1,
   });
 
-  constructor(private readonly p: IntlStatsFormatParams) {}
+  constructor(
+    private readonly d: IntlStatsFormatDeps,
+    private readonly p: IntlStatsFormatParams,
+  ) {}
 
   count(req: CountStatsFormatRequest): StatsFormatResponse {
-    return { text: this.counts.format(req.value) };
+    return { text: this.d.wholeNumbers.format({ value: req.value }).text };
   }
 
   throughput(req: ThroughputStatsFormatRequest): StatsFormatResponse {

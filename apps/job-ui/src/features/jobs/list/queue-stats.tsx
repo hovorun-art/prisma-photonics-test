@@ -2,13 +2,17 @@ import type { QueueStats as QueueStatsBody } from '@job-queue/contracts';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/class-names';
+import { IntlWholeNumberFormat } from '@/lib/whole-number-format';
 import { en } from '@/locales';
 
 import { useQueueStats } from '../hooks/use-queue-stats';
 import { IntlStatsFormat } from '../model/intl-stats-format';
 import { STATUS_DOT } from '../model/status-style';
 
-const FORMAT = new IntlStatsFormat({ perMinuteUnit: en.list.stats.perMinute });
+const FORMAT = new IntlStatsFormat(
+  { wholeNumbers: new IntlWholeNumberFormat() },
+  { perMinuteUnit: en.list.stats.perMinute },
+);
 
 /** The cards of design "Main", in order, each with the text of its value. */
 const STATS = [

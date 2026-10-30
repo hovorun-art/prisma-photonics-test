@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
+import { IntlWholeNumberFormat } from '@/lib/whole-number-format';
+
 import { IntlStatsFormat } from './intl-stats-format';
 
-const format = new IntlStatsFormat({ perMinuteUnit: '/min' });
+const format = new IntlStatsFormat(
+  { wholeNumbers: new IntlWholeNumberFormat() },
+  { perMinuteUnit: '/min' },
+);
 
 describe('IntlStatsFormat', () => {
   it.each([

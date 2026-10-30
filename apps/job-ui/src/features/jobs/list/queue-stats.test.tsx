@@ -75,7 +75,7 @@ describe('QueueStats', () => {
 
     renderStats();
 
-    await screen.findByText('1,234');
+    await screen.findByText('1,234', {}, POLL_WAIT);
     const region = screen.getByRole('region', { name: en.list.statsLabel });
     expect(
       within(region)
@@ -90,7 +90,7 @@ describe('QueueStats', () => {
 
     renderStats();
 
-    await screen.findByText('1,234');
+    await screen.findByText('1,234', {}, POLL_WAIT);
     const dots: [string, string][] = [
       [en.list.stats.pending, STATUS_DOT.pending],
       [en.list.stats.processing, STATUS_DOT.processing],
@@ -143,7 +143,7 @@ describe('QueueStats', () => {
 
     renderStats(20);
 
-    await screen.findByText('12');
+    await screen.findByText('12', {}, POLL_WAIT);
     expect(await within(card(en.list.stats.pending)).findByText('40', {}, POLL_WAIT)).toBeVisible();
   });
 
@@ -152,7 +152,7 @@ describe('QueueStats', () => {
 
     renderStats(20);
 
-    await screen.findByText('1,234');
+    await screen.findByText('1,234', {}, POLL_WAIT);
     await expect.poll(calls, POLL_WAIT).toBeGreaterThan(2);
     expect(cardValues()).toEqual(['12', '3', '7', '1,234', '5', '2.4/min']);
   });
@@ -183,7 +183,7 @@ describe('QueueStats', () => {
 
     renderStats();
 
-    await screen.findByText('1,234');
+    await screen.findByText('1,234', {}, POLL_WAIT);
     for (const label of LABELS) {
       expect(card(label).closest('[aria-disabled="true"]')).toBeNull();
     }
