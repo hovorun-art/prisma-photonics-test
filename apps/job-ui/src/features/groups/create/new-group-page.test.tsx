@@ -642,5 +642,51 @@ describe('NewGroupPage', () => {
       expect(await screen.findByRole('alert')).toHaveTextContent('The queue is unavailable');
       expect(sent.deletes).toEqual([group.id]);
     });
+
+    it("Delete fails after a failed submit: only the submit's error is shown", async () => {
+      const user = userEvent.setup();
+      const group = groupFixtures.build();
+      answerGroups(() => HttpResponse.json(group, { status: 201 }));
+      answerBulk(() => errorBody(503, 'QUEUE_UNAVAILABLE', 'The queue is unavailable'));
+      server.use(
+        http.delete(`${GROUPS_URL}/:id`, ({ params }) => {
+          sent.deletes.push(String(params.id));
+          return errorBody(503, 'JOB_SERVICE_UNAVAILABLE', 'job-service is unavailable');
+        }),
+      );
+      renderPage();
+      await fillEmail(user);
+
+      await user.click(createButton(1));
+
+      const alert = await screen.findByRole('alert');
+      expect(alert).toHaveTextContent('The queue is unavailable');
+      expect(alert).not.toHaveTextContent('job-service is unavailable');
+      expect(sent.deletes).toEqual([group.id]);
+    });
+
+    it('Try again after a failed submit: a new group is created and the jobs carry its id', async () => {
+      const user = userEvent.setup();
+      const failed = groupFixtures.build();
+      const created = groupFixtures.build();
+      answerGroups(
+        () => HttpResponse.json(failed, { status: 201 }),
+        () => HttpResponse.json(created, { status: 201 }),
+      );
+      answerBulk(
+        () => errorBody(503, 'QUEUE_UNAVAILABLE', 'The queue is unavailable'),
+        () => HttpResponse.json({ items: [] }, { status: 201 }),
+      );
+      renderPage();
+      await fillEmail(user);
+      await user.click(createButton(1));
+      expect(await screen.findByRole('alert')).toBeInTheDocument();
+
+      await user.click(createButton(1));
+
+      await expect.poll(currentPath).toBe(`/groups/${created.id}`);
+      expect(sent.groups).toBe(2);
+      expect(sent.bulks[1]).toMatchObject({ jobs: [{ groupId: created.id }] });
+    });
   });
 });

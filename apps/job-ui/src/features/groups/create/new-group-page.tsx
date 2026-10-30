@@ -16,13 +16,6 @@ import type { GroupJobSeed, GroupJobTabs } from '../model/group-job-tabs';
 import { GroupJobTabsImpl } from '../model/group-job-tabs.impl';
 import { GroupJobTab, type GroupJobTabHandle } from './group-job-tab';
 
-/** The name of each job type, as the submit page's type cards show it. */
-const TYPE_NAMES: Readonly<Record<JobType, string>> = {
-  email: en.submit.types.email.name,
-  webhook: en.submit.types.webhook.name,
-  'flight-transit': en.submit.types.transit.name,
-};
-
 /**
  * Create a group with its jobs, one tab per job (layout of the submit page, no request preview).
  * On "Create group" every tab is checked, then the group is created and its jobs submitted;
@@ -161,7 +154,10 @@ export function NewGroupPage() {
                     setTabs((current) => current.open({ index }).next);
                   }}
                 >
-                  {en.newGroup.tabLabel(index + 1, TYPE_NAMES[types[tab.key] ?? tab.seed.type])}
+                  {en.newGroup.tabLabel(
+                    index + 1,
+                    en.list.typeFilters[types[tab.key] ?? tab.seed.type],
+                  )}
                 </button>
                 {tabs.canRemove && (
                   <button

@@ -1,38 +1,23 @@
-import { zodResolver } from '@hookform/resolvers/zod';
-import { type CreateJobRequest, JOB_LIMITS, type JobType } from '@job-queue/contracts';
+import type { CreateJobRequest, JobType } from '@job-queue/contracts';
 import { Copy } from 'lucide-react';
 import { type ReactNode, useEffect, useState } from 'react';
-import {
-  type DefaultValues,
-  type FieldValues,
-  FormProvider,
-  type Path,
-  useForm,
-} from 'react-hook-form';
+import { type FieldValues, FormProvider, type Path } from 'react-hook-form';
 
 import { Button } from '@/components/ui/button';
 import { en } from '@/locales';
 
-import { useEmailJobDraft } from '../../jobs/hooks/use-email-job-draft';
-import { useTransitJobDraft } from '../../jobs/hooks/use-transit-job-draft';
-import { useWebhookJobDraft } from '../../jobs/hooks/use-webhook-job-draft';
+import { useTypedJobForm } from '../../jobs/hooks/use-typed-job-form';
+import { DEFAULT_JOB_FORM_EXECUTION } from '../../jobs/model/default-job-form-execution';
 import type { JobFormDraft, JobFormExecution } from '../../jobs/model/job-form-draft';
-import { EmailPayloadFields } from '../../jobs/submit/email-payload-fields';
 import { FieldIdPrefixContext } from '../../jobs/submit/field-id-prefix-context';
 import {
   API_ERROR,
   type JobFormFields,
   JobFormSections,
 } from '../../jobs/submit/job-form-sections';
+import { JobTypeForms } from '../../jobs/submit/job-type-forms';
 import { JobTypePicker } from '../../jobs/submit/job-type-picker';
-import { TransitPayloadFields } from '../../jobs/submit/transit-payload-fields';
-import { WebhookPayloadFields } from '../../jobs/submit/webhook-payload-fields';
 import type { GroupJobSeed } from '../model/group-job-tabs';
-
-const DEFAULT_EXECUTION: JobFormExecution = {
-  priority: JOB_LIMITS.priority.default,
-  maxAttempts: JOB_LIMITS.maxAttempts.default,
-};
 
 export interface ValidateGroupJobTabResponse {
   /** The job as the API accepts it, or `null` when a field is invalid (now shown on the form). */
@@ -83,13 +68,11 @@ export function GroupJobTab({
     const priority = seed.values?.priority;
     const maxAttempts = seed.values?.maxAttempts;
     return {
-      priority: typeof priority === 'number' ? priority : DEFAULT_EXECUTION.priority,
-      maxAttempts: typeof maxAttempts === 'number' ? maxAttempts : DEFAULT_EXECUTION.maxAttempts,
+      priority: typeof priority === 'number' ? priority : DEFAULT_JOB_FORM_EXECUTION.priority,
+      maxAttempts:
+        typeof maxAttempts === 'number' ? maxAttempts : DEFAULT_JOB_FORM_EXECUTION.maxAttempts,
     };
   });
-  const emailDraft = useEmailJobDraft();
-  const webhookDraft = useWebhookJobDraft();
-  const transitDraft = useTransitJobDraft();
 
   const choose = (next: JobType) => {
     if (next === type) return;
@@ -112,33 +95,10 @@ export function GroupJobTab({
   return (
     <FieldIdPrefixContext value={`job-${tabKey}`}>
       {/* Keyed by type: a switch starts a fresh form, so the payload fields start empty. */}
-      {type === 'flight-transit' && (
-        <TabForm
-          key="flight-transit"
-          type="flight-transit"
-          draft={transitDraft}
-          payload={(fields) => <TransitPayloadFields fields={fields} />}
-          {...common}
-        />
-      )}
-      {type === 'webhook' && (
-        <TabForm
-          key="webhook"
-          type="webhook"
-          draft={webhookDraft}
-          payload={(fields) => <WebhookPayloadFields fields={fields} />}
-          {...common}
-        />
-      )}
-      {type === 'email' && (
-        <TabForm
-          key="email"
-          type="email"
-          draft={emailDraft}
-          payload={(fields) => <EmailPayloadFields fields={fields} />}
-          {...common}
-        />
-      )}
+      <JobTypeForms
+        type={type}
+        render={(parts) => <TabForm key={parts.type} {...parts} {...common} />}
+      />
     </FieldIdPrefixContext>
   );
 }
@@ -171,13 +131,11 @@ function TabForm<Values extends FieldValues, Field extends Path<Values>>({
   onErrorsChange: (tabKey: number, hasErrors: boolean) => void;
   onHandle: (tabKey: number, handle: GroupJobTabHandle | null) => void;
 }) {
-  // Checked with the type's form schema, built from the contract job-service validates with.
-  const [resolver] = useState(() =>
-    zodResolver<Values, unknown, CreateJobRequest>(draft.schema().schema),
-  );
-  const form = useForm<Values, unknown, CreateJobRequest>({
-    defaultValues: (initial ?? draft.emptyValues({ execution }).values) as DefaultValues<Values>,
-    resolver,
+  const form = useTypedJobForm({
+    draft,
+    initialValues: initial,
+    execution,
+    onExecutionChange,
     // The form may be in a hidden tab; the page opens the first invalid tab instead.
     shouldFocusError: false,
   });
@@ -186,20 +144,6 @@ function TabForm<Values extends FieldValues, Field extends Path<Values>>({
   useEffect(() => {
     onErrorsChange(tabKey, hasErrors);
   }, [tabKey, hasErrors, onErrorsChange]);
-  useEffect(
-    () =>
-      form.subscribe({
-        formState: { values: true },
-        callback: ({ values: current }) => {
-          const { priority, maxAttempts } = current as Partial<JobFormExecution>;
-          onExecutionChange({
-            priority: priority ?? DEFAULT_EXECUTION.priority,
-            maxAttempts: maxAttempts ?? DEFAULT_EXECUTION.maxAttempts,
-          });
-        },
-      }),
-    [form, onExecutionChange],
-  );
   useEffect(() => {
     onHandle(tabKey, {
       validate: () =>
