@@ -20,10 +20,6 @@ interface FilterOption<T> {
   readonly count: number | undefined;
 }
 
-const capitalized = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
-const sum = (counts: Record<string, number>) =>
-  Object.values(counts).reduce((total, count) => total + count, 0);
-
 /**
  * Status and type filters and search (design "Main"). Each filter has one value at a time, All
  * first; each button shows how many jobs choosing it would list, faceted by the other filter, as
@@ -39,16 +35,19 @@ export function JobsToolbar({
   counts: QueueStats['counts'] | undefined;
   onChange: (filters: JobListFilters) => void;
 }) {
+  // All counts what its facet's buttons count together: every job under the other filter.
+  const allStatuses = counts && Object.values(counts.status).reduce((a, b) => a + b, 0);
+  const allTypes = counts && Object.values(counts.type).reduce((a, b) => a + b, 0);
   const statusOptions: FilterOption<JobStatus>[] = [
-    { label: en.list.allStatuses, value: undefined, count: counts && sum(counts.status) },
+    { label: en.list.allStatuses, value: undefined, count: allStatuses },
     ...JobStatus.options.map((status) => ({
-      label: capitalized(en.statuses[status]),
+      label: en.statuses[status].charAt(0).toUpperCase() + en.statuses[status].slice(1),
       value: status,
       count: counts?.status[status],
     })),
   ];
   const typeOptions: FilterOption<JobType>[] = [
-    { label: en.list.allTypes, value: undefined, count: counts && sum(counts.type) },
+    { label: en.list.allTypes, value: undefined, count: allTypes },
     ...JobType.options.map((type) => ({
       label: en.list.typeFilters[type],
       value: type,
