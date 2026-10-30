@@ -2,7 +2,7 @@
 
 A client submits many jobs at once, of any types (for example an email campaign), and follows them
 as one group. This is the project's answer to the task's Batch job: the items of a group are real
-jobs, each with its own status, retries and recovery. API only, no UI.
+jobs, each with its own status, retries and recovery. job-ui shows the groups (`job-group-ui`).
 
 ## Changes
 
@@ -10,6 +10,8 @@ jobs, each with its own status, retries and recovery. API only, no UI.
 |---|---|---|
 | `job-bulk-create` | Bulk submit in job-service (`POST /v1/jobs/bulk`, all or nothing, one transaction and one queue call), an optional `groupId` on every job, and a `groupId` filter on the job query | `job-list-filters-service` |
 | `job-group-service` | A new app with its own Postgres schema and API: create an empty group (the client submits its jobs with the group's id and deletes the still-empty group if that fails), get and list groups with their total, completed and failed counts; it polls job-service and is `completed` when every child completed, `failed` when any child failed or was cancelled | `job-bulk-create` |
+
+| `job-group-ui` | job-ui pages for groups: a groups list like the jobs list, and a group page from the design "BatchJob" with the group's progress, one cell per child job and its details; read only | `job-group-service` |
 
 No bulk cancel, retry, update or delete, and no cancellation of a group's remaining jobs.
 

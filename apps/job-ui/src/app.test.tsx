@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
@@ -8,11 +8,15 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { en } from '@/locales';
 
 import { AppRoutes } from './app';
+import { groupFixtures } from './features/groups/testing/group-fixtures';
 import { jobFixtures, queueStatsFixtures } from './features/jobs/testing/job-fixtures';
 import { TEST_API_BASE, TestProviders } from './features/jobs/testing/test-providers';
 
 const job = jobFixtures.build();
+const group = groupFixtures.build();
 const server = setupServer(
+  http.get(`${TEST_API_BASE}/v1/groups`, () => HttpResponse.json({ items: [group], total: 1 })),
+  http.get(`${TEST_API_BASE}/v1/groups/${group.id}`, () => HttpResponse.json(group)),
   http.get(`${TEST_API_BASE}/v1/jobs`, () => HttpResponse.json({ items: [job], total: 1 })),
   http.get(`${TEST_API_BASE}/v1/jobs/${job.id}`, () => HttpResponse.json(job)),
   http.get(`${TEST_API_BASE}/v1/stats`, () => HttpResponse.json(queueStatsFixtures.build())),
@@ -89,6 +93,38 @@ describe('AppRoutes', () => {
     await user.click(screen.getByRole('button', { name: 'test: back' }));
 
     expect(await screen.findByRole('heading', { level: 1, name: en.list.title })).toBeVisible();
+  });
+
+  it('Direct link to a group: /groups/<id> shows that group', async () => {
+    render(
+      <TestProviders path={`/groups/${group.id}`}>
+        <AppRoutes />
+      </TestProviders>,
+    );
+
+    expect(await screen.findByRole('heading', { level: 1, name: group.id })).toBeVisible();
+    expect(
+      within(screen.getByRole('banner')).getByRole('link', { name: en.frame.groups }),
+    ).toBeVisible();
+  });
+
+  it('Back returns to the groups list: Back after opening a group shows the groups list again', async () => {
+    const user = userEvent.setup();
+    render(
+      <TestProviders path="/groups">
+        <AppRoutes />
+        <BackButton />
+      </TestProviders>,
+    );
+    await user.click(await screen.findByRole('link', { name: group.id.slice(0, 8) }));
+    expect(await screen.findByRole('heading', { level: 1, name: group.id })).toBeVisible();
+
+    await user.click(screen.getByRole('button', { name: 'test: back' }));
+
+    expect(await screen.findByRole('heading', { level: 1, name: en.groups.title })).toBeVisible();
+    expect(
+      within(screen.getByRole('banner')).getByRole('link', { name: en.frame.groups }),
+    ).toBeVisible();
   });
 
   describe('a failed first load', () => {

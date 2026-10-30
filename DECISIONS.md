@@ -357,6 +357,26 @@ hooks only, all markup by hand), `react-select` (v5.10.2, ~12M weekly; its own e
 A free-text IATA field as in the design was rejected: it lets users type codes the API rejects.
 *Trade-off:* one more dependency for one field.
 
+**job-ui: one `/api` prefix, routed by path to two services.** The browser calls everything under
+`/api`; nginx (and the Vite dev proxy) send `/api/v1/groups*` to job-group-service and every other
+`/api` path to job-service, the prefix stripped. The UI keeps one base URL and no CORS setup, and
+a route can move between services without a UI change. *Alternatives:* a second prefix
+(`/groups-api`) makes the browser know which service owns which route; calling job-group-service
+on its own port needs CORS and a second configured URL. *Trade-off:* the proxy config now holds a
+small routing table; the job-ui container starts once job-group-service has started (not when it
+is healthy), and while it is down only the group pages show their error states.
+
+**job-ui: a group's cells come from paging through its jobs.** The group page shows one cell per
+child job (design "BatchJob"). job-service has no per-group summary of job statuses, so the page
+reads `GET /v1/jobs?groupId=` page after page at job-service's maximum page size (100, the UI's
+`groupJobsPageSize`) on every poll, drops a job a shifted page repeats, and shows the jobs oldest
+first; the counts above the cells come from the group itself. *Alternatives:* a job-service route
+returning every child's id and status in one call (cheaper, but a backend change outside this UI
+change); showing cells only for the first page (no full picture). *Trade-off:* a group of N jobs
+costs N/100 requests per poll, fine for groups of hundreds; for much larger groups that summary
+route is the fix. The cells and the counts can differ for up to one poll, since the counts are as
+of the group's last check.
+
 **Internal API protected by a shared service token.** Routes under `/internal` require
 `Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
 docs. *Trade-off:* a shared secret in environment variables is weaker than service identity (mTLS,

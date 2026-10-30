@@ -108,22 +108,22 @@ Owns: `src/app.tsx`, `src/app.test.tsx`, `src/main.tsx`, `src/features/index.ts`
 `test/e2e/groups.spec.ts`, root `README.md`, root `DECISIONS.md`,
 `docs/roadmap/06-bulk-operations.md` · Depends on: 2, 3 · Parallel with: none
 
-- [ ] 4.1 Write failing tests for "Header on every page", "Groups from the header" (app frame) and
+- [x] 4.1 Write failing tests for "Header on every page", "Groups from the header" (app frame) and
   "Direct link to a group" (app routes)
-- [ ] 4.2 Add the "Groups" nav item, the `/groups` and `/groups/:id` routes, export the pages from
+- [x] 4.2 Add the "Groups" nav item, the `/groups` and `/groups/:id` routes, export the pages from
   `features/index.ts` and provide `FetchGroupsApi` in `main.tsx`; verify 4.1 passes
-- [ ] 4.3 Write `test/e2e/groups.spec.ts` (job-ui Playwright, job-service and job-group-service
+- [x] 4.3 Write `test/e2e/groups.spec.ts` (job-ui Playwright, job-service and job-group-service
   mocked with `page.route`): "Groups from the header", "Open a group from the list", "Back returns
   to the groups list", "Open a job from its cell", "Unknown group id"; verify it passes with
   `npm run test:e2e -w @job-queue/job-ui`
-- [ ] 4.4 Run the `test-case-reviewer` subagent on job-ui `app-frame.test.tsx`, `app.test.tsx` and
+- [x] 4.4 Run the `test-case-reviewer` subagent on job-ui `app-frame.test.tsx`, `app.test.tsx` and
   Playwright `test/e2e/groups.spec.ts`; add the missing cases it reports or note why they belong
   elsewhere
-- [ ] 4.5 Document the group pages and the `/api/v1/groups` routing in `README.md`; add to
+- [x] 4.5 Document the group pages and the `/api/v1/groups` routing in `README.md`; add to
   `DECISIONS.md` the path routing under `/api` and the paged loading of a group's jobs (with its
   limit and the summary route as the fix); update roadmap milestone 6 ("API only, no UI") to
   include this change; verify the documented `curl` commands run as written
-- [ ] 4.6 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`,
+- [x] 4.6 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`,
   `npm run format:check`) and verify they pass; then look at both pages with `npm run dev` against
   `ui.md` (screenshot in the scratchpad, compare with the design)
 
