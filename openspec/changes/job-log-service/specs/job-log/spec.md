@@ -35,7 +35,7 @@ attempt is scheduled, and when a job fails for good. Entries of an attempt carry
 ### Requirement: job-execution-service logs the steps of an attempt
 job-execution-service SHALL add a log entry when a worker picks up an attempt, when the handler
 starts, when the handler finishes (with its duration), when a state report to job-service is
-retried, and when an entry is dropped because the job is not `pending`. These entries name the
+retried, and when an entry is dropped because the job can no longer be started. These entries name the
 worker instance that wrote them.
 
 #### Scenario: Run of an attempt is logged
@@ -47,7 +47,7 @@ worker instance that wrote them.
 - **THEN** the job's log has a `warning` entry for the retried report naming the worker instance
 
 #### Scenario: Dropped entry is logged
-- **WHEN** a worker takes a queue entry whose job is no longer `pending`
+- **WHEN** a worker takes a queue entry whose job can no longer be started (it is neither `pending` nor `scheduled`)
 - **THEN** the job's log has an `info` entry saying the entry was dropped, naming the worker instance
 
 ### Requirement: Job log entries come from the services' job-related log lines

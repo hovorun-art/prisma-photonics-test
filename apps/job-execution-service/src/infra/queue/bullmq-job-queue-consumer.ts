@@ -27,7 +27,7 @@ const KEEP_FINISHED_ENTRIES = 1_000;
  * Takes job attempts from the BullMQ queue. An entry is taken once: `execute` settles every
  * outcome itself, so BullMQ only marks the entry completed and never retries it (job-service queues
  * a new entry per retry). A stalled entry of a crashed worker may be redelivered; `execute` then
- * finds the job no longer pending and drops it.
+ * finds the job no longer startable and drops it.
  */
 export class BullMqJobQueueConsumer implements JobQueueConsumer {
   private worker: Worker<JobQueueMessage> | undefined;

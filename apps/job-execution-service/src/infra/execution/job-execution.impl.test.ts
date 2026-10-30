@@ -98,6 +98,27 @@ describe('JobExecutionImpl', () => {
     });
   });
 
+  it('Scheduled job runs to completion', async () => {
+    const scheduled = job({ status: 'scheduled', scheduledAt: '2026-10-29T11:30:00.000Z' });
+    clockReads(0, 0);
+    jobs.get.mockResolvedValueOnce({ job: scheduled });
+    jobs.update.mockResolvedValueOnce({ job: { ...scheduled, status: 'processing', attempts: 1 } });
+    email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
+    jobs.update.mockResolvedValueOnce({ job: { ...scheduled, status: 'completed' } });
+
+    await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'completed' });
+
+    expect(jobs.update.mock.calls.map(([request]) => request.update)).toEqual([
+      { status: 'processing' },
+      { status: 'completed', result: RESULT },
+    ]);
+    expect(email.run).toHaveBeenCalledExactlyOnceWith({
+      job: scheduled,
+      attempt: 1,
+      signal: expect.any(AbortSignal) as AbortSignal,
+    });
+  });
+
   it('Job already taken or finished', async () => {
     for (const status of ['processing', 'completed', 'failed', 'cancelled'] as const) {
       jobs.get.mockResolvedValueOnce({ job: job({ status }) });
@@ -551,7 +572,7 @@ describe('JobExecutionImpl', () => {
 
       expect(logger.log.mock.calls).toEqual([
         [ENTRY, 'Attempt picked up'],
-        [{ ...ENTRY, status: 'processing' }, 'Skipped: job is no longer pending'],
+        [{ ...ENTRY, status: 'processing' }, 'Skipped: job is no longer startable'],
       ]);
     });
   });

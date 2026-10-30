@@ -179,12 +179,12 @@ fine for a step log.
 
 Existing lines already cover some steps. Lines to add or adjust (messages are the pino `msg`):
 - job-service: `Job submitted` (no attempt) on create and per bulk item; `Attempt queued`
-  (attempt) after enqueue; `Job stays pending: it could not be queued` (warn, exists);
+  (attempt) after enqueue; `Job keeps its status: it could not be queued` (warn, exists);
   `Attempt started` on the accepted `processing` report; `Job completed`; `Attempt failed, retry
   scheduled` (warn, `code`, `message`); `Job failed for good` (error, `code`, `message`).
 - job-execution-service: `Attempt picked up` (with `instanceId` from the base); `Handler started`;
   `Handler finished` (`durationMs`, from the `Clock` port); `job-service unavailable, retrying`
-  (warn, exists); `Skipped: job is no longer pending` (info, exists).
+  (warn, exists); `Skipped: job is no longer startable` (info, exists).
 Levels: info for normal steps, warning for a recoverable problem, error when a job is lost for good.
 
 ### 8. Contracts
