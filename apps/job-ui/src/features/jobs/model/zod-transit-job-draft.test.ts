@@ -5,13 +5,19 @@ import { mockDeep, mockReset } from 'vitest-mock-extended';
 
 import { en } from '@/locales';
 
+import type { RunSchedule } from './run-schedule';
 import type { TransitFormValues } from './transit-form-values';
 import { ZodTransitJobDraft } from './zod-transit-job-draft';
 
 const clock = mockDeep<Clock>();
-const draft = new ZodTransitJobDraft({ clock });
+const runSchedule = mockDeep<RunSchedule>();
+const draft = new ZodTransitJobDraft({ clock, runSchedule });
 const schema = draft.schema().schema;
-const EXECUTION = { priority: 7, maxAttempts: 4 };
+const SENT = { priority: 7, maxAttempts: 4 };
+const EXECUTION = { ...SENT, run: 'now', scheduledAt: '' } as const;
+const LOCAL_TIME = '2026-10-31T09:00';
+const SENT_TIME = '2026-10-31T09:00:00.000Z';
+
 /** Late evening in UTC: in time zones east of UTC it is already the next day. */
 const NOW = new Date('2026-10-30T23:30:00.000Z');
 const TODAY = '2026-10-30';
@@ -20,8 +26,25 @@ const VALID: TransitFormValues = {
   payload: { origin: 'LHR', destination: 'JFK', departureDate: TODAY },
   ...EXECUTION,
 };
+/** `VALID` as the request it becomes: the run choice is not sent. */
+const VALID_REQUEST = {
+  type: 'flight-transit',
+  payload: VALID.payload,
+  ...SENT,
+};
 
 describe('ZodTransitJobDraft', () => {
+  /** Stubs the run schedule for one parse or preview of a form with "Immediately" chosen. */
+  function runsNow() {
+    runSchedule.check.mockReturnValueOnce({ problem: null });
+    runSchedule.toRequest.mockReturnValueOnce({ scheduledAt: undefined });
+  }
+
+  /** Stubs the run schedule for one preview of a form with "Immediately" chosen. */
+  function previewsNow() {
+    runSchedule.toRequest.mockReturnValueOnce({ scheduledAt: undefined });
+  }
+
   // East of UTC, `NOW` is already the next local day: a local-date "today" would fail these tests.
   beforeAll(() => {
     process.env.TZ = 'Asia/Tokyo';
@@ -31,6 +54,7 @@ describe('ZodTransitJobDraft', () => {
   });
   beforeEach(() => {
     mockReset(clock);
+    mockReset(runSchedule);
   });
 
   it("Transit form at first: no airports, today's UTC date, the given execution", () => {
@@ -46,14 +70,16 @@ describe('ZodTransitJobDraft', () => {
   it('Submit a valid transit job: the values become the request as they are', () => {
     clock.now.mockReturnValueOnce({ now: NOW });
 
+    runsNow();
     const result = schema.safeParse(VALID);
 
-    expect(result.success && result.data).toEqual(VALID);
+    expect(result.success && result.data).toEqual(VALID_REQUEST);
   });
 
   it('a later departure date is accepted', () => {
     clock.now.mockReturnValueOnce({ now: NOW });
 
+    runsNow();
     const result = schema.safeParse({
       ...VALID,
       payload: { ...VALID.payload, departureDate: '2026-12-01' },
@@ -73,6 +99,7 @@ describe('ZodTransitJobDraft', () => {
   ] as const)('%s is rejected on its field', (_name, payload, expected) => {
     clock.now.mockReturnValueOnce({ now: NOW });
 
+    runsNow();
     const result = schema.safeParse({ ...VALID, payload: { ...VALID.payload, ...payload } });
 
     expect(result.error?.issues.map((issue) => issue.path.join('.'))).toEqual(expected);
@@ -136,11 +163,56 @@ describe('ZodTransitJobDraft', () => {
   it('Preview of a transit request: the payload is shown as chosen, empty airports included', () => {
     const partial = { ...VALID, payload: { ...VALID.payload, destination: '' as const } };
 
-    expect(draft.previewRequest({ values: VALID }).request).toEqual(VALID);
+    previewsNow();
+    expect(draft.previewRequest({ values: VALID }).request).toEqual(VALID_REQUEST);
+    previewsNow();
     expect(draft.previewRequest({ values: partial }).request.payload).toEqual({
       origin: 'LHR',
       destination: '',
       departureDate: TODAY,
     });
+  });
+
+  it('Submit a scheduled job: the time the run schedule gives is sent as scheduledAt', () => {
+    const values = { ...VALID, run: 'later' as const, scheduledAt: LOCAL_TIME };
+    clock.now.mockReturnValueOnce({ now: NOW });
+    runSchedule.check.mockReturnValueOnce({ problem: null });
+    runSchedule.toRequest.mockReturnValueOnce({ scheduledAt: SENT_TIME });
+
+    const result = schema.safeParse(values);
+
+    expect(result.success && result.data.scheduledAt).toBe(SENT_TIME);
+    expect(runSchedule.check).toHaveBeenCalledExactlyOnceWith({
+      run: 'later',
+      scheduledAt: LOCAL_TIME,
+    });
+  });
+
+  it("fieldMessage: the run schedule's message for the scheduled time", () => {
+    const values = { ...VALID, run: 'later' as const, scheduledAt: '' };
+    runSchedule.message.mockReturnValueOnce({ message: en.submit.errors.scheduleRequired });
+
+    expect(draft.fieldMessage({ field: 'scheduledAt', values }).message).toBe(
+      en.submit.errors.scheduleRequired,
+    );
+    expect(runSchedule.message).toHaveBeenCalledExactlyOnceWith({ run: 'later', scheduledAt: '' });
+  });
+
+  it('API validation error on the scheduled time: the issue maps onto the scheduledAt field', () => {
+    const result = draft.apiErrors({
+      details: { issues: [{ path: ['scheduledAt'], message: 'Too far ahead' }] },
+    });
+
+    expect(result).toEqual({ errors: { scheduledAt: 'Too far ahead' }, unmatched: [] });
+  });
+
+  it('Preview of a scheduled request: no run choice, the time as it will be sent', () => {
+    runSchedule.toRequest.mockReturnValueOnce({ scheduledAt: SENT_TIME });
+
+    const { request } = draft.previewRequest({
+      values: { ...VALID, run: 'later', scheduledAt: LOCAL_TIME },
+    });
+
+    expect(request).toEqual({ ...VALID_REQUEST, scheduledAt: SENT_TIME });
   });
 });

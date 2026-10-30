@@ -49,6 +49,11 @@ function JobRow({ job }: { job: Job }) {
       <td className={`${CELL} font-mono text-xs text-subtle-foreground`}>{job.type}</td>
       <td className={CELL}>
         <StatusBadge status={job.status} />
+        {job.status === 'scheduled' && job.scheduledAt && (
+          <div className="mt-1 font-mono text-xs whitespace-nowrap text-muted-foreground">
+            {presenter.dateTime({ at: job.scheduledAt }).text}
+          </div>
+        )}
       </td>
       <td className={`${CELL} font-mono text-[13px]`}>{job.priority}</td>
       <td className={`${CELL} font-mono text-[13px] text-subtle-foreground`}>

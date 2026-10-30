@@ -690,6 +690,18 @@ re-queues such jobs from Postgres, the same way it handles `pending` jobs whose 
 Clock skew between job-service and Redis only shifts the start by that skew; a worker does not
 check the time again, because a second check could drop a due entry over a few milliseconds and
 leave the job stuck.
+*In job-ui:* the submit page's "At a specific time" is a native `<input type="datetime-local">`,
+read in the browser's time zone (named in a hint under it) and sent as the same instant in UTC.
+We chose it over a calendar picker (shadcn's Calendar on react-day-picker 10.0.2, ~45M weekly
+npm downloads, TypeScript types, ESM) because it adds no dependency, is keyboard-accessible and is
+local time by definition; it looks slightly different per browser and has minute precision, which
+is enough for a schedule. The form checks the time with the API's rules before sending (set, later
+than now, at most 30 days ahead), on submit, so a time that passed while the page was open is
+caught. *Trade-off:* the form checks against the browser's clock, the API against job-service's;
+a time a few seconds ahead can pass the form and still be created `pending` by the API (it then
+runs at once). The API stays the authority. The jobs list shows a `scheduled` job's run time under
+its status badge, and the job page shows "Scheduled for" and a Lifecycle that starts at
+`scheduled` instead of `pending` for a job created to wait.
 
 ---
 

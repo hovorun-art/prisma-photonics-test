@@ -13,6 +13,10 @@ export function JobDetailsList({ job }: { job: Job }) {
     [en.job.fields.priority, fields.priority],
     [en.job.fields.attempts, fields.attempts],
     [en.job.fields.created, fields.created],
+    // Only a job submitted with a time to run has one to show.
+    ...(fields.scheduledFor === null
+      ? []
+      : [[en.job.fields.scheduledFor, fields.scheduledFor] as [string, string]]),
     [en.job.fields.started, fields.started],
     [en.job.fields.finished, fields.finished],
     [en.job.fields.totalTime, fields.totalTime],

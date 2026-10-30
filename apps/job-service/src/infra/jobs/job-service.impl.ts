@@ -11,8 +11,10 @@ import {
 } from '@job-queue/contracts';
 import {
   type Clock,
+  DaysAheadScheduleLimit,
   type DepartureDay,
   JobStatusConflictError,
+  type ScheduleLimit,
   UtcDepartureDay,
 } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
@@ -366,16 +368,25 @@ export class JobServiceImpl implements JobService {
    */
   private scheduleIssues({ job, now }: ScheduleIssuesRequest): JobFieldIssue[] {
     if (job.scheduledAt === undefined) return [];
-    const { maxAheadDays } = JOB_LIMITS.scheduledAt;
-    const latest = new Date(now.getTime() + maxAheadDays * 24 * 60 * 60 * 1000);
-    if (Date.parse(job.scheduledAt) <= latest.getTime()) return [];
+    const { latest, tooFar } = this.scheduleLimitAt(now).check({
+      scheduledAt: new Date(job.scheduledAt),
+    });
+    if (!tooFar) return [];
     return [
       {
         code: 'too_big',
         path: ['scheduledAt'],
-        message: `The execution time may be at most ${String(maxAheadDays)} days ahead: ${job.scheduledAt} is after ${latest.toISOString()}`,
+        message: `The execution time may be at most ${String(JOB_LIMITS.scheduledAt.maxAheadDays)} days ahead: ${job.scheduledAt} is after ${latest.toISOString()}`,
       },
     ];
+  }
+
+  /** The how-far-ahead rule job-ui's form applies too, shared through the kernel, fixed at `now`. */
+  private scheduleLimitAt(now: Date): ScheduleLimit {
+    return new DaysAheadScheduleLimit(
+      { clock: { now: () => ({ now }) } },
+      { maxAheadDays: JOB_LIMITS.scheduledAt.maxAheadDays },
+    );
   }
 
   /** The UTC day rule job-ui's form applies too, shared through the kernel, fixed at `now`. */

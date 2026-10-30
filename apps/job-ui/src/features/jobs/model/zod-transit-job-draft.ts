@@ -22,10 +22,13 @@ import {
   type TransitFormField,
   type TransitFormValues,
 } from './transit-form-values';
+import type { RunSchedule, RunScheduleValues } from './run-schedule';
 import { ValidationIssueMapper } from './validation-issue-mapper';
+import { ZodRunScheduleForm } from './zod-run-schedule-form';
 
 export interface ZodTransitJobDraftDeps {
   readonly clock: Clock;
+  readonly runSchedule: RunSchedule;
 }
 
 /**
@@ -38,13 +41,16 @@ export class ZodTransitJobDraft implements JobFormDraft<TransitFormValues, Trans
   private readonly issues = new ValidationIssueMapper({ fields: TRANSIT_FORM_FIELDS });
   /** Values whose departure date is a real calendar date, whatever else is wrong with them. */
   private readonly withDate = z.object({ payload: z.object({ departureDate: z.iso.date() }) });
-  private readonly form = this.formSchema();
+  private readonly runScheduleForm: ZodRunScheduleForm;
+  private readonly form: SchemaJobFormDraftResponse<TransitFormValues>['schema'];
 
   /** The UTC day rule job-service applies, shared through the kernel. */
   private readonly departureDay: DepartureDay;
 
-  constructor(d: ZodTransitJobDraftDeps) {
+  constructor(private readonly d: ZodTransitJobDraftDeps) {
     this.departureDay = new UtcDepartureDay({ clock: d.clock });
+    this.runScheduleForm = new ZodRunScheduleForm({ runSchedule: d.runSchedule });
+    this.form = this.runScheduleForm.schema({ request: this.formSchema() }).schema;
   }
 
   emptyValues({
@@ -90,6 +96,8 @@ export class ZodTransitJobDraft implements JobFormDraft<TransitFormValues, Trans
       case 'priority':
       case 'maxAttempts':
         return this.execution.message({ field });
+      case 'scheduledAt':
+        return this.d.runSchedule.message({ run: values.run, scheduledAt: values.scheduledAt });
     }
   }
 
@@ -100,13 +108,13 @@ export class ZodTransitJobDraft implements JobFormDraft<TransitFormValues, Trans
   previewRequest({
     values,
   }: PreviewRequestJobFormDraftRequest<TransitFormValues>): PreviewRequestJobFormDraftResponse {
-    return { request: values };
+    return { request: this.runScheduleForm.preview({ values }).values };
   }
 
   /** The contract's transit request, plus the "day not over yet" rule job-service applies. */
   private formSchema(): z.ZodType<
     z.output<typeof CreateFlightTransitJobRequest>,
-    TransitFormValues
+    Omit<TransitFormValues, keyof RunScheduleValues>
   > {
     // Runs whenever the date itself is a real date, even if an airport is still missing, so the
     // user sees every invalid field at once.
