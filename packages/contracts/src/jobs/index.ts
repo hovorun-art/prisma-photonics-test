@@ -12,6 +12,8 @@ export {
   CreateEmailJobRequest,
   CreateFlightTransitJobRequest,
   CreateJobRequest,
+  CreateJobsBulkRequest,
+  CreateJobsBulkResponse,
   CreateWebhookJobRequest,
   EMAIL_LIMITS,
   EmailJob,
@@ -24,6 +26,7 @@ export {
   INTERNAL_JOBS_ROUTE,
   JOB_LIMITS,
   JOB_RESULT_SCHEMAS,
+  JOBS_BULK_ROUTE,
   JOBS_ROUTE,
   Job,
   JobError,
@@ -45,3 +48,4 @@ export {
   WebhookJobResult,
 } from './job.js';
 export { JOB_QUEUE_NAME, JobQueueAttempt, JobQueueEntryId, JobQueueMessage } from './job-queue.js';
+export { QueueStats, STATS_ROUTE } from './queue-stats.js';

@@ -4,12 +4,15 @@ import { JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
 import type {
   CreateJobRepositoryRequest,
   CreateJobRepositoryResponse,
+  CreateManyJobRepositoryRequest,
+  CreateManyJobRepositoryResponse,
   DeleteJobRepositoryRequest,
   DeleteJobRepositoryResponse,
   GetJobRepositoryRequest,
   GetJobRepositoryResponse,
   JobChanges,
   JobRepository,
+  NewJob,
   QueryJobRepositoryRequest,
   QueryJobRepositoryResponse,
   UpdateJobRepositoryRequest,
@@ -52,23 +55,19 @@ export class PrismaJobRepository implements JobRepository {
   constructor(private readonly d: PrismaJobRepositoryDeps) {}
 
   async create(req: CreateJobRepositoryRequest): Promise<CreateJobRepositoryResponse> {
-    const { job } = req;
-    const row = await this.d.prisma.job.create({
-      data: {
-        type: ROW_TYPES[job.type],
-        payload: job.payload,
-        status: job.status,
-        priority: job.priority,
-        attempts: job.attempts,
-        maxAttempts: job.maxAttempts,
-        result: this.toJsonColumn(job.result),
-        error: this.toJsonColumn(job.error),
-        scheduledAt: this.toDate(job.scheduledAt),
-        startedAt: this.toDate(job.startedAt),
-        completedAt: this.toDate(job.completedAt),
-      },
-    });
+    const row = await this.d.prisma.job.create({ data: this.toCreateData(req.job) });
     return { job: this.toJob(row) };
+  }
+
+  /**
+   * One `INSERT ... RETURNING`, a single statement and so all or nothing. Postgres returns the rows
+   * of a multi-row `VALUES` in the order they were given, so the result keeps the request order.
+   */
+  async createMany(req: CreateManyJobRepositoryRequest): Promise<CreateManyJobRepositoryResponse> {
+    const rows = await this.d.prisma.job.createManyAndReturn({
+      data: req.jobs.map((job) => this.toCreateData(job)),
+    });
+    return { jobs: rows.map((row) => this.toJob(row)) };
   }
 
   async get(req: GetJobRepositoryRequest): Promise<GetJobRepositoryResponse> {
@@ -116,11 +115,12 @@ export class PrismaJobRepository implements JobRepository {
     }
   }
 
-  /** Each filter only when given; Prisma ANDs the two, `in` ORs the values of one. */
+  /** Each filter only when given; Prisma ANDs them, `in` ORs the values of one. */
   private toQueryWhere(req: QueryJobRepositoryRequest): Prisma.JobWhereInput {
     return {
       ...(req.statuses && { status: { in: req.statuses } }),
       ...(req.types && { type: { in: req.types.map((type) => ROW_TYPES[type]) } }),
+      ...(req.groupId && { groupId: req.groupId }),
     };
   }
 
@@ -133,6 +133,25 @@ export class PrismaJobRepository implements JobRepository {
 
   private isRecordNotFound(error: unknown): boolean {
     return error instanceof Prisma.PrismaClientKnownRequestError && error.code === RECORD_NOT_FOUND;
+  }
+
+  /** Without `createdAt` the database's clock sets it; without `groupId` the job has none. */
+  private toCreateData(job: NewJob): Prisma.JobCreateManyInput {
+    return {
+      type: ROW_TYPES[job.type],
+      payload: job.payload,
+      status: job.status,
+      priority: job.priority,
+      attempts: job.attempts,
+      maxAttempts: job.maxAttempts,
+      result: this.toJsonColumn(job.result),
+      error: this.toJsonColumn(job.error),
+      groupId: job.groupId ?? null,
+      scheduledAt: this.toDate(job.scheduledAt),
+      startedAt: this.toDate(job.startedAt),
+      completedAt: this.toDate(job.completedAt),
+      ...(job.createdAt === undefined ? {} : { createdAt: new Date(job.createdAt) }),
+    };
   }
 
   private toUpdateData(changes: JobChanges): Prisma.JobUpdateInput {
@@ -173,6 +192,7 @@ export class PrismaJobRepository implements JobRepository {
       maxAttempts: row.maxAttempts,
       result: row.result,
       error: row.error,
+      groupId: row.groupId,
       scheduledAt: this.toIso(row.scheduledAt),
       startedAt: this.toIso(row.startedAt),
       completedAt: this.toIso(row.completedAt),

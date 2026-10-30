@@ -4,13 +4,17 @@ import {
   ErrorBody,
   FINISHED_JOB_STATUSES,
   type FlightTransitJobResult,
+  CreateJobsBulkResponse,
   INTERNAL_JOBS_ROUTE,
+  JOBS_BULK_ROUTE,
   JOBS_ROUTE,
   Job,
   type JobStatus,
   type JobType,
   QueryJobsResponse,
+  QueueStats,
   SERVICE_TOKEN_SCHEME,
+  STATS_ROUTE,
 } from '@job-queue/contracts';
 import type { Closable, CloseClosableResponse } from '@job-queue/kernel';
 import { REDIS_CONNECTION, type RedisConnection } from '@job-queue/service-kit';
@@ -37,6 +41,10 @@ export const TEST_CONFIG = {
   queryMaxLimit: 10,
   /** Above the largest valid email body, so only the oversized-body tests hit it. */
   bodyLimitBytes: 32_768,
+  bulkMaxJobs: 3,
+  /** Not the defaults, so the tests show the configured windows reach the statistics. */
+  statsRecentWindowMinutes: 60,
+  statsThroughputWindowMinutes: 2,
 } as const;
 
 export const AUTHORIZATION = `${SERVICE_TOKEN_SCHEME} ${TEST_CONFIG.serviceToken}`;
@@ -179,6 +187,11 @@ export class JobServiceUnderTest implements Closable {
         JOB_SERVICE_QUERY_DEFAULT_LIMIT: String(TEST_CONFIG.queryDefaultLimit),
         JOB_SERVICE_QUERY_MAX_LIMIT: String(TEST_CONFIG.queryMaxLimit),
         JOB_SERVICE_BODY_LIMIT_BYTES: String(TEST_CONFIG.bodyLimitBytes),
+        JOB_SERVICE_BULK_MAX_JOBS: String(TEST_CONFIG.bulkMaxJobs),
+        JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES: String(TEST_CONFIG.statsRecentWindowMinutes),
+        JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES: String(
+          TEST_CONFIG.statsThroughputWindowMinutes,
+        ),
       },
     });
     if (!parsed.ok) throw new Error(parsed.problems);
@@ -233,6 +246,22 @@ export class JobServiceUnderTest implements Closable {
     return Job.parse(await response.json());
   }
 
+  /** `POST /v1/jobs/bulk`; a string body is sent as it is. */
+  submitBulk(body: unknown): Promise<Response> {
+    return fetch(this.url(JOBS_BULK_ROUTE), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: typeof body === 'string' ? body : JSON.stringify(body),
+    });
+  }
+
+  /** The jobs a bulk created, in request order. */
+  async submittedBulk(jobs: unknown[]): Promise<Job[]> {
+    const response = await this.submitBulk({ jobs });
+    expect(response.status).toBe(201);
+    return CreateJobsBulkResponse.parse(await response.json()).items;
+  }
+
   get(id: string): Promise<Response> {
     return fetch(this.url(`${JOBS_ROUTE}/${id}`));
   }
@@ -243,6 +272,17 @@ export class JobServiceUnderTest implements Closable {
 
   async total(): Promise<number> {
     return QueryJobsResponse.parse(await (await fetch(this.url(JOBS_ROUTE))).json()).total;
+  }
+
+  /** `GET /v1/stats`, sent without any `authorization` header. */
+  statsResponse(): Promise<Response> {
+    return fetch(this.url(STATS_ROUTE));
+  }
+
+  async stats(): Promise<QueueStats> {
+    const response = await this.statsResponse();
+    expect(response.status).toBe(200);
+    return QueueStats.parse(await response.json());
   }
 
   read(req: CallRequest): Promise<Response> {

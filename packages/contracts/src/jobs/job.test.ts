@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   CreateJobRequest,
+  CreateJobsBulkRequest,
   EMAIL_LIMITS,
   EmailJobResult,
   FlightTransitJobResult,
@@ -129,6 +130,24 @@ describe('CreateJobRequest', () => {
 
       expect(CreateJobRequest.parse(job)).toEqual(job);
     }
+  });
+
+  it('Single job with a group id', () => {
+    const job = { ...validEmailJob, groupId: randomUUID() };
+
+    expect(CreateJobRequest.parse(job)).toEqual(job);
+  });
+
+  it('Job without a group id', () => {
+    expect(CreateJobRequest.parse(validEmailJob)).not.toHaveProperty('groupId');
+  });
+
+  it.each([
+    { name: 'not a UUID', groupId: 'campaign-1' },
+    { name: 'an empty string', groupId: '' },
+    { name: 'null', groupId: null },
+  ])('Malformed group id: $name', ({ groupId }) => {
+    expect(issuePaths({ ...validEmailJob, groupId })).toEqual([['groupId']]);
   });
 });
 
@@ -288,6 +307,26 @@ describe('QueryJobsRequest', () => {
 
     expect(result.error?.issues.map((issue) => issue.path[0])).toContain('type');
   });
+
+  it('Filter by group', () => {
+    const groupId = randomUUID();
+
+    expect(QueryJobsRequest.parse({ groupId }).groupId).toBe(groupId);
+  });
+
+  it('leaves the group filter unset when it is omitted', () => {
+    expect(QueryJobsRequest.parse({}).groupId).toBeUndefined();
+  });
+
+  it.each([
+    { name: 'Malformed group id filter', groupId: 'campaign-1' },
+    { name: 'an empty value', groupId: '' },
+    { name: 'a repeated value', groupId: [randomUUID(), randomUUID()] },
+  ])('rejects a group filter: $name', ({ groupId }) => {
+    const result = QueryJobsRequest.safeParse({ groupId });
+
+    expect(result.error?.issues.map((issue) => issue.path[0])).toContain('groupId');
+  });
 });
 
 describe('JobIdParams', () => {
@@ -393,6 +432,7 @@ describe('Job', () => {
         message: 'HTTP 503 Service Unavailable',
         details: { statusCode: 503 },
       },
+      groupId: null,
       scheduledAt: null,
       startedAt: timestamp,
       completedAt: timestamp,
@@ -401,6 +441,36 @@ describe('Job', () => {
     };
 
     expect(Job.parse(job)).toEqual(job);
+  });
+
+  it('returns the group id of a job in a group, and requires the field', () => {
+    const timestamp = new Date().toISOString();
+    const job = {
+      id: randomUUID(),
+      type: 'email',
+      status: 'pending',
+      priority: 5,
+      attempts: 0,
+      maxAttempts: 3,
+      payload: validEmailJob.payload,
+      result: null,
+      error: null,
+      groupId: randomUUID(),
+      scheduledAt: null,
+      startedAt: null,
+      completedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const { groupId: _groupId, ...withoutGroupId } = job;
+
+    expect(Job.parse(job)).toEqual(job);
+    expect(Job.safeParse(withoutGroupId).error?.issues.map((issue) => issue.path)).toEqual([
+      ['groupId'],
+    ]);
+    expect(
+      Job.safeParse({ ...job, groupId: 'campaign-1' }).error?.issues.map((issue) => issue.path),
+    ).toEqual([['groupId']]);
   });
 });
 
@@ -658,6 +728,7 @@ describe('Job for a flight transit job', () => {
     priority: 5,
     maxAttempts: 3,
     payload: validTransitJob.payload,
+    groupId: null,
     scheduledAt: null,
     startedAt: timestamp,
     completedAt: timestamp,
@@ -704,5 +775,73 @@ describe('Job for a flight transit job', () => {
     };
 
     expect(Job.parse(job)).toEqual(job);
+  });
+});
+
+describe('CreateJobsBulkRequest', () => {
+  const issuePaths = (input: unknown): PropertyKey[][] =>
+    CreateJobsBulkRequest.safeParse(input).error?.issues.map((issue) => issue.path) ?? [];
+
+  it('accepts jobs of every type and keeps their order', () => {
+    const jobs = [validEmailJob, validWebhookJob, validTransitJob];
+
+    expect(CreateJobsBulkRequest.parse({ jobs })).toEqual({ jobs });
+  });
+
+  it('Defaults are applied to each item', () => {
+    const { priority: _priority, maxAttempts: _maxAttempts, ...withoutOptions } = validEmailJob;
+
+    const { jobs } = CreateJobsBulkRequest.parse({ jobs: [withoutOptions, withoutOptions] });
+
+    for (const job of jobs) {
+      expect(job.priority).toBe(JOB_LIMITS.priority.default);
+      expect(job.maxAttempts).toBe(JOB_LIMITS.maxAttempts.default);
+    }
+  });
+
+  it('Bulk items with a group id', () => {
+    const groupId = randomUUID();
+    const jobs = [
+      { ...validEmailJob, groupId },
+      { ...validWebhookJob, groupId },
+    ];
+
+    expect(CreateJobsBulkRequest.parse({ jobs })).toEqual({ jobs });
+  });
+
+  it('Empty bulk', () => {
+    expect(issuePaths({ jobs: [] })).toEqual([['jobs']]);
+  });
+
+  it.each([
+    { name: 'no jobs field', body: {}, path: ['jobs'] },
+    { name: 'a bare array', body: [validEmailJob], path: [] },
+    { name: 'jobs that is not an array', body: { jobs: validEmailJob }, path: ['jobs'] },
+  ])('rejects a body with $name', ({ body, path }) => {
+    expect(issuePaths(body)).toEqual([path]);
+  });
+
+  it('One item with an invalid payload', () => {
+    const invalid = { ...validEmailJob, payload: { ...validEmailJob.payload, to: 'not-an-email' } };
+
+    expect(issuePaths({ jobs: [validEmailJob, invalid] })).toEqual([['jobs', 1, 'payload', 'to']]);
+  });
+
+  it('Unknown job type in one item', () => {
+    const unknown = { ...validEmailJob, type: 'sms' };
+
+    expect(issuePaths({ jobs: [validEmailJob, validWebhookJob, unknown] })).toEqual([
+      ['jobs', 2, 'type'],
+    ]);
+  });
+
+  it('names the position of every invalid item', () => {
+    const invalidPriority = { ...validEmailJob, priority: JOB_LIMITS.priority.max + 1 };
+    const malformedGroup = { ...validWebhookJob, groupId: 'campaign-1' };
+
+    expect(issuePaths({ jobs: [invalidPriority, validEmailJob, malformedGroup] })).toEqual([
+      ['jobs', 0, 'priority'],
+      ['jobs', 2, 'groupId'],
+    ]);
   });
 });

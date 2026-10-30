@@ -7,6 +7,12 @@ export interface JobQueue extends Closable {
    * Rejects when the queue cannot be reached within the configured timeout.
    */
   enqueue(req: EnqueueJobQueueRequest): Promise<EnqueueJobQueueResponse>;
+  /**
+   * Puts the entries of many attempts on the queue in one call, all or none; entries already on the
+   * queue are not added twice. Rejects when the queue cannot be reached within the configured
+   * timeout.
+   */
+  enqueueMany(req: EnqueueManyJobQueueRequest): Promise<EnqueueManyJobQueueResponse>;
 }
 
 export interface EnqueueJobQueueRequest {
@@ -16,5 +22,11 @@ export interface EnqueueJobQueueRequest {
 }
 
 export type EnqueueJobQueueResponse = Record<string, never>;
+
+export interface EnqueueManyJobQueueRequest {
+  entries: EnqueueJobQueueRequest[];
+}
+
+export type EnqueueManyJobQueueResponse = Record<string, never>;
 
 export const JOB_QUEUE = Symbol('JobQueue');

@@ -6,6 +6,9 @@ import { AIRPORT_CODES, IataCode, Latitude, Longitude } from './airports.js';
 /** Public job routes of job-service. */
 export const JOBS_ROUTE = '/v1/jobs';
 
+/** Bulk submit: many jobs in one request, stored all or nothing. */
+export const JOBS_BULK_ROUTE = `${JOBS_ROUTE}/bulk`;
+
 /** Internal job routes of job-service, used only by job-execution-service. */
 export const INTERNAL_JOBS_ROUTE = `${INTERNAL_API_PREFIX}/jobs`;
 
@@ -182,6 +185,8 @@ const JobBase = z.object({
   attempts: z.number().int().min(0),
   maxAttempts: JobMaxAttempts,
   error: JobError.nullable(),
+  /** The group the job was submitted in; job-service gives it no other meaning. */
+  groupId: z.uuid().nullable(),
   scheduledAt: Timestamp.nullable(),
   startedAt: Timestamp.nullable(),
   completedAt: Timestamp.nullable(),
@@ -218,6 +223,8 @@ export type Job = z.infer<typeof Job>;
 const CreateJobOptions = z.object({
   priority: JobPriority.default(JOB_LIMITS.priority.default),
   maxAttempts: JobMaxAttempts.default(JOB_LIMITS.maxAttempts.default),
+  /** Ties the job to a group (e.g. one campaign); stored and returned as given. */
+  groupId: z.uuid().optional(),
 });
 
 export const CreateEmailJobRequest = CreateJobOptions.extend({
@@ -243,6 +250,18 @@ export const CreateJobRequest = z.discriminatedUnion('type', [
 ]);
 export type CreateJobRequest = z.infer<typeof CreateJobRequest>;
 
+/**
+ * Body of `POST /v1/jobs/bulk`: ordinary job submissions of any types. The configured maximum
+ * number of jobs is checked by job-service, since it is runtime config; issue paths carry each
+ * item's position (`jobs.3.payload.to`).
+ */
+export const CreateJobsBulkRequest = z.object({ jobs: z.array(CreateJobRequest).min(1) });
+export type CreateJobsBulkRequest = z.infer<typeof CreateJobsBulkRequest>;
+
+/** Answer of `POST /v1/jobs/bulk`: the created jobs in the order of the request. */
+export const CreateJobsBulkResponse = z.object({ items: z.array(Job) });
+export type CreateJobsBulkResponse = z.infer<typeof CreateJobsBulkResponse>;
+
 /** Path parameters of the routes that address one job. */
 export const JobIdParams = z.object({ id: z.uuid() });
 export type JobIdParams = z.infer<typeof JobIdParams>;
@@ -257,14 +276,16 @@ const RepeatedQueryParam = z.transform((value: unknown) => [...new Set([value].f
 /**
  * Query string of `GET /v1/jobs`. Without `limit` job-service uses its configured default page
  * size; the configured maximum is checked by job-service, since it is runtime config. `status` and
- * `type` filters combine with AND, the values of one filter with OR; without a filter it is not
- * applied.
+ * `type` filters and `groupId` combine with AND, the values of one filter with OR; without a filter
+ * it is not applied.
  */
 export const QueryJobsRequest = z.object({
   limit: z.coerce.number().int().positive().optional(),
   offset: z.coerce.number().int().min(0).default(0),
   status: RepeatedQueryParam.pipe(z.array(JobStatus).min(1)).optional(),
   type: RepeatedQueryParam.pipe(z.array(JobType).min(1)).optional(),
+  /** One group at a time. */
+  groupId: z.uuid().optional(),
 });
 export type QueryJobsRequest = z.infer<typeof QueryJobsRequest>;
 

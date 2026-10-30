@@ -93,6 +93,7 @@ describe('PrismaJobRepository against Postgres', () => {
     expect(stored).toEqual({
       ...job,
       id: stored.id,
+      groupId: null,
       createdAt: expect.any(String) as string,
       updatedAt: expect.any(String) as string,
     });
@@ -137,6 +138,103 @@ describe('PrismaJobRepository against Postgres', () => {
     expect(page.items.map((job) => job.type).sort()).toEqual(['email', 'flight-transit']);
     expect(page.items).toContainEqual(transit);
     expect(page.items).toContainEqual(email);
+  });
+
+  it('Single job with a group id', async () => {
+    const groupId = randomUUID();
+
+    const { job: stored } = await repository.create({ job: newJob({ groupId }) });
+
+    expect(stored.groupId).toBe(groupId);
+    expect((await repository.get({ id: stored.id })).job.groupId).toBe(groupId);
+  });
+
+  describe('createMany', () => {
+    /** One millisecond apart from a fixed start, as `JobService` spaces a bulk. */
+    const spacedCreatedAt = (index: number): string =>
+      new Date(Date.UTC(2026, 9, 30, 12, 0, 0, index)).toISOString();
+
+    it('Mixed job types are created in request order', async () => {
+      const groupId = randomUUID();
+      const jobs: NewJob[] = [
+        { ...newJob({ groupId }), createdAt: spacedCreatedAt(0) },
+        {
+          ...newJob({ groupId }),
+          type: 'webhook',
+          payload: { method: 'GET', url: 'http://example.com/ping' },
+          result: null,
+          createdAt: spacedCreatedAt(1),
+        },
+        {
+          ...newJob(),
+          type: 'flight-transit',
+          payload: { origin: 'LHR', destination: 'JFK', departureDate: '2030-06-15' },
+          result: null,
+          createdAt: spacedCreatedAt(2),
+        },
+      ];
+
+      const { jobs: stored } = await repository.createMany({ jobs });
+
+      expect(stored).toEqual(
+        jobs.map((job, index) => ({
+          ...job,
+          id: stored[index]!.id,
+          groupId: job.groupId ?? null,
+          updatedAt: expect.any(String) as string,
+        })),
+      );
+      for (const job of stored) {
+        expect((await repository.get({ id: job.id })).job).toEqual(job);
+      }
+    });
+
+    it('returns the jobs in the order given even when their creation times are not ascending', async () => {
+      const jobs = [2, 0, 1].map((ms) => ({ ...newJob(), createdAt: spacedCreatedAt(ms) }));
+
+      const { jobs: stored } = await repository.createMany({ jobs });
+
+      expect(stored.map((job) => [job.payload, job.createdAt])).toEqual(
+        jobs.map((job) => [job.payload, job.createdAt]),
+      );
+    });
+
+    it('returns the jobs in the order given when the database sets their creation time', async () => {
+      const jobs = [newJob(), newJob(), newJob()];
+
+      const { jobs: stored } = await repository.createMany({ jobs });
+
+      expect(stored.map((job) => job.payload)).toEqual(jobs.map((job) => job.payload));
+    });
+
+    it('Jobs of one bulk keep the request order in the job query', async () => {
+      const jobs = [0, 1, 2, 3].map((index) => ({
+        ...newJob(),
+        createdAt: spacedCreatedAt(index),
+      }));
+
+      const { jobs: stored } = await repository.createMany({ jobs });
+
+      const page = await repository.query({ limit: 10, offset: 0 });
+      expect(page.items.map((job) => job.id)).toEqual(stored.map((job) => job.id).reverse());
+    });
+
+    it('stores none of the jobs when one of them is refused by the database', async () => {
+      const jobs = [
+        newJob(),
+        newJob({ payload: { to: 'ada@example.com', subject: 'Nul', body: 'Hi\u0000' } }),
+        newJob(),
+      ];
+
+      const error: unknown = await repository.createMany({ jobs }).catch((err: unknown) => err);
+
+      // Refused by Postgres itself (jsonb cannot hold NUL), not by a check before the INSERT.
+      expect(error).toMatchObject({
+        meta: { driverAdapterError: { cause: { originalCode: '22P05' } } },
+      });
+
+      expect((await repository.query({ limit: 10, offset: 0 })).total).toBe(0);
+    });
   });
 
   it('throws JobNotFoundError when getting an unknown id', async () => {
@@ -323,6 +421,81 @@ describe('PrismaJobRepository against Postgres', () => {
       const page = await repository.query({ limit: 10, offset: 2, statuses: ['failed'] });
 
       expect(page).toEqual({ items: [], total: 2 });
+    });
+
+    describe('by group', () => {
+      const GROUP_A = randomUUID();
+      const GROUP_B = randomUUID();
+
+      /** Stores the kinds one second apart, each in the given group (or none). */
+      const storeInGroups = async (
+        entries: { groupId: string | null; kind: Kind }[],
+      ): Promise<Job[]> => {
+        const jobs = await storeKinds(entries.map((entry) => entry.kind));
+        for (const [i, job] of jobs.entries()) {
+          await database.job.update({
+            where: { id: job.id },
+            data: { groupId: entries[i]!.groupId },
+          });
+        }
+        return Promise.all(jobs.map(async (job) => (await repository.get({ id: job.id })).job));
+      };
+
+      it("Only the group's jobs are returned", async () => {
+        const [a1, , , a2] = await storeInGroups([
+          { groupId: GROUP_A, kind: { status: 'pending', type: 'email' } },
+          { groupId: GROUP_B, kind: { status: 'pending', type: 'email' } },
+          { groupId: null, kind: { status: 'pending', type: 'email' } },
+          { groupId: GROUP_A, kind: { status: 'completed', type: 'webhook' } },
+        ]);
+
+        const page = await repository.query({ limit: 10, offset: 0, groupId: GROUP_A });
+
+        expect(page.items).toEqual([a2, a1]);
+        expect(page.total).toBe(2);
+      });
+
+      it('Group filter combines with status and type', async () => {
+        const [, match] = await storeInGroups([
+          { groupId: GROUP_A, kind: { status: 'pending', type: 'email' } },
+          { groupId: GROUP_A, kind: { status: 'failed', type: 'webhook' } },
+          { groupId: GROUP_A, kind: { status: 'failed', type: 'email' } },
+          { groupId: GROUP_B, kind: { status: 'failed', type: 'webhook' } },
+        ]);
+
+        const page = await repository.query({
+          limit: 10,
+          offset: 0,
+          groupId: GROUP_A,
+          statuses: ['failed'],
+          types: ['webhook'],
+        });
+
+        expect(page.items).toEqual([match]);
+        expect(page.total).toBe(1);
+      });
+
+      it("pages through the group's jobs only", async () => {
+        const jobs = await storeInGroups([
+          { groupId: GROUP_A, kind: { status: 'pending', type: 'email' } },
+          { groupId: GROUP_B, kind: { status: 'pending', type: 'email' } },
+          { groupId: GROUP_A, kind: { status: 'pending', type: 'email' } },
+          { groupId: GROUP_A, kind: { status: 'pending', type: 'email' } },
+        ]);
+
+        const page = await repository.query({ limit: 1, offset: 1, groupId: GROUP_A });
+
+        expect(page.items).toEqual([jobs[2]]);
+        expect(page.total).toBe(3);
+      });
+
+      it('Unknown group', async () => {
+        await storeInGroups([{ groupId: GROUP_A, kind: { status: 'pending', type: 'email' } }]);
+
+        const page = await repository.query({ limit: 10, offset: 0, groupId: randomUUID() });
+
+        expect(page).toEqual({ items: [], total: 0 });
+      });
     });
 
     it('No job matches the status', async () => {

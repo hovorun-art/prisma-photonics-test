@@ -10,8 +10,11 @@ export interface JobFieldIssue {
 }
 
 export interface InvalidJobFieldErrorParams {
-  /** The request field the issues are about; it is put in front of each issue path. */
-  field: 'payload' | 'result';
+  /**
+   * Path of the request field the issues are about (`['payload']`, or `['jobs']` for the items of a
+   * bulk); it is put in front of each issue path.
+   */
+  field: readonly PropertyKey[];
   issues: readonly JobFieldIssue[];
 }
 
@@ -25,7 +28,7 @@ export class InvalidJobFieldError extends DomainError<'VALIDATION_FAILED'> {
       code: 'VALIDATION_FAILED',
       message: VALIDATION_FAILED_MESSAGE,
       details: {
-        issues: p.issues.map((issue) => ({ ...issue, path: [p.field, ...issue.path] })),
+        issues: p.issues.map((issue) => ({ ...issue, path: [...p.field, ...issue.path] })),
       },
     });
   }

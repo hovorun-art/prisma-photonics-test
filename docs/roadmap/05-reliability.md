@@ -19,4 +19,5 @@ logged. `DECISIONS.md` sections 1–4 are filled in along the way.
 ## Open questions
 
 - [ ] Backoff timings and maximum attempts (recorded in `DECISIONS.md` section 4).
-- [ ] Batch job crash behaviour (resume vs restart), if not settled in `batch-job`.
+- [x] Batch job crash behaviour (resume vs restart). (Moot: job groups replace the batch job type, and
+  each job of a group recovers like any other job; see milestone 6.)

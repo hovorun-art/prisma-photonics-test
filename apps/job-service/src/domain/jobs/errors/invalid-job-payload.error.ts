@@ -11,6 +11,6 @@ export interface InvalidJobPayloadErrorParams {
  */
 export class InvalidJobPayloadError extends InvalidJobFieldError {
   constructor(p: InvalidJobPayloadErrorParams) {
-    super({ field: 'payload', issues: p.issues });
+    super({ field: ['payload'], issues: p.issues });
   }
 }

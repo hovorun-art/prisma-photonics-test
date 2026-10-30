@@ -6,7 +6,7 @@ import { API_BASE_PATH } from '@/config';
 import { cn } from '@/lib/class-names';
 import { en } from '@/locales';
 
-import { ComingSoon } from './coming-soon';
+import { ApiStatusPill } from './api-status-pill';
 import { PageErrorBoundary } from './page-error-boundary';
 
 const NAV_LINK =
@@ -50,12 +50,7 @@ export function AppFrame() {
             </a>
           </nav>
           <div className="ml-auto flex flex-wrap items-center gap-3">
-            <ComingSoon className="rounded-full">
-              <span className="inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-[13px] text-subtle-foreground">
-                <span className="size-2 rounded-full bg-disabled-foreground" aria-hidden="true" />
-                {en.frame.apiStatus}
-              </span>
-            </ComingSoon>
+            <ApiStatusPill />
             <Button asChild size="lg" className="h-10 px-4 text-primary-foreground no-underline">
               <Link to="/jobs/new">
                 <Plus aria-hidden="true" />

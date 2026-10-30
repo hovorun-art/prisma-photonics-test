@@ -8,6 +8,6 @@ export interface InvalidJobResultErrorParams {
 /** A completion was reported with a result that does not match the job type's result schema. */
 export class InvalidJobResultError extends InvalidJobFieldError {
   constructor(p: InvalidJobResultErrorParams) {
-    super({ field: 'result', issues: p.issues });
+    super({ field: ['result'], issues: p.issues });
   }
 }

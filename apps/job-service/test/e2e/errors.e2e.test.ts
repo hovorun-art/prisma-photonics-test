@@ -168,6 +168,64 @@ describe('job-service error responses and internal access', () => {
     });
   });
 
+  describe('bulk size range', () => {
+    /** A bulk of one webhook job padded so the whole body is exactly `bytes` long. */
+    const bulkOfSize = (bytes: number): string => {
+      const sized = (padding: string): string =>
+        JSON.stringify({
+          jobs: [{ ...WEBHOOK_JOB, payload: { ...WEBHOOK_JOB.payload, body: { padding } } }],
+        });
+      const body = sized('a'.repeat(bytes - sized('').length));
+      expect(Buffer.byteLength(body)).toBe(bytes);
+      return body;
+    };
+
+    it('Empty bulk', async () => {
+      const paths = await service.issuePaths(await service.submitBulk({ jobs: [] }));
+
+      expect(paths).toEqual([['jobs']]);
+      expect(await service.total()).toBe(0);
+    });
+
+    it('Too many jobs', async () => {
+      const jobs = Array.from({ length: TEST_CONFIG.bulkMaxJobs + 1 }, () => EMAIL_JOB);
+
+      const body = await service.errorBody({
+        response: await service.submitBulk({ jobs }),
+        status: 400,
+        code: 'VALIDATION_FAILED',
+      });
+
+      expect(body.details).toEqual({
+        issues: [expect.objectContaining({ path: ['jobs'], maximum: TEST_CONFIG.bulkMaxJobs })],
+      });
+      expect(await service.total()).toBe(0);
+      expect(service.queue.enqueueMany).not.toHaveBeenCalled();
+    });
+
+    it('Largest allowed bulk', async () => {
+      const jobs = Array.from({ length: TEST_CONFIG.bulkMaxJobs }, () => EMAIL_JOB);
+
+      expect((await service.submittedBulk(jobs)).length).toBe(TEST_CONFIG.bulkMaxJobs);
+      expect(await service.total()).toBe(TEST_CONFIG.bulkMaxJobs);
+    });
+
+    it('Bulk body above the body size limit', async () => {
+      const response = await service.submitBulk(bulkOfSize(TEST_CONFIG.bodyLimitBytes + 1));
+
+      const body = await service.errorBody({ response, status: 413, code: 'PAYLOAD_TOO_LARGE' });
+      expect(body.details).toEqual({ limitBytes: TEST_CONFIG.bodyLimitBytes });
+      expect(await service.total()).toBe(0);
+    });
+
+    it('Bulk body at the body size limit', async () => {
+      const response = await service.submitBulk(bulkOfSize(TEST_CONFIG.bodyLimitBytes));
+
+      expect(response.status).toBe(201);
+      expect(await service.total()).toBe(1);
+    });
+  });
+
   describe('internal access', () => {
     const expectUnauthorized = async (response: Response): Promise<void> => {
       await service.errorBody({ response, status: 401, code: 'INTERNAL_UNAUTHORIZED' });

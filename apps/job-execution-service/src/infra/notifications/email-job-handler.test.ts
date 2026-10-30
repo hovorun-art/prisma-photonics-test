@@ -22,6 +22,7 @@ const JOB: Job = {
   maxAttempts: 3,
   result: null,
   error: null,
+  groupId: null,
   scheduledAt: null,
   startedAt: '2026-10-29T12:00:00.000Z',
   completedAt: null,

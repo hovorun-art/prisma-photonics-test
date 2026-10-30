@@ -58,6 +58,7 @@ class RoutedJobService implements MockJobService {
       payload: { to: 'ops@acme.test', subject: 'Weekly digest', body: 'Hi team' },
       result: null,
       error: null,
+      groupId: null,
       scheduledAt: null,
       startedAt: null,
       completedAt: null,

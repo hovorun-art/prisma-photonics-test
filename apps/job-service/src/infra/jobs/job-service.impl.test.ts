@@ -6,6 +6,8 @@ import type { LoggerService } from '@nestjs/common';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 
+import { BulkLimitExceededError } from '../../domain/jobs/errors/bulk-limit-exceeded.error.js';
+import { InvalidJobFieldError } from '../../domain/jobs/errors/invalid-job-field.error.js';
 import { InvalidJobPayloadError } from '../../domain/jobs/errors/invalid-job-payload.error.js';
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
 import { JobQueueUnavailableError } from '../../domain/jobs/errors/job-queue-unavailable.error.js';
@@ -16,7 +18,7 @@ import { JobServiceImpl } from './job-service.impl.js';
 
 const JOB_ID = randomUUID();
 const NOW = '2026-10-29T12:00:00.000Z';
-const PARAMS = { queryDefaultLimit: 20, queryMaxLimit: 100 };
+const PARAMS = { queryDefaultLimit: 20, queryMaxLimit: 100, bulkMaxJobs: 3 };
 
 describe('JobServiceImpl', () => {
   let repository: DeepMockProxy<JobRepository>;
@@ -35,6 +37,7 @@ describe('JobServiceImpl', () => {
     maxAttempts: 3,
     result: null,
     error: null,
+    groupId: null,
     scheduledAt: null,
     startedAt: null,
     completedAt: null,
@@ -50,7 +53,15 @@ describe('JobServiceImpl', () => {
     logger = mockDeep<Pick<LoggerService, 'warn'>>();
     clock.now.mockReturnValueOnce({ now: new Date(NOW) });
     repository.create.mockImplementationOnce((req) =>
-      Promise.resolve({ job: { ...req.job, id: JOB_ID, createdAt: NOW, updatedAt: NOW } }),
+      Promise.resolve({
+        job: {
+          ...req.job,
+          id: JOB_ID,
+          groupId: req.job.groupId ?? null,
+          createdAt: NOW,
+          updatedAt: NOW,
+        },
+      }),
     );
     service = new JobServiceImpl({ repository, queue, clock, logger }, PARAMS);
   });
@@ -96,6 +107,204 @@ describe('JobServiceImpl', () => {
         expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
         expect.any(String),
       );
+    });
+
+    it('Single job with a group id', async () => {
+      const groupId = randomUUID();
+      queue.enqueue.mockResolvedValueOnce({});
+
+      const { job } = await service.create({ job: { ...request, groupId } });
+
+      expect(repository.create).toHaveBeenCalledExactlyOnceWith({
+        job: expect.objectContaining({ groupId }) as unknown,
+      });
+      expect(job.groupId).toBe(groupId);
+    });
+
+    it('Job without a group id', async () => {
+      queue.enqueue.mockResolvedValueOnce({});
+
+      const { job } = await service.create({ job: request });
+
+      expect(repository.create).toHaveBeenCalledExactlyOnceWith({
+        job: expect.objectContaining({ groupId: null }) as unknown,
+      });
+      expect(job.groupId).toBeNull();
+    });
+  });
+
+  describe('createMany', () => {
+    const email = {
+      type: 'email',
+      payload: { to: 'ada@example.com', subject: 'Hello', body: 'Hi' },
+      priority: 7,
+      maxAttempts: 4,
+    } as const;
+    const webhook = {
+      type: 'webhook',
+      payload: { method: 'GET', url: 'http://example.com/ping' },
+      priority: 5,
+      maxAttempts: 3,
+    } as const;
+    const transit = (departureDate: string) =>
+      ({
+        type: 'flight-transit',
+        payload: { origin: 'LHR', destination: 'JFK', departureDate },
+        priority: 5,
+        maxAttempts: 3,
+      }) as const;
+    const ids = [randomUUID(), randomUUID(), randomUUID()];
+    /** `NOW` plus the given milliseconds, as the bulk's creation times are spaced. */
+    const nowPlus = (ms: number): string => new Date(Date.parse(NOW) + ms).toISOString();
+
+    beforeEach(() => {
+      repository.createMany.mockImplementationOnce((req) =>
+        Promise.resolve({
+          jobs: req.jobs.map((job, index) => ({
+            ...job,
+            id: ids[index]!,
+            groupId: job.groupId ?? null,
+            createdAt: job.createdAt ?? NOW,
+            updatedAt: NOW,
+          })),
+        }),
+      );
+    });
+
+    it('Mixed job types are created in request order', async () => {
+      queue.enqueueMany.mockResolvedValueOnce({});
+
+      const { jobs } = await service.createMany({
+        jobs: [email, webhook, transit('2026-10-30')],
+      });
+
+      const pending = {
+        status: 'pending',
+        attempts: 0,
+        result: null,
+        error: null,
+        groupId: null,
+        scheduledAt: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      expect(repository.createMany).toHaveBeenCalledExactlyOnceWith({
+        jobs: [
+          { ...email, ...pending, createdAt: nowPlus(0) },
+          { ...webhook, ...pending, createdAt: nowPlus(1) },
+          { ...transit('2026-10-30'), ...pending, createdAt: nowPlus(2) },
+        ],
+      });
+      expect(jobs.map((job) => [job.id, job.type])).toEqual([
+        [ids[0], 'email'],
+        [ids[1], 'webhook'],
+        [ids[2], 'flight-transit'],
+      ]);
+    });
+
+    it('Bulk items with a group id', async () => {
+      const groupId = randomUUID();
+      queue.enqueueMany.mockResolvedValueOnce({});
+
+      const { jobs } = await service.createMany({
+        jobs: [
+          { ...email, groupId },
+          { ...webhook, groupId },
+        ],
+      });
+
+      expect(jobs.map((job) => job.groupId)).toEqual([groupId, groupId]);
+    });
+
+    it('Every bulk job is queued', async () => {
+      queue.enqueueMany.mockResolvedValueOnce({});
+
+      await service.createMany({ jobs: [email, webhook] });
+
+      expect(queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
+        entries: [
+          { jobId: ids[0], attempt: 1 },
+          { jobId: ids[1], attempt: 1 },
+        ],
+      });
+      expect(queue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('Queue unavailable during bulk submit', async () => {
+      const entries = [
+        { jobId: ids[0]!, attempt: 1 },
+        { jobId: ids[1]!, attempt: 1 },
+      ];
+      queue.enqueueMany.mockRejectedValueOnce(new JobQueueUnavailableError({ entries }));
+
+      const { jobs } = await service.createMany({ jobs: [email, webhook] });
+
+      expect(jobs.map((job) => [job.id, job.status])).toEqual([
+        [ids[0], 'pending'],
+        [ids[1], 'pending'],
+      ]);
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ jobIds: [ids[0], ids[1]] }),
+        expect.any(String),
+      );
+    });
+
+    it('stores nothing and queues nothing when storing the bulk fails', async () => {
+      const failure = new Error('database down');
+      repository.createMany.mockReset();
+      repository.createMany.mockRejectedValueOnce(failure);
+
+      await expect(service.createMany({ jobs: [email, webhook] })).rejects.toBe(failure);
+      expect(queue.enqueueMany).not.toHaveBeenCalled();
+    });
+
+    it('Largest allowed bulk', async () => {
+      queue.enqueueMany.mockResolvedValueOnce({});
+
+      const { jobs } = await service.createMany({ jobs: [email, email, email] });
+
+      expect(jobs).toHaveLength(PARAMS.bulkMaxJobs);
+    });
+
+    it('Too many jobs', async () => {
+      const rejection = service.createMany({ jobs: [email, email, email, email] });
+
+      await expect(rejection).rejects.toBeInstanceOf(BulkLimitExceededError);
+      await expect(rejection).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: {
+          issues: [expect.objectContaining({ path: ['jobs'], maximum: PARAMS.bulkMaxJobs })],
+        },
+      });
+      expect(repository.createMany).not.toHaveBeenCalled();
+      expect(queue.enqueueMany).not.toHaveBeenCalled();
+    });
+
+    it('One item breaking a job-service rule', async () => {
+      const ruleRejection = service.createMany({
+        jobs: [email, transit('2026-10-28'), transit('2026-10-27')],
+      });
+
+      await expect(ruleRejection).rejects.toBeInstanceOf(InvalidJobFieldError);
+      await expect(ruleRejection).rejects.toMatchObject({
+        code: 'VALIDATION_FAILED',
+        details: {
+          issues: [
+            expect.objectContaining({ path: ['jobs', 1, 'payload', 'departureDate'] }),
+            expect.objectContaining({ path: ['jobs', 2, 'payload', 'departureDate'] }),
+          ],
+        },
+      });
+      expect(repository.createMany).not.toHaveBeenCalled();
+      expect(queue.enqueueMany).not.toHaveBeenCalled();
+    });
+
+    it('accepts a flight transit departing today', async () => {
+      queue.enqueueMany.mockResolvedValueOnce({});
+
+      const { jobs } = await service.createMany({ jobs: [transit('2026-10-29')] });
+
+      expect(jobs).toHaveLength(1);
     });
   });
 
@@ -176,6 +385,20 @@ describe('JobServiceImpl', () => {
         offset: 3,
         statuses: ['failed', 'cancelled'],
         types: ['webhook'],
+      });
+    });
+
+    it('Group filter combines with status and type', async () => {
+      const groupId = randomUUID();
+
+      await service.query({ offset: 0, statuses: ['failed'], types: ['email'], groupId });
+
+      expect(repository.query).toHaveBeenCalledExactlyOnceWith({
+        limit: PARAMS.queryDefaultLimit,
+        offset: 0,
+        statuses: ['failed'],
+        types: ['email'],
+        groupId,
       });
     });
 
