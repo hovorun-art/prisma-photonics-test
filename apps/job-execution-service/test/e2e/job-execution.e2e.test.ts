@@ -64,6 +64,40 @@ describe('job-execution-service running jobs', () => {
       ]);
     });
 
+    it('Run of an attempt is logged', async () => {
+      runsToCompletion();
+
+      await service.run(ENTRY);
+
+      const lines = service.jobLog.write.mock.calls.map(
+        ([line]) => JSON.parse(line) as Record<string, unknown>,
+      );
+      const steps = lines.filter((line) => line.jobId === JOB_ID);
+      expect(steps.map((line) => line.msg)).toEqual(
+        expect.arrayContaining([
+          'Attempt picked up',
+          'Handler started',
+          'Handler finished',
+          'Job completed',
+        ]),
+      );
+      for (const msg of [
+        'Attempt picked up',
+        'Handler started',
+        'Handler finished',
+        'Job completed',
+      ]) {
+        expect(steps.find((line) => line.msg === msg)).toMatchObject({
+          jobId: JOB_ID,
+          attempt: 1,
+          instanceId: INSTANCE_ID,
+        });
+      }
+      expect(steps.find((line) => line.msg === 'Handler finished')).toMatchObject({
+        durationMs: expect.any(Number) as number,
+      });
+    });
+
     // One finished status is enough here; the unit test goes through every status that skips.
     it('Job already taken or finished', async () => {
       service.jobs.get.mockResolvedValueOnce({
@@ -166,7 +200,13 @@ describe('job-execution-service running jobs', () => {
       await service.run(ENTRY);
 
       const lines = service.jobLogs(JOB_ID);
-      expect(lines.map((line) => line.msg)).toEqual(['Job started', 'Job completed']);
+      expect(lines.map((line) => line.msg)).toEqual([
+        'Attempt picked up',
+        'Job started',
+        'Handler started',
+        'Handler finished',
+        'Job completed',
+      ]);
       for (const line of lines) {
         expect(line).toMatchObject({ jobId: JOB_ID, attempt: 1, instanceId: INSTANCE_ID });
       }

@@ -44,6 +44,17 @@ describe('job-execution-service health, start and shutdown', () => {
     });
   });
 
+  it('opens the job log before taking queue entries', async () => {
+    const starting = await JobExecutionServiceUnderTest.start();
+    starting.stubIdleShutdown();
+    await starting.close();
+
+    expect(starting.jobLog.open).toHaveBeenCalledOnce();
+    expect(starting.jobLog.open.mock.invocationCallOrder[0]).toBeLessThan(
+      starting.consumer.start.mock.invocationCallOrder[0]!,
+    );
+  });
+
   it('job-execution-service stopped', async () => {
     const stopping = await JobExecutionServiceUnderTest.start();
     const health = stopping.url(HEALTH_ROUTE.path);
@@ -54,6 +65,7 @@ describe('job-execution-service health, start and shutdown', () => {
 
     expect(stopping.consumer.close).toHaveBeenCalledOnce();
     expect(stopping.redis.close).toHaveBeenCalledOnce();
+    expect(stopping.jobLog.close).toHaveBeenCalledOnce();
     await expect(fetch(health)).rejects.toThrow();
   });
 });

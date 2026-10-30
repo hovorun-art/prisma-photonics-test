@@ -5,6 +5,7 @@ import {
   type Job,
   type JobError,
   type JobStatus,
+  type UpdateJobRequest,
 } from '@job-queue/contracts';
 import {
   type Clock,
@@ -44,7 +45,7 @@ export interface JobServiceImplDeps {
   repository: JobRepository;
   queue: JobQueue;
   clock: Clock;
-  logger: Pick<LoggerService, 'warn'>;
+  logger: Pick<LoggerService, 'log' | 'warn' | 'error'>;
   /** The configured page size rule of the job query. */
   pageLimit: PageLimit;
 }
@@ -58,6 +59,14 @@ interface FailureChangesRequest {
   current: Job;
   error: JobError;
   now: string;
+}
+
+interface LogUpdateRequest {
+  /** The job as it was before the report. */
+  current: Job;
+  /** The job after the report. */
+  job: Job;
+  update: UpdateJobRequest;
 }
 
 interface RequireStatusRequest {
@@ -108,6 +117,7 @@ export class JobServiceImpl implements JobService {
     const issues = this.departureDayIssues({ job: req.job, departureDay: this.departureDay });
     if (issues.length > 0) throw new InvalidJobPayloadError({ issues });
     const { job } = await this.d.repository.create({ job: this.newPendingJob({ job: req.job }) });
+    this.d.logger.log({ jobId: job.id }, 'Job submitted');
     await this.enqueue({ jobId: job.id, attempt: 1 });
     return { job };
   }
@@ -136,6 +146,7 @@ export class JobServiceImpl implements JobService {
         this.newPendingJob({ job, createdAt: new Date(now.getTime() + index).toISOString() }),
       ),
     });
+    for (const job of jobs) this.d.logger.log({ jobId: job.id }, 'Job submitted');
     await this.enqueueFirstAttempts(jobs);
     return { jobs };
   }
@@ -189,6 +200,7 @@ export class JobServiceImpl implements JobService {
       expected: { status: current.status, attempts: current.attempts },
       changes,
     });
+    this.logUpdate({ current, job, update: req.update });
     // A failure does not change attempts, so the retry is the attempt after the loaded one.
     if (job.status === 'pending')
       await this.enqueue({ jobId: job.id, attempt: current.attempts + 1 });
@@ -198,6 +210,30 @@ export class JobServiceImpl implements JobService {
   async delete(req: DeleteJobServiceRequest): Promise<DeleteJobServiceResponse> {
     await this.d.repository.delete({ id: req.id, allowedStatuses: FINISHED_JOB_STATUSES });
     return {};
+  }
+
+  /** The job log line of an accepted report (a failure that retries is logged before its queueing). */
+  private logUpdate({ current, job, update }: LogUpdateRequest): void {
+    const jobId = job.id;
+    switch (update.status) {
+      case 'processing':
+        this.d.logger.log({ jobId, attempt: current.attempts + 1 }, 'Attempt started');
+        break;
+      case 'completed':
+        this.d.logger.log({ jobId, attempt: current.attempts }, 'Job completed');
+        break;
+      case 'failed': {
+        const fields = {
+          jobId,
+          attempt: current.attempts,
+          code: update.error.code,
+          message: update.error.message,
+        };
+        if (job.status === 'pending') this.d.logger.warn(fields, 'Attempt failed, retry scheduled');
+        else this.d.logger.error(fields, 'Job failed for good');
+        break;
+      }
+    }
   }
 
   /** Retry while attempts remain (the attempt was counted on start), otherwise fail for good. */
@@ -255,6 +291,7 @@ export class JobServiceImpl implements JobService {
   private async enqueue({ jobId, attempt }: EnqueueRequest): Promise<void> {
     try {
       await this.d.queue.enqueue({ jobId, attempt });
+      this.d.logger.log({ jobId, attempt }, 'Attempt queued');
     } catch (err) {
       this.d.logger.warn({ err, jobId, attempt }, 'Job stays pending: it could not be queued');
     }
@@ -266,11 +303,15 @@ export class JobServiceImpl implements JobService {
       await this.d.queue.enqueueMany({
         entries: jobs.map((job) => ({ jobId: job.id, attempt: 1 })),
       });
+      for (const job of jobs) this.d.logger.log({ jobId: job.id, attempt: 1 }, 'Attempt queued');
     } catch (err) {
-      this.d.logger.warn(
-        { err, jobIds: jobs.map((job) => job.id) },
-        'Jobs stay pending: they could not be queued',
-      );
+      // One line per job, so each job's log shows it.
+      for (const job of jobs) {
+        this.d.logger.warn(
+          { err, jobId: job.id, attempt: 1 },
+          'Job stays pending: it could not be queued',
+        );
+      }
     }
   }
 

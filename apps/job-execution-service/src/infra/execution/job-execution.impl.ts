@@ -1,5 +1,6 @@
 import type { Job, JobError, UpdateJobRequest } from '@job-queue/contracts';
 import {
+  type Clock,
   DomainError,
   JobNotFoundError,
   JobServiceUnavailableError,
@@ -17,11 +18,16 @@ import type {
 } from '../../domain/execution/job-execution.js';
 import { InvalidJobError } from '../../domain/jobs/errors/invalid-job.error.js';
 import type { JobRepository } from '../../domain/jobs/job-repository.js';
-import type { JobHandlers, RunJobHandlerResponse } from '../../domain/execution/job-handler.js';
+import type {
+  JobHandler,
+  JobHandlers,
+  RunJobHandlerResponse,
+} from '../../domain/execution/job-handler.js';
 
 export interface JobExecutionImplDeps {
   jobs: JobRepository;
   handlers: JobHandlers;
+  clock: Clock;
   logger: Pick<LoggerService, 'log' | 'warn' | 'error'>;
 }
 
@@ -57,6 +63,12 @@ interface ReportRequest {
 /** `delivered`, refused by job-service (`refused`), or given up after the last try (`abandoned`). */
 type ReportResponse = 'delivered' | 'refused' | 'abandoned';
 
+interface RunHandlerRequest {
+  fields: EntryFields;
+  handler: JobHandler;
+  job: Job;
+}
+
 interface FailRequest {
   fields: EntryFields;
   error: JobError;
@@ -85,6 +97,7 @@ export class JobExecutionImpl implements JobExecution {
   async execute(req: ExecuteJobExecutionRequest): Promise<ExecuteJobExecutionResponse> {
     const fields: EntryFields = { jobId: req.jobId, attempt: req.attempt };
     try {
+      this.d.logger.log(fields, 'Attempt picked up');
       const read = await this.read({ fields });
       if ('outcome' in read) return read;
 
@@ -111,7 +124,7 @@ export class JobExecutionImpl implements JobExecution {
 
       let ran: RunJobHandlerResponse;
       try {
-        ran = await handler.run({ job, attempt: fields.attempt, signal: this.running.signal });
+        ran = await this.runHandler({ fields, handler, job });
       } catch (error) {
         if (this.running.signal.aborted) return this.abandon({ fields });
         return await this.fail({ fields, error: this.toJobError(error) });
@@ -130,6 +143,22 @@ export class JobExecutionImpl implements JobExecution {
       // Nothing above should throw; this keeps a bug from failing the queue entry.
       this.d.logger.error({ ...fields, err }, 'Job execution failed unexpectedly');
       return { outcome: 'abandoned' };
+    }
+  }
+
+  /** Runs the handler and logs its start and end (with the time it took, also when it throws). */
+  private async runHandler({
+    fields,
+    handler,
+    job,
+  }: RunHandlerRequest): Promise<RunJobHandlerResponse> {
+    const startedAt = this.d.clock.now().now.getTime();
+    this.d.logger.log(fields, 'Handler started');
+    try {
+      return await handler.run({ job, attempt: fields.attempt, signal: this.running.signal });
+    } finally {
+      const durationMs = this.d.clock.now().now.getTime() - startedAt;
+      this.d.logger.log({ ...fields, durationMs }, 'Handler finished');
     }
   }
 
