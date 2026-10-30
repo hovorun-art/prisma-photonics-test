@@ -57,12 +57,19 @@ export function GroupJobTab({
   // A duplicate's values apply to the type it was copied with; a type switch starts fresh.
   const [initial, setInitial] = useState(seed.values);
   const [execution, setExecution] = useState<JobFormExecution>(() => {
-    const priority = seed.values?.priority;
-    const maxAttempts = seed.values?.maxAttempts;
+    const values = seed.values ?? {};
     return {
-      priority: typeof priority === 'number' ? priority : DEFAULT_JOB_FORM_EXECUTION.priority,
+      priority:
+        typeof values.priority === 'number' ? values.priority : DEFAULT_JOB_FORM_EXECUTION.priority,
       maxAttempts:
-        typeof maxAttempts === 'number' ? maxAttempts : DEFAULT_JOB_FORM_EXECUTION.maxAttempts,
+        typeof values.maxAttempts === 'number'
+          ? values.maxAttempts
+          : DEFAULT_JOB_FORM_EXECUTION.maxAttempts,
+      run: values.run === 'later' ? 'later' : DEFAULT_JOB_FORM_EXECUTION.run,
+      scheduledAt:
+        typeof values.scheduledAt === 'string'
+          ? values.scheduledAt
+          : DEFAULT_JOB_FORM_EXECUTION.scheduledAt,
     };
   });
 

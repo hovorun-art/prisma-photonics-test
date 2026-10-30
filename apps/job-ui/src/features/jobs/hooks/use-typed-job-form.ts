@@ -9,7 +9,7 @@ import type { JobFormDraft, JobFormExecution } from '../model/job-form-draft';
 /**
  * The form of one job type: checked with the type's form schema (built from the contract
  * job-service validates with), started at `initialValues` or the type's initial values, and
- * reporting Priority and Max attempts as they change, so a type switch can keep them.
+ * reporting the execution settings (Priority, Max attempts, the run choice) as they change, so a type switch can keep them.
  */
 export function useTypedJobForm<Values extends FieldValues, Field extends Path<Values>>({
   draft,
@@ -40,10 +40,12 @@ export function useTypedJobForm<Values extends FieldValues, Field extends Path<V
       form.subscribe({
         formState: { values: true },
         callback: ({ values: current }) => {
-          const { priority, maxAttempts } = current as Partial<JobFormExecution>;
+          const { priority, maxAttempts, run, scheduledAt } = current as Partial<JobFormExecution>;
           onExecutionChange({
             priority: priority ?? DEFAULT_JOB_FORM_EXECUTION.priority,
             maxAttempts: maxAttempts ?? DEFAULT_JOB_FORM_EXECUTION.maxAttempts,
+            run: run ?? DEFAULT_JOB_FORM_EXECUTION.run,
+            scheduledAt: scheduledAt ?? DEFAULT_JOB_FORM_EXECUTION.scheduledAt,
           });
         },
       }),

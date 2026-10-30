@@ -27,7 +27,7 @@ export function SubmitJobPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const type: JobType = OTHER_TYPES.find((other) => other === params.get(TYPE_PARAM)) ?? 'email';
-  // Priority and max attempts, kept in step with the form, so they carry over to the next type
+  // Priority, max attempts and the run choice, kept in step with the form, so they carry over to the next type
   // whether the user switches with a card or with Back and Forward.
   const [execution, setExecution] = useState(DEFAULT_JOB_FORM_EXECUTION);
 

@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
+  ChangeJobStatusRequest,
   CreateJobRequest,
   CreateJobsBulkRequest,
   EMAIL_LIMITS,
@@ -366,6 +367,38 @@ describe('JobIdParams', () => {
     const result = JobIdParams.safeParse({ id: 'abc' });
 
     expect(result.error?.issues.map((issue) => issue.path)).toContainEqual(['id']);
+  });
+});
+
+describe('ChangeJobStatusRequest', () => {
+  const statusIssues = (input: unknown): PropertyKey[][] =>
+    ChangeJobStatusRequest.safeParse(input).error?.issues.map((issue) => issue.path) ?? [];
+
+  it('accepts a cancel and a retry', () => {
+    expect(ChangeJobStatusRequest.parse({ status: 'cancelled' })).toEqual({ status: 'cancelled' });
+    expect(ChangeJobStatusRequest.parse({ status: 'pending' })).toEqual({ status: 'pending' });
+  });
+
+  it('Unsupported target status', () => {
+    for (const status of ['completed', 'processing', 'failed', 'scheduled', 'done']) {
+      expect(statusIssues({ status })).toEqual([['status']]);
+    }
+  });
+
+  it('Missing status', () => {
+    expect(statusIssues({})).toEqual([['status']]);
+  });
+
+  it('rejects a status that is not a string', () => {
+    for (const status of [null, 42]) {
+      expect(statusIssues({ status })).toEqual([['status']]);
+    }
+  });
+
+  it('drops fields other than the status', () => {
+    expect(
+      ChangeJobStatusRequest.parse({ status: 'pending', attempts: 3, error: { code: 'X' } }),
+    ).toEqual({ status: 'pending' });
   });
 });
 

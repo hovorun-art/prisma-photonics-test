@@ -220,6 +220,7 @@ describe('job-service internal job routes', () => {
       expect(await service.stored(job.id)).toEqual(failed);
       expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
         jobId: job.id,
+        run: 1,
         attempt: 2,
         priority: job.priority,
         runAt: null,
@@ -242,6 +243,7 @@ describe('job-service internal job routes', () => {
       } else {
         expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
           jobId: job.id,
+          run: 1,
           attempt: 2,
           priority: job.priority,
           runAt: null,
@@ -261,6 +263,7 @@ describe('job-service internal job routes', () => {
       });
       expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
         jobId: job.id,
+        run: 1,
         attempt: 2,
         priority: job.priority,
         runAt: null,
@@ -269,8 +272,8 @@ describe('job-service internal job routes', () => {
 
     it('Retry survives an unavailable queue', async () => {
       const job = await service.seed({ status: 'processing', attempts: 1, maxAttempts: 3 });
-      service.queue.enqueue.mockImplementationOnce(({ jobId, attempt }) =>
-        Promise.reject(new JobQueueUnavailableError({ jobId, attempt })),
+      service.queue.enqueue.mockImplementationOnce(({ jobId, run, attempt }) =>
+        Promise.reject(new JobQueueUnavailableError({ jobId, run, attempt })),
       );
 
       const response = await service.report({ id: job.id, body: FAIL });
@@ -279,6 +282,7 @@ describe('job-service internal job routes', () => {
       expect(Job.parse(await response.json())).toMatchObject({ status: 'pending', error: ERROR });
       expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({
         jobId: job.id,
+        run: 1,
         attempt: 2,
         priority: job.priority,
         runAt: null,
@@ -324,8 +328,14 @@ describe('job-service internal job routes', () => {
       expect(retried).toMatchObject({ status: 'processing', attempts: 2 });
       expect(failed).toMatchObject({ status: 'failed', attempts: 2, maxAttempts: 2 });
       expect(service.queue.enqueue.mock.calls.map(([entry]) => entry)).toEqual([
-        { jobId: job.id, attempt: 1, priority: JOB_LIMITS.priority.max, runAt: scheduledAt },
-        { jobId: job.id, attempt: 2, priority: JOB_LIMITS.priority.max, runAt: null },
+        {
+          jobId: job.id,
+          run: 1,
+          attempt: 1,
+          priority: JOB_LIMITS.priority.max,
+          runAt: scheduledAt,
+        },
+        { jobId: job.id, run: 1, attempt: 2, priority: JOB_LIMITS.priority.max, runAt: null },
       ]);
     });
 
@@ -355,6 +365,48 @@ describe('job-service internal job routes', () => {
       expect(failed.completedAt).toEqual(expect.any(String));
       expect(await service.stored(job.id)).toEqual(failed);
       expect(service.queue.enqueue).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('reports for a cancelled job', () => {
+    /** A job a client cancelled through the public route while it was in `status`. */
+    const cancelledWhile = async (status: 'pending' | 'processing'): Promise<Job> => {
+      service.queue.cancel.mockResolvedValueOnce({});
+      const job = await service.seed({ status });
+      expect(
+        (await service.changeStatus({ id: job.id, body: { status: 'cancelled' } })).status,
+      ).toBe(200);
+      return service.stored(job.id);
+    };
+
+    it('Completion reported after a cancel', async () => {
+      const job = await cancelledWhile('processing');
+
+      const response = await service.report({ id: job.id, body: COMPLETE });
+
+      await service.expectConflict({ response, status: 'cancelled' });
+      expect(await service.stored(job.id)).toEqual(job);
+      expect(job.result).toBeNull();
+    });
+
+    it('Failure reported after a cancel', async () => {
+      const job = await cancelledWhile('processing');
+
+      const response = await service.report({ id: job.id, body: FAIL });
+
+      await service.expectConflict({ response, status: 'cancelled' });
+      expect(await service.stored(job.id)).toEqual(job);
+      expect(service.queue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('Start reported for a cancelled job', async () => {
+      const job = await cancelledWhile('pending');
+
+      const response = await service.report({ id: job.id, body: START });
+
+      await service.expectConflict({ response, status: 'cancelled' });
+      expect(await service.stored(job.id)).toEqual(job);
+      expect(job.attempts).toBe(0);
     });
   });
 

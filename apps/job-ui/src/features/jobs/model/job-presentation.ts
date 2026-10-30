@@ -52,6 +52,6 @@ export interface JobPresentation {
   dateTime(req: TimeJobPresentationRequest): TextJobPresentationResponse;
   totalTime(req: TotalTimeJobPresentationRequest): TotalTimeJobPresentationResponse;
   lifecycle(req: LifecycleJobPresentationRequest): LifecycleJobPresentationResponse;
-  /** Cancel while it waits, retry after it failed, delete once it is finished. */
+  /** Cancel while it waits or runs, retry after it failed, delete once it is finished. */
   actions(req: ActionsJobPresentationRequest): ActionsJobPresentationResponse;
 }

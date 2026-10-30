@@ -10,6 +10,7 @@ import { en } from '@/locales';
 import { ComingSoon } from '../../app-frame/coming-soon';
 import type { JobFormDraft } from '../model/job-form-draft';
 import { FieldIdPrefixContext } from './field-id-prefix-context';
+import { RunChoice } from './run-choice';
 
 /** Error type of a message the API sent, shown as it is (not replaced by job-ui's own message). */
 export const API_ERROR = 'api';
@@ -57,6 +58,7 @@ export function JobFormSections<Values extends FieldValues, Field extends Path<V
   // The execution fields are on every form; typed through the draft's own field names.
   const priority = 'priority' as Field;
   const maxAttempts = 'maxAttempts' as Field;
+  const scheduledAt = 'scheduledAt' as Field;
 
   return (
     <>
@@ -95,31 +97,7 @@ export function JobFormSections<Values extends FieldValues, Field extends Path<V
             />
           </FormField>
         </div>
-        <div className="flex flex-col gap-2">
-          <span className="text-[13px] font-medium">{en.submit.run}</span>
-          <ComingSoon className="self-start">
-            <div
-              role="group"
-              aria-label={en.submit.runLabel}
-              className="flex gap-1 rounded-[9px] bg-secondary p-[3px]"
-            >
-              <button
-                type="button"
-                aria-pressed="true"
-                className="h-[34px] rounded-[6px] bg-card px-3.5 text-[13px] font-medium shadow-xs"
-              >
-                {en.submit.runNow}
-              </button>
-              <button
-                type="button"
-                aria-pressed="false"
-                className="h-[34px] rounded-[6px] px-3.5 text-[13px] font-medium text-muted-foreground"
-              >
-                {en.submit.runLater}
-              </button>
-            </div>
-          </ComingSoon>
-        </div>
+        <RunChoice input={input(scheduledAt)} error={errorOf(scheduledAt)} />
         <ComingSoon className="w-full">
           <label className="flex w-full flex-col gap-1.5 text-[13px] font-medium">
             <span>
@@ -184,7 +162,11 @@ export function FormField({
           {error}
         </span>
       ) : (
-        hint && <span className="text-xs text-muted-foreground">{hint}</span>
+        hint && (
+          <span id={`${id}-hint`} className="text-xs text-muted-foreground">
+            {hint}
+          </span>
+        )
       )}
     </div>
   );

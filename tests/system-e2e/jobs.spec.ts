@@ -2,6 +2,7 @@ import { EmailJobResult, JOBS_ROUTE, Job, QueueStats, STATS_ROUTE } from '@job-q
 import { expect, test } from '@playwright/test';
 
 import { en } from '../../apps/job-ui/src/locales/en.js';
+import { StackJobs } from './support/stack-jobs.js';
 import { JOB_SERVICE_URL } from './support/stack-settings.js';
 
 test('Submitted email job completes end to end: API, Postgres, queue, execution, Postgres', async ({
@@ -121,4 +122,85 @@ test('Filter by type through the stack: under Webhook the jobs list shows only w
   await expect(typeFilter.getByRole('button', { name: /^Webhook [\d,]+$/ })).toHaveText(
     `Webhook ${stats.counts.type.webhook.toLocaleString('en-US')}`,
   );
+});
+
+test('Cancelled waiting job never runs: a worker takes its entry, skips it, and it stays cancelled', async ({
+  request,
+}) => {
+  const jobs = new StackJobs({ request });
+  const { job } = await jobs.waiting();
+
+  const { response } = await jobs.changeStatus({ id: job.id, status: 'cancelled' });
+
+  expect(response.status()).toBe(200);
+  expect(Job.parse(await response.json()).status).toBe('cancelled');
+  // A worker reaches its entry once the backlog ahead of it is done, and drops it unrun.
+  await expect
+    .poll(
+      async () =>
+        (await jobs.workerLogged({ jobId: job.id, msg: 'Skipped: job is no longer startable' }))
+          .lines,
+      { timeout: 90_000, intervals: [1_000] },
+    )
+    .toContainEqual(expect.objectContaining({ status: 'cancelled' }));
+  expect((await jobs.workerLogged({ jobId: job.id, msg: 'Job started' })).lines).toEqual([]);
+  expect((await jobs.read({ id: job.id })).job).toMatchObject({
+    status: 'cancelled',
+    attempts: 0,
+    startedAt: null,
+    result: null,
+  });
+});
+
+test('Running job is stopped on the full system: its worker logged the stop and it stays cancelled without a result', async ({
+  request,
+}) => {
+  const jobs = new StackJobs({ request });
+  // A send may end just before the cancel arrives (409); then another job is tried.
+  let cancelled: Job | undefined;
+  for (let tries = 0; tries < 5 && cancelled === undefined; tries += 1) {
+    const { job: running } = await jobs.running();
+    const { response } = await jobs.changeStatus({ id: running.id, status: 'cancelled' });
+    expect([200, 409]).toContain(response.status());
+    if (response.status() === 200) cancelled = Job.parse(await response.json());
+  }
+  if (cancelled === undefined) throw new Error('No running job could be cancelled');
+  const { id } = cancelled;
+
+  // The worker logs the stop once its handler was aborted, after which it reports nothing more.
+  await expect
+    .poll(
+      async () =>
+        (await jobs.workerLogged({ jobId: id, msg: 'Stopped: the job was cancelled' })).lines
+          .length,
+      { timeout: 15_000 },
+    )
+    .toBe(1);
+  expect((await jobs.workerLogged({ jobId: id, msg: 'Job completed' })).lines).toEqual([]);
+  expect((await jobs.read({ id })).job).toMatchObject({
+    status: 'cancelled',
+    result: null,
+    error: null,
+  });
+});
+
+test('Retried job runs again on the full system: back to pending with zero attempts, then finished again', async ({
+  request,
+}) => {
+  const jobs = new StackJobs({ request });
+  const { job: failed } = await jobs.failed();
+
+  const { response } = await jobs.changeStatus({ id: failed.id, status: 'pending' });
+
+  expect(response.status()).toBe(200);
+  expect(Job.parse(await response.json())).toMatchObject({
+    status: 'pending',
+    attempts: 0,
+    error: null,
+    completedAt: null,
+  });
+  await expect
+    .poll(async () => (await jobs.read({ id: failed.id })).job.status, { timeout: 60_000 })
+    .toMatch(/^(completed|failed)$/);
+  expect((await jobs.read({ id: failed.id })).job.attempts).toBe(1);
 });

@@ -1,4 +1,5 @@
 import type {
+  ChangeJobStatusRequest,
   CreateJobRequest,
   ErrorCode,
   Job,
@@ -45,6 +46,15 @@ export interface CreateBulkJobsApiResponse {
   readonly jobs: readonly Job[];
 }
 
+export interface ChangeStatusJobsApiRequest {
+  readonly id: string;
+  /** `cancelled` cancels the job, `pending` retries it. */
+  readonly status: ChangeJobStatusRequest['status'];
+}
+export interface ChangeStatusJobsApiResponse {
+  readonly job: Job;
+}
+
 export interface DeleteJobsApiRequest {
   readonly id: string;
 }
@@ -68,6 +78,8 @@ export interface JobsApi {
   create(req: CreateJobsApiRequest): Promise<CreateJobsApiResponse>;
   /** Submits many jobs in one request (`POST /v1/jobs/bulk`), stored all or nothing. */
   createBulk(req: CreateBulkJobsApiRequest): Promise<CreateBulkJobsApiResponse>;
+  /** Cancels or retries a job (`PATCH /v1/jobs/:id`), answering the updated job. */
+  changeStatus(req: ChangeStatusJobsApiRequest): Promise<ChangeStatusJobsApiResponse>;
   delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse>;
   /** The queue statistics (`GET /v1/stats`), with job counts faceted by the filters. */
   stats(req: StatsJobsApiRequest): Promise<StatsJobsApiResponse>;

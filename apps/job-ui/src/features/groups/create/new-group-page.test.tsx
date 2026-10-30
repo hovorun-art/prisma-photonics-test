@@ -478,7 +478,8 @@ describe('NewGroupPage', () => {
       await user.type(within(panel()).getByLabelText(en.submit.to), 'ops@acme.test');
 
       expect(screen.queryByText(en.submit.errors.to)).not.toBeInTheDocument();
-      expect(tab(1)).not.toHaveAttribute('aria-invalid');
+      // The tab learns of its form's errors one render later.
+      await expect.poll(() => tab(1).getAttribute('aria-invalid')).toBeNull();
     });
   });
 
@@ -528,7 +529,8 @@ describe('NewGroupPage', () => {
       await user.type(within(panel()).getByLabelText(en.submit.to), 'x');
 
       expect(within(panel()).queryByText('Mailbox does not exist')).not.toBeInTheDocument();
-      expect(tab(1)).not.toHaveAttribute('aria-invalid');
+      // The tab learns of its form's errors one render later.
+      await expect.poll(() => tab(1).getAttribute('aria-invalid')).toBeNull();
     });
 
     it("API validation error not tied to a job's field: the alert shows the issue's message", async () => {

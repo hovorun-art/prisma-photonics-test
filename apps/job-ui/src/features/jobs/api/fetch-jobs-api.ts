@@ -14,6 +14,8 @@ import { FetchJsonApiClient, type FetchJsonApiClientParams } from './fetch-json-
 import type {
   CreateBulkJobsApiRequest,
   CreateBulkJobsApiResponse,
+  ChangeStatusJobsApiRequest,
+  ChangeStatusJobsApiResponse,
   CreateJobsApiRequest,
   CreateJobsApiResponse,
   DeleteJobsApiRequest,
@@ -78,6 +80,18 @@ export class FetchJobsApi implements JobsApi {
       },
     });
     return { jobs: (await this.parse({ schema: CreateJobsBulkResponse, response })).items };
+  }
+
+  async changeStatus(req: ChangeStatusJobsApiRequest): Promise<ChangeStatusJobsApiResponse> {
+    const response = await this.send({
+      path: this.jobPath(req.id),
+      init: {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: req.status }),
+      },
+    });
+    return { job: await this.parse({ schema: Job, response }) };
   }
 
   async delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse> {

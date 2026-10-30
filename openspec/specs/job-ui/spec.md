@@ -182,7 +182,8 @@ again.
 ### Requirement: The job page shows a job
 The job page SHALL show a breadcrumb "Jobs / <id>", the full id as its title with status and type
 badges, a Payload card, a Result card for a completed job or an Error card for a failed job, and a
-Details list with type, priority, attempts, created, started, finished and total time.
+Details list with type, priority, attempts, created, "Scheduled for" (only for a job with a
+scheduled time), started, finished and total time.
 
 #### Scenario: Completed job
 - **WHEN** a user opens the page of a completed job
@@ -200,9 +201,19 @@ Details list with type, priority, attempts, created, started, finished and total
 - **WHEN** the page shows a job that has started and finished
 - **THEN** created, started and finished are local date and time, and Total time is the time from started to finished
 
+#### Scenario: Scheduled time on the job page
+- **WHEN** a user opens the page of a job that has a scheduled time
+- **THEN** the Details list shows "Scheduled for" with the scheduled time as local date and time, in the same format as Created
+
+#### Scenario: No scheduled time on the job page
+- **WHEN** a user opens the page of a job without a scheduled time
+- **THEN** the Details list has no "Scheduled for" row
+
 ### Requirement: The job page shows the job's lifecycle
 The job page SHALL show a Lifecycle timeline of the statuses `pending`, `processing` and the
 job's final status, marking the steps the job has reached, with the time of each step that has one.
+For a job created as `scheduled` (its scheduled time is after its creation time), a `scheduled`
+step, reached at the creation time, SHALL take the place of the `pending` step.
 
 #### Scenario: Lifecycle of a completed job
 - **WHEN** a user opens the page of a completed job
@@ -211,6 +222,18 @@ job's final status, marking the steps the job has reached, with the time of each
 #### Scenario: Lifecycle of a pending job
 - **WHEN** a user opens the page of a pending job
 - **THEN** the Lifecycle marks pending as reached and processing as not reached yet
+
+#### Scenario: Lifecycle of a scheduled job
+- **WHEN** a user opens the page of a job in status `scheduled`
+- **THEN** the Lifecycle shows scheduled, processing and completed, with scheduled reached at the creation time and processing and completed not reached yet
+
+#### Scenario: Lifecycle of a completed scheduled job
+- **WHEN** a user opens the page of a completed job that was created as `scheduled`
+- **THEN** the Lifecycle marks scheduled, processing and completed as reached, with the creation, start and finish times, and shows no pending step
+
+#### Scenario: Lifecycle of a job scheduled for a past time
+- **WHEN** a user opens the page of a job whose scheduled time is not after its creation time
+- **THEN** the Lifecycle shows pending, processing and the final step as for a job without a scheduled time
 
 ### Requirement: The job page handles unknown jobs
 While the job loads the page SHALL show skeleton cards. A job id that matches no job, an id that is
@@ -352,8 +375,8 @@ built from the form values, marked as an example.
 
 ### Requirement: Features still to come are shown disabled
 Design elements that need API features not built yet SHALL be shown muted and disabled, with a
-"Coming soon" tooltip on hover and focus: search, Cancel and Retry, "Run again" on the transit
-report, the idempotency key and "At a specific time".
+"Coming soon" tooltip on hover and focus: search, "Run again" on the transit report and the
+idempotency key.
 
 #### Scenario: Disabled search
 - **WHEN** a user hovers over or focuses the search field on the jobs list
@@ -375,12 +398,21 @@ report, the idempotency key and "At a specific time".
 - **WHEN** a user hovers over or focuses "Run again" on the report of a completed transit job
 - **THEN** it is disabled and a "Coming soon" tooltip is shown
 
+#### Scenario: Run choice is enabled
+- **WHEN** a user opens the submit page
+- **THEN** "Immediately" and "At a specific time" can be chosen and show no "Coming soon" tooltip
+
+#### Scenario: Cancel and Retry are not disabled
+- **WHEN** a user opens the page of a pending job or of a failed job
+- **THEN** the "Cancel job" or "Retry job" button is enabled and shows no "Coming soon" tooltip
+
 ### Requirement: Users can choose the job type on the submit page
 The "1. Job type" cards SHALL switch the form in place between Email, Webhook and Aircraft transit.
 Choosing Webhook SHALL show `/jobs/new?type=webhook`, choosing Aircraft transit
 `/jobs/new?type=flight-transit`, choosing Email `/jobs/new`; opening any of these URLs directly
 SHALL show that type selected, and Back SHALL return to the previous type. Switching SHALL keep
-Priority and Max attempts and start the chosen type's payload fields at their initial values.
+Priority, Max attempts, the run choice and its time, and start the chosen type's payload
+fields at their initial values.
 
 #### Scenario: Choose Webhook
 - **WHEN** a user on `/jobs/new` clicks the Webhook card
@@ -409,6 +441,10 @@ Priority and Max attempts and start the chosen type's payload fields at their in
 #### Scenario: Switching to transit keeps the execution settings
 - **WHEN** a user changes Max attempts, picks an origin airport, chooses Email and then Aircraft transit again
 - **THEN** Max attempts keeps the changed value and the origin airport is empty
+
+#### Scenario: Switching keeps the scheduled time
+- **WHEN** a user chooses "At a specific time", enters a time and chooses Webhook
+- **THEN** "At a specific time" is still selected and the time input holds the entered time
 
 ### Requirement: Users can submit a webhook job
 With Webhook chosen, "2. Payload" SHALL show Method (POST, PUT, GET; POST at first), URL and "Body
@@ -892,6 +928,141 @@ the chosen filters. A failed poll SHALL keep the last filtered page as the unfil
 #### Scenario: Failed poll under a filter
 - **WHEN** Failed is chosen and a poll of the list fails after failed jobs were shown
 - **THEN** the failed jobs stay on screen and "Connection lost, retrying" is shown next to the live indicator
+
+### Requirement: Users can choose when a job runs
+"3. Execution" on the submit page SHALL offer the run choice "Immediately" and "At a specific
+time", with "Immediately" selected when the page opens. With "Immediately" the request SHALL carry
+no execution time. Choosing "At a specific time" SHALL show a date and time input in the browser's
+local time zone, with a hint naming that time zone; the chosen time SHALL be sent as the request's
+`scheduledAt`, as the same instant in UTC.
+
+#### Scenario: Immediately at first
+- **WHEN** a user opens the submit page
+- **THEN** "Immediately" is selected, no date and time input is shown, and the request preview has no `scheduledAt`
+
+#### Scenario: Choose a specific time
+- **WHEN** a user chooses "At a specific time"
+- **THEN** a date and time input is shown under the choice, with a hint naming the browser's time zone
+
+#### Scenario: Submit a scheduled job
+- **WHEN** a user fills a valid email job, chooses "At a specific time", enters a local date and time in the future and clicks "Submit job"
+- **THEN** the job is created with `scheduledAt` set to that local time as a UTC timestamp, and the new job's page opens
+
+#### Scenario: Back to immediately
+- **WHEN** a user chooses "At a specific time", enters a time, then chooses "Immediately" and submits
+- **THEN** the job is created without `scheduledAt`
+
+### Requirement: The scheduled time is validated before sending
+With "At a specific time" chosen, the form SHALL reject an empty time, a time that is not after the
+current time, and a time further ahead than the contract's configured maximum, each with its own
+message under the time input, and SHALL send nothing while the time is rejected. An API
+`VALIDATION_FAILED` issue on `scheduledAt` SHALL be shown under the time input.
+
+#### Scenario: No time entered
+- **WHEN** a user chooses "At a specific time", leaves the time empty and clicks "Submit job"
+- **THEN** the time input shows "Choose a date and time" under it and no request is sent
+
+#### Scenario: Time in the past
+- **WHEN** a user chooses "At a specific time", enters a time before the current time and clicks "Submit job"
+- **THEN** the time input shows "Choose a time in the future" under it and no request is sent
+
+#### Scenario: Time too far ahead
+- **WHEN** a user chooses "At a specific time", enters a time further ahead than the configured maximum and clicks "Submit job"
+- **THEN** the time input shows "Choose a time within <n> days", with the configured number of days, and no request is sent
+
+#### Scenario: API validation error on the scheduled time
+- **WHEN** the API answers a submit with `VALIDATION_FAILED` and an issue for `scheduledAt`
+- **THEN** the time input shows the issue's message and the entered values stay
+
+### Requirement: The request preview shows the scheduled time
+With "At a specific time" chosen and a time entered, the request preview and its cURL SHALL include
+`scheduledAt` as it will be sent, and the example response SHALL show status `scheduled` and that
+`scheduledAt`.
+
+#### Scenario: Preview of a scheduled request
+- **WHEN** a user chooses "At a specific time" and enters a time
+- **THEN** the request preview and the copied cURL contain `scheduledAt` with that time in UTC, and the example response shows status `scheduled` and the same `scheduledAt`
+
+### Requirement: The jobs list shows when a scheduled job runs
+For a job in status `scheduled`, the Status cell of the jobs list SHALL show the job's scheduled
+time, as local date and time, under the status badge. Jobs in other statuses SHALL show only the
+badge.
+
+#### Scenario: Scheduled job in the list
+- **WHEN** the list shows a job in status `scheduled`
+- **THEN** its Status cell shows the scheduled badge and, under it, the job's scheduled time as local date and time
+
+#### Scenario: Started scheduled job in the list
+- **WHEN** the list shows a job that has a scheduled time and is no longer `scheduled`
+- **THEN** its Status cell shows only the status badge
+
+### Requirement: Jobs that have not finished can be cancelled
+The job page of a pending, scheduled or processing job SHALL show a "Cancel job" button; other jobs
+SHALL NOT show it. Clicking it SHALL ask for confirmation; confirming cancels the job and the page
+shows the job as `cancelled` at once, without waiting for the next poll. Closing the dialog without
+confirming keeps the job as it was.
+
+#### Scenario: Cancel a pending job
+- **WHEN** a user clicks "Cancel job" on a pending job's page and confirms
+- **THEN** a cancel request is sent for the job and the page shows the job with status cancelled
+
+#### Scenario: Cancel a processing job
+- **WHEN** a user opens the page of a processing job
+- **THEN** a "Cancel job" button is shown
+
+#### Scenario: Keep the job
+- **WHEN** a user clicks "Cancel job" and then closes the dialog without confirming
+- **THEN** the dialog closes, no cancel request is made and the job is unchanged
+
+#### Scenario: No cancel for a finished job
+- **WHEN** a user opens the page of a completed, failed or cancelled job
+- **THEN** no "Cancel job" button is shown
+
+#### Scenario: Cancel a job from the UI on the full system
+- **WHEN** a user cancels a waiting job from its page on the full system
+- **THEN** the page shows the job with status cancelled, and it stays cancelled after a reload
+
+### Requirement: Failed jobs can be retried
+The job page of a failed job SHALL show a "Retry job" button; other jobs SHALL NOT show it. Clicking
+it SHALL retry the job without a confirmation, and the page SHALL show the job as `pending` with
+zero attempts at once, without waiting for the next poll.
+
+#### Scenario: Retry a failed job
+- **WHEN** a user clicks "Retry job" on a failed job's page
+- **THEN** a retry request is sent for the job and the page shows the job with status pending and zero attempts
+
+#### Scenario: No retry for a job that has not failed
+- **WHEN** a user opens the page of a pending, processing, completed or cancelled job
+- **THEN** no "Retry job" button is shown
+
+#### Scenario: Retry a job from the UI on the full system
+- **WHEN** a user retries a failed job from its page on the full system
+- **THEN** the page shows the job leaving the failed status and, later, finished again
+
+### Requirement: Status change buttons wait for their request
+While a cancel or retry request is in flight, its button (the dialog's confirm button for a cancel)
+SHALL be disabled, so the request cannot be sent twice.
+
+#### Scenario: Retry in flight
+- **WHEN** a user clicks "Retry job" and the request has not been answered yet
+- **THEN** the "Retry job" button is disabled until the answer arrives
+
+#### Scenario: Cancel in flight
+- **WHEN** a user confirms a cancel and the request has not been answered yet
+- **THEN** the dialog's confirm button is disabled until the answer arrives
+
+### Requirement: A failed status change is reported
+If a cancel or retry request fails, the UI SHALL show the API's error message and keep showing the
+job as it was: a failed cancel keeps the confirmation dialog open with the message, a failed retry
+shows the message next to the job's actions.
+
+#### Scenario: Cancel rejected
+- **WHEN** a user confirms a cancel and the API answers with a status conflict because the job has finished meanwhile
+- **THEN** the dialog stays open and shows the error message, and the page does not show the job as cancelled
+
+#### Scenario: Retry rejected
+- **WHEN** a user clicks "Retry job" and the API answers with an error
+- **THEN** the error message is shown next to the job's actions and the job is still shown as failed
 
 ### Requirement: The groups list shows groups newest first
 The groups list SHALL show one page of groups from the API, newest first, as a table with the
