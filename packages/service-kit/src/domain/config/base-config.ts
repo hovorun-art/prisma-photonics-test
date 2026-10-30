@@ -5,12 +5,16 @@ export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', '
 export type LogLevel = (typeof LOG_LEVELS)[number];
 
 /** The settings every backend service has (variable names and values in `.env.example`). */
-export interface BaseConfig {
+export interface CoreConfig {
   readonly nodeEnv: NodeEnv;
   readonly logLevel: LogLevel;
-  readonly redisUrl: string;
   /** Port of the service's HTTP server; 0 picks a free port. */
   readonly port: number;
-  /** The shared token of the internal API; every backend must hold the same one. */
+}
+
+/** The settings of a backend on the job queue: the core ones plus Redis and the internal API token. */
+export interface BaseConfig extends CoreConfig {
+  readonly redisUrl: string;
+  /** The shared token of the internal API; every backend on the queue must hold the same one. */
   readonly internalServiceToken: string;
 }

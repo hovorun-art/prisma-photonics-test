@@ -41,6 +41,8 @@ export interface NestServiceBootstrapParams<TConfig extends BootstrapConfig> {
   shutdownSteps: readonly ShutdownStep[];
   /** Every interface when omitted. */
   host?: string;
+  /** Off for a service whose routes read no body, so a sent body is ignored; on when omitted. */
+  bodyParser?: boolean;
 }
 
 /**
@@ -65,7 +67,10 @@ export class NestServiceBootstrap<TConfig extends BootstrapConfig> implements Se
       return { started: false };
     }
     const { config } = parsed;
-    const app = await NestFactory.create(this.p.createModule({ config }), { bufferLogs: true });
+    const app = await NestFactory.create(this.p.createModule({ config }), {
+      bufferLogs: true,
+      bodyParser: this.p.bodyParser ?? true,
+    });
     app.useLogger(app.get(PinoLogger));
     for (const step of this.p.setupSteps) {
       step.apply({ app });

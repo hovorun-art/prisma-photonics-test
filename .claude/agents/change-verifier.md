@@ -33,8 +33,11 @@ under "Assumed" or "Open questions" was never approved by the user: a requiremen
    - every design decision that has a visible footprint in the code
 3. For each claim find concrete evidence: file and line, or a command you ran.
    - Read the implementation, not just the file names.
-   - Run what can be run (the checks listed in `.claude/flow.conf`, the code against the
-     scenario's inputs) and quote the relevant output.
+   - Run what can be run (typecheck, lint, and the unit and integration test files related to the
+     change, the code against the scenario's inputs) and quote the relevant output. Never run e2e
+     tests (per-app `*.e2e.test.ts`, Playwright, `tests/system-e2e`, `npm test` or
+     `npm run test:e2e`, which include them): they run only in the main agent. Judge e2e tests by
+     reading them, and list the e2e files the main agent must run before the change counts as done.
    - Look for stubs, TODOs, hardcoded expected values, swallowed errors, dead
      code, leftover debug output and tests that cannot fail.
 4. Check for scope problems in both directions:

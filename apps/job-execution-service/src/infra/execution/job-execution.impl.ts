@@ -5,7 +5,12 @@ import {
   STARTABLE_JOB_STATUSES,
   type UpdateJobRequest,
 } from '@job-queue/contracts';
-import { DomainError, JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
+import {
+  DomainError,
+  JobNotFoundError,
+  JobServiceUnavailableError,
+  JobStatusConflictError,
+} from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import pRetry from 'p-retry';
 
@@ -17,7 +22,6 @@ import type {
   JobExecution,
 } from '../../domain/execution/job-execution.js';
 import { InvalidJobError } from '../../domain/jobs/errors/invalid-job.error.js';
-import { JobServiceUnavailableError } from '../../domain/jobs/errors/job-service-unavailable.error.js';
 import type { JobRepository } from '../../domain/jobs/job-repository.js';
 import type { JobHandlers, RunJobHandlerResponse } from '../../domain/execution/job-handler.js';
 

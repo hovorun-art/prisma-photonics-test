@@ -205,7 +205,7 @@ groups: a client submits many real jobs at once (say an email campaign) and foll
 group. The items are ordinary jobs of any type, so each one gets the system's pickup, retries,
 priority and recovery, instead of a second, smaller job system living inside one batch job.
 job-service only gains bulk submit and an opaque `groupId` on every job; following a group (status,
-counts per child status) is a separate service, `job-group-service`, with its own database.
+counts per child outcome) is a separate service, `job-group-service`, with its own Postgres schema.
 *Trade-off, said plainly:* there is no `batch` job type and the Job's progress percentage from the
 task's data model stays unused; a group's progress is its children's statuses, not a percentage on
 one job. A crash inside a group costs nothing extra: each child recovers like any job.
@@ -231,6 +231,67 @@ stores and returns it and filters by it (`GET /v1/jobs?groupId=`, one value, AND
 type, served by a `(group_id, created_at DESC)` index) but gives it no meaning. *Trade-off:* any
 client can add jobs to any group; there is no authentication in this project to tie a group to its
 owner, and job-group-service only reads the field.
+
+**job-group-service: a separate app with its own schema, a client of job-service.** Groups live in a
+third backend (`apps/job-group-service`, port 3002), not in job-service: job-service stays the owner
+of jobs and knows nothing about groups, and the group logic could be deployed, scaled or replaced
+on its own. Its data is a `job_groups` table in its own Postgres schema `job_groups` of the shared
+database (same container; each app has its own Prisma schema, migrations and migration history,
+and neither reads the other's tables). It reads jobs only through job-service's public API, as any
+client would: no service token, no `/internal`, no Redis. *Alternatives:* a second database or
+container (more isolation, more to run for a demo); groups inside job-service (simpler, but two
+aggregates and their polling in one service).
+
+**Creating a group is empty; the client submits the jobs.** `POST /v1/groups` creates a group with
+no jobs and answers its id; the client then submits its jobs to job-service (bulk or one by one)
+with that id as `groupId`. If the submit fails, the client deletes the group: `DELETE /v1/groups/:id`
+is allowed only while job-service reports no job with its id (409 `JOB_GROUP_NOT_EMPTY` otherwise,
+503 when job-service cannot be asked). job-group-service never submits, cancels, retries or deletes
+jobs. *Trade-off:* creating and filling a group are two calls, and a client that dies between them
+leaves an empty group running forever. A delete can also race the client's own submit: the delete
+sees no jobs, removes the group, and a bulk landing a moment later carries the id of a deleted
+group. Both are accepted: the client deletes only after its own submit failed.
+
+**Polling job-service, three count queries per running group.** At a configured interval (2 s) the
+service reads its running groups a page at a time (keyset by id, so groups that finish during the
+pass do not shift the pages) and, per group, asks `GET /v1/jobs?groupId=…&limit=1` three times,
+reading only `total`: all jobs, `status=completed`, and `status=failed&status=cancelled`. The cost
+does not grow with the group's size. The three answers are not one snapshot (they run in parallel),
+so `total` is raised to at least `completed + failed` and a child counted in neither only delays
+the result by one tick; finished statuses are final, so no child is counted twice. A failed poll
+(job-service down, a bad answer) keeps the group's last state, is logged with the group id, and is
+tried again at the next tick; one group's failure does not stop the others. The timer skips a tick
+while the previous one still runs and stops, waiting for the tick in flight, before the database
+pool closes on shutdown. `GET /v1/groups/:id` answers from the stored state (with `checkedAt`), so
+it works while job-service is down and costs job-service nothing. The timer is `@nestjs/schedule`
+(7.1M weekly downloads, 12.0.2 of Sep 2026, own types, ESM), chosen over `set-interval-async`
+(1.9M), `toad-scheduler` (164K) and a loop on our kernel `Sleeper`. *Next step, not built:* an
+event topic (job-service publishes child status changes, the group updates itself) would remove the
+polling load and the up-to-one-interval delay, at the price of a second channel between the
+services, delivery guarantees and replay after downtime; polling needs none of that.
+
+**One instance.** job-group-service runs as a single instance; nothing shares the poll between
+instances. Two instances would still be correct (the stats write is one conditional `UPDATE ...
+WHERE status = 'running'` with `total = GREATEST(total, $new)`, so a slower writer cannot lower the
+total or reopen a finished group) but would double the load on job-service. The step to more
+instances is claiming groups per tick with `FOR UPDATE SKIP LOCKED` (and a lease), not built.
+
+**The status rule.** A group is `running` while it has no jobs or while `completed + failed <
+total`; once it has jobs and every one is finished it is `completed` if all completed, otherwise
+`failed`. `total` is the highest count job-service ever reported for the group; `failed` counts
+failed and cancelled jobs plus jobs missing from that highest count (deleted through job-service
+before the group finished), so a deleted job can never leave a group running forever. A finished
+group is final: it is no longer polled, and jobs added, retried or deleted later do not change it.
+A failed job does not cancel its siblings. *Said plainly:* a group finishes as soon as the jobs
+seen so far are done, so a client that submits a campaign in several requests must send the next
+one before the first finishes; a job deleted before any poll saw it is never counted; and a group
+that never gets a job stays `running`.
+
+**Duplicate jobs in a group are not this service's concern.** If a client retries a submit whose
+answer it lost, or crashes and submits again, the group gets the jobs twice: they are real jobs in
+job-service and the group counts what job-service holds. Preventing that is the job of submission
+idempotency in job-service (planned as its own change), not of the group. Retries of one job do not
+duplicate it: a job is one row however many attempts it takes.
 
 **One request body limit, raised to 1 MB.** A full bulk of large jobs does not fit the Express
 default of 100 KB. A limit for the bulk route only would need a path-scoped JSON parser; Nest's

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { VALIDATION_FAILED_MESSAGE } from '../../http/validation-failed.js';
+import { VALIDATION_FAILED_MESSAGE } from '@job-queue/kernel';
 import { InvalidJobFieldError } from './invalid-job-field.error.js';
 
 describe('InvalidJobFieldError', () => {

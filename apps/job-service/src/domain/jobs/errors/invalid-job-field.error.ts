@@ -1,6 +1,6 @@
 import { DomainError } from '@job-queue/kernel';
 
-import { VALIDATION_FAILED_MESSAGE } from '../../http/validation-failed.js';
+import { VALIDATION_FAILED_MESSAGE } from '@job-queue/kernel';
 
 /** One problem with a job field, in the shape of a schema issue (path relative to the field). */
 export interface JobFieldIssue {

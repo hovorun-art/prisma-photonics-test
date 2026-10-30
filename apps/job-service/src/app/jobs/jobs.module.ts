@@ -1,4 +1,4 @@
-import { CLOCK, type Clock, SystemClock } from '@job-queue/kernel';
+import { CLOCK, type Clock, ConfiguredPageLimit, SystemClock } from '@job-queue/kernel';
 import { Inject, Logger, Module, type OnApplicationShutdown } from '@nestjs/common';
 
 import {
@@ -54,12 +54,17 @@ import { StatsController } from './stats.controller.js';
         config: JobServiceConfig,
       ) =>
         new JobServiceImpl(
-          { repository, queue, clock, logger: new Logger('JobService') },
           {
-            queryDefaultLimit: config.queryDefaultLimit,
-            queryMaxLimit: config.queryMaxLimit,
-            bulkMaxJobs: config.bulkMaxJobs,
+            repository,
+            queue,
+            clock,
+            logger: new Logger('JobService'),
+            pageLimit: new ConfiguredPageLimit({
+              defaultLimit: config.queryDefaultLimit,
+              maxLimit: config.queryMaxLimit,
+            }),
           },
+          { bulkMaxJobs: config.bulkMaxJobs },
         ),
       inject: [JOB_REPOSITORY, JOB_QUEUE, CLOCK, JOB_SERVICE_CONFIG],
     },

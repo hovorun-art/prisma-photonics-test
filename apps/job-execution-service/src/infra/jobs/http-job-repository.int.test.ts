@@ -8,8 +8,12 @@ import { UNREACHABLE_HTTP_URL } from '@job-queue/test-support';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { InvalidJobError } from '../../domain/jobs/errors/invalid-job.error.js';
-import { JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
-import { JobServiceUnavailableError } from '../../domain/jobs/errors/job-service-unavailable.error.js';
+import {
+  FetchJobServiceHttp,
+  JobNotFoundError,
+  JobServiceUnavailableError,
+  JobStatusConflictError,
+} from '@job-queue/kernel';
 import { HttpJobRepository } from './http-job-repository.js';
 
 const TOKEN = 'int-test-token';
@@ -54,7 +58,10 @@ describe('HttpJobRepository against a stub job-service', () => {
     };
 
   const api = (): HttpJobRepository =>
-    new HttpJobRepository({ baseUrl, serviceToken: TOKEN, timeoutMs: TIMEOUT_MS });
+    new HttpJobRepository(
+      { http: new FetchJobServiceHttp({ fetch }, { baseUrl, timeoutMs: TIMEOUT_MS }) },
+      { serviceToken: TOKEN },
+    );
 
   beforeAll(async () => {
     server = createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -152,11 +159,15 @@ describe('HttpJobRepository against a stub job-service', () => {
   });
 
   it('maps a refused connection to JobServiceUnavailableError', async () => {
-    const unreachable = new HttpJobRepository({
-      baseUrl: UNREACHABLE_HTTP_URL,
-      serviceToken: TOKEN,
-      timeoutMs: TIMEOUT_MS,
-    });
+    const unreachable = new HttpJobRepository(
+      {
+        http: new FetchJobServiceHttp(
+          { fetch },
+          { baseUrl: UNREACHABLE_HTTP_URL, timeoutMs: TIMEOUT_MS },
+        ),
+      },
+      { serviceToken: TOKEN },
+    );
 
     await expect(unreachable.get({ id: JOB.id })).rejects.toBeInstanceOf(
       JobServiceUnavailableError,
