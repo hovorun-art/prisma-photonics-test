@@ -123,6 +123,72 @@ describe('FetchJobsApi', () => {
     expect(contentType).toBe('application/json');
   });
 
+  it('createBulk posts the jobs and returns the created jobs in order', async () => {
+    const first = jobFixtures.build();
+    const second = jobFixtures.build();
+    let body: unknown = null;
+    let contentType: string | null = null;
+    server.use(
+      http.post(`${BASE}/v1/jobs/bulk`, async ({ request }) => {
+        body = await request.json();
+        contentType = request.headers.get('content-type');
+        return HttpResponse.json({ items: [first, second] }, { status: 201 });
+      }),
+    );
+    const groupId = randomUUID();
+    const jobs = [first, second].map((job) => ({
+      type: 'email' as const,
+      payload: job.payload,
+      priority: 5,
+      maxAttempts: 3,
+      groupId,
+    }));
+
+    await expect(api.createBulk({ jobs })).resolves.toEqual({ jobs: [first, second] });
+    expect(body).toEqual({ jobs });
+    expect(contentType).toBe('application/json');
+  });
+
+  it('createBulk rejects an answer that does not match the bulk contract', async () => {
+    server.use(
+      http.post(`${BASE}/v1/jobs/bulk`, () =>
+        HttpResponse.json({ items: [{ ...jobFixtures.build(), priority: -1 }] }, { status: 201 }),
+      ),
+    );
+    const job = jobFixtures.build();
+
+    const error: unknown = await api
+      .createBulk({
+        jobs: [{ type: 'email', payload: job.payload, priority: 5, maxAttempts: 3 }],
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 201, code: null, message: 'API unreachable' });
+  });
+
+  it('createBulk turns a validation answer into an ApiError with its details', async () => {
+    const details = { issues: [{ path: ['jobs', 1, 'payload', 'to'], message: 'Invalid email' }] };
+    server.use(
+      http.post(`${BASE}/v1/jobs/bulk`, () =>
+        HttpResponse.json(
+          { code: 'VALIDATION_FAILED', message: 'Validation failed', details },
+          { status: 400 },
+        ),
+      ),
+    );
+    const job = jobFixtures.build();
+
+    const error: unknown = await api
+      .createBulk({
+        jobs: [{ type: 'email', payload: job.payload, priority: 5, maxAttempts: 3 }],
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({ status: 400, code: 'VALIDATION_FAILED', details });
+  });
+
   // The status is passed through as it is, so one of the two values is enough.
   it.each(['cancelled'] as const)(
     'changeStatus patches the job with status %s and returns the updated job',

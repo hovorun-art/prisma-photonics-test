@@ -6,6 +6,7 @@ import {
   GroupsListPage,
   JobPage,
   JobsListPage,
+  NewGroupPage,
   SubmitJobPage,
 } from '@/features';
 
@@ -18,6 +19,7 @@ export function AppRoutes() {
         <Route path="/jobs/new" element={<SubmitJobPage />} />
         <Route path="/jobs/:id" element={<JobPage />} />
         <Route path="/groups" element={<GroupsListPage />} />
+        <Route path="/groups/new" element={<NewGroupPage />} />
         <Route path="/groups/:id" element={<GroupPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/jobs" replace />} />

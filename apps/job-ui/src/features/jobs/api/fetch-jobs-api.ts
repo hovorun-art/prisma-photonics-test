@@ -1,5 +1,7 @@
 import {
+  CreateJobsBulkResponse,
   Job,
+  JOBS_BULK_ROUTE,
   JOBS_ROUTE,
   QueryJobLogResponse,
   QueryJobsResponse,
@@ -11,6 +13,8 @@ import type { z } from 'zod';
 
 import { FetchJsonApiClient, type FetchJsonApiClientParams } from './fetch-json-api-client';
 import type {
+  CreateBulkJobsApiRequest,
+  CreateBulkJobsApiResponse,
   ChangeStatusJobsApiRequest,
   ChangeStatusJobsApiResponse,
   CreateJobsApiRequest,
@@ -67,6 +71,18 @@ export class FetchJobsApi implements JobsApi {
       },
     });
     return { job: await this.parse({ schema: Job, response }) };
+  }
+
+  async createBulk(req: CreateBulkJobsApiRequest): Promise<CreateBulkJobsApiResponse> {
+    const response = await this.send({
+      path: JOBS_BULK_ROUTE,
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobs: req.jobs }),
+      },
+    });
+    return { jobs: (await this.parse({ schema: CreateJobsBulkResponse, response })).items };
   }
 
   async changeStatus(req: ChangeStatusJobsApiRequest): Promise<ChangeStatusJobsApiResponse> {

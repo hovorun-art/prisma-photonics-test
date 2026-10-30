@@ -2,6 +2,7 @@
 export { AppFrame } from './app-frame/app-frame';
 export { FetchGroupsApi } from './groups/api/fetch-groups-api';
 export { GroupsApiContext } from './groups/api/groups-api-context';
+export { NewGroupPage } from './groups/create/new-group-page';
 export { GroupPage } from './groups/details/group-page';
 export { GroupsListPage } from './groups/list/groups-list-page';
 export { FetchJobsApi } from './jobs/api/fetch-jobs-api';

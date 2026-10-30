@@ -5,7 +5,7 @@ import { en } from '@/locales';
 
 import type { TransitFormField, TransitFormValues } from '../model/transit-form-values';
 import { AirportCombobox } from './airport-combobox';
-import { FormField, type JobFormFields } from './job-form';
+import { FormField, type JobFormFields } from './job-form-sections';
 
 /**
  * "2. Payload" of a flight transit job (design "SubmitTransit"): origin and destination picked
@@ -22,11 +22,11 @@ export function TransitPayloadFields({ fields }: { fields: JobFormFields<Transit
         name={name}
         render={({ field }) => (
           <AirportCombobox
-            id={`field-${name}`}
+            id={fields.id(name)}
             value={field.value}
             onChange={field.onChange}
             invalid={fields.error(name) !== undefined}
-            describedBy={fields.error(name) ? `field-${name}-error` : undefined}
+            describedBy={fields.error(name) ? `${fields.id(name)}-error` : undefined}
           />
         )}
       />

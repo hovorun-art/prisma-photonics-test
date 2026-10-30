@@ -40,6 +40,14 @@ export interface CreateJobsApiResponse {
   readonly job: Job;
 }
 
+export interface CreateBulkJobsApiRequest {
+  readonly jobs: readonly CreateJobRequest[];
+}
+export interface CreateBulkJobsApiResponse {
+  /** The created jobs, in the order of the request. */
+  readonly jobs: readonly Job[];
+}
+
 export interface ChangeStatusJobsApiRequest {
   readonly id: string;
   /** `cancelled` cancels the job, `pending` retries it. */
@@ -80,6 +88,8 @@ export interface JobsApi {
   query(req: QueryJobsApiRequest): Promise<QueryJobsApiResponse>;
   get(req: GetJobsApiRequest): Promise<GetJobsApiResponse>;
   create(req: CreateJobsApiRequest): Promise<CreateJobsApiResponse>;
+  /** Submits many jobs in one request (`POST /v1/jobs/bulk`), stored all or nothing. */
+  createBulk(req: CreateBulkJobsApiRequest): Promise<CreateBulkJobsApiResponse>;
   /** Cancels or retries a job (`PATCH /v1/jobs/:id`), answering the updated job. */
   changeStatus(req: ChangeStatusJobsApiRequest): Promise<ChangeStatusJobsApiResponse>;
   delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse>;
