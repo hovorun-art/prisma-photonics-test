@@ -47,8 +47,8 @@ class BoundingBoxLayout implements PageLayout {
 const layout: PageLayout = new BoundingBoxLayout();
 
 /** The dashed whole path and the solid flown part, as the browser draws them. */
-const WHOLE = 'path.leaflet-interactive[stroke-dasharray="8 8"]';
-const FLOWN = 'path.leaflet-interactive[stroke="#1F3FC4"]';
+const WHOLE = 'path.transit-route';
+const FLOWN = 'path.transit-flown';
 
 test('Route on the map: the dashed path fits the map, both airports in view, nothing flown at the departure', async ({
   page,
@@ -136,7 +136,7 @@ test('Route across the antimeridian: the Pacific route is drawn the short way, e
     locator: map.getByText(en.report.airportLabel('LAX', 'Los Angeles')),
   });
   const mapBox = await map.locator('.leaflet-container').boundingBox();
-  const path = await map.locator('path.leaflet-interactive[stroke-dasharray="8 8"]').boundingBox();
+  const path = await map.locator(WHOLE).boundingBox();
   // Drawn the long way, Los Angeles would sit west of Tokyo and the line would cross the world.
   expect(losAngeles.x).toBeGreaterThan(tokyo.x);
   expect(path!.width).toBeLessThan(mapBox!.width);

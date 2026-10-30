@@ -7,13 +7,11 @@ import { Card } from '@/components/ui/card';
 import { en } from '@/locales';
 
 import { ComingSoon } from '../app-frame/coming-soon';
-import { CopyButton } from '../jobs/details/copy-button';
-import { DeleteJobDialog } from '../jobs/details/delete-job-dialog';
+import { JobActions, JobBadges } from '../jobs/details/job-header';
 import { JsonCard } from '../jobs/details/json-card';
-import { useCurl } from '../jobs/hooks/use-curl';
+import { KeyValueList } from '../jobs/details/key-value-list';
+import { useJobFields } from '../jobs/hooks/use-job-fields';
 import { useJobPresenter } from '../jobs/hooks/use-job-presenter';
-import { LiveIndicator } from '../jobs/list/live-indicator';
-import { StatusBadge } from '../jobs/list/status-badge';
 import { TransitMap } from './transit-map';
 import { useTransitReportPresenter } from './use-transit-report';
 import { WaypointStrip } from './waypoint-strip';
@@ -34,14 +32,12 @@ export function TransitReport({
 }) {
   const report = job.result;
   const presenter = useTransitReportPresenter();
-  const jobPresenter = useJobPresenter();
-  const curl = useCurl();
+  const fields = useJobFields(job);
   const [selected, setSelected] = useState(0);
   const tiles = presenter.tiles({ report });
   const origin = presenter.airport({ airport: report.origin, at: report.departureAt });
   const destination = presenter.airport({ airport: report.destination, at: report.arrivalAt });
-  const totalTime = jobPresenter.totalTime({ job }).text;
-  const dateTime = (at: string | null) => (at ? jobPresenter.dateTime({ at }).text : en.job.notYet);
+  const totalTime = useJobPresenter().totalTime({ job }).text;
   const download = () => {
     const blob = new Blob([JSON.stringify(report, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -60,18 +56,14 @@ export function TransitReport({
             <h1 className="m-0 text-2xl font-semibold tracking-tight">
               {presenter.title({ report }).text}
             </h1>
-            <StatusBadge status={job.status} className="h-[26px] px-2.5 text-[13px]" />
-            <span className="inline-flex h-[26px] items-center rounded-[6px] bg-secondary px-2.5 font-mono text-xs text-subtle-foreground">
-              {en.jobTypes[job.type]}
-            </span>
+            <JobBadges job={job} />
           </div>
           <div className="text-[13px] text-muted-foreground">
             {en.report.subtitle} · <span className="font-mono text-xs">{job.id}</span>
             {totalTime && <> · {en.report.generatedIn(totalTime)}</>}
           </div>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <LiveIndicator connectionLost={connectionLost} />
+        <JobActions job={job} connectionLost={connectionLost}>
           <Button variant="outline" className="h-10" onClick={download}>
             <Download aria-hidden="true" />
             {en.report.downloadJson}
@@ -82,13 +74,7 @@ export function TransitReport({
               {en.report.runAgain}
             </Button>
           </ComingSoon>
-          <CopyButton
-            text={curl.get({ id: job.id }).command}
-            label={en.copy.copyAsCurl}
-            className="h-10"
-          />
-          <DeleteJobDialog id={job.id} />
-        </div>
+        </JobActions>
       </header>
 
       <section
@@ -128,7 +114,7 @@ export function TransitReport({
         <div className="grid min-w-0 flex-[999_1_560px] grid-cols-[repeat(auto-fit,minmax(260px,1fr))] gap-5">
           <InfoCard title={en.report.origin} eyebrow>
             <AirportHeading iata={report.origin.iata} name={report.origin.name} />
-            <Rows
+            <KeyValueList
               rows={[
                 [en.report.coordinates, origin.coordinates],
                 [en.report.departure, origin.utc],
@@ -138,7 +124,7 @@ export function TransitReport({
           </InfoCard>
           <InfoCard title={en.report.destination} eyebrow>
             <AirportHeading iata={report.destination.iata} name={report.destination.name} />
-            <Rows
+            <KeyValueList
               rows={[
                 [en.report.coordinates, destination.coordinates],
                 [en.report.arrival, destination.utc],
@@ -157,7 +143,7 @@ export function TransitReport({
         </div>
         <aside className="flex min-w-0 flex-[1_1_300px] flex-col gap-5">
           <InfoCard title={en.report.aircraft}>
-            <Rows
+            <KeyValueList
               rows={[
                 [en.report.aircraftFields.flight, report.flight],
                 [en.report.aircraftFields.type, report.aircraft.model],
@@ -167,13 +153,13 @@ export function TransitReport({
             />
           </InfoCard>
           <InfoCard title={en.report.job}>
-            <Rows
+            <KeyValueList
               rows={[
-                [en.report.jobFields.priority, String(job.priority)],
-                [en.report.jobFields.attempts, `${job.attempts} / ${job.maxAttempts}`],
-                [en.report.jobFields.created, dateTime(job.createdAt)],
-                [en.report.jobFields.started, dateTime(job.startedAt)],
-                [en.report.jobFields.completed, dateTime(job.completedAt)],
+                [en.report.jobFields.priority, fields.priority],
+                [en.report.jobFields.attempts, fields.attempts],
+                [en.report.jobFields.created, fields.created],
+                [en.report.jobFields.started, fields.started],
+                [en.report.jobFields.completed, fields.finished],
               ]}
             />
           </InfoCard>
@@ -222,18 +208,5 @@ function AirportHeading({ iata, name }: { iata: string; name: string }) {
       <span className="font-mono text-[22px] font-medium">{iata}</span>
       <span className="font-medium">{name}</span>
     </div>
-  );
-}
-
-function Rows({ rows }: { rows: [string, string][] }) {
-  return (
-    <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1.5 text-[13px]">
-      {rows.map(([key, value]) => (
-        <div key={key} className="contents">
-          <dt className="text-muted-foreground">{key}</dt>
-          <dd className="m-0 text-right font-mono text-xs">{value}</dd>
-        </div>
-      ))}
-    </dl>
   );
 }

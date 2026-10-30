@@ -1,5 +1,6 @@
 import { FINISHED_JOB_STATUSES, type Job, type JobStatus } from '@job-queue/contracts';
 
+import { IntlWholeNumberFormat } from '@/lib/whole-number-format';
 import { en } from '@/locales';
 
 import type {
@@ -39,7 +40,7 @@ export class JobPresenter implements JobPresentation {
     month: 'short',
     timeZone: 'UTC',
   });
-  private readonly km = new Intl.NumberFormat('en-GB');
+  private readonly number = new IntlWholeNumberFormat();
 
   constructor(private readonly p: JobPresenterParams) {}
 
@@ -65,7 +66,7 @@ export class JobPresenter implements JobPresentation {
               text: job.result
                 ? en.details.transitCompleted(
                     job.result.flight,
-                    this.km.format(Math.round(job.result.distanceKm)),
+                    this.number.format({ value: job.result.distanceKm }).text,
                   )
                 : '',
             }

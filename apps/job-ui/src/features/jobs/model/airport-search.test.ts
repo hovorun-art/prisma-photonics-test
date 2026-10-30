@@ -40,8 +40,6 @@ describe('SubstringAirportSearch', () => {
   });
 
   it('ignores spaces around the text', () => {
-    expect(search.find({ text: ' jfk ' }).airports.map((airport) => airport.iata)).toEqual([
-      'JFK',
-    ]);
+    expect(search.find({ text: ' jfk ' }).airports.map((airport) => airport.iata)).toEqual(['JFK']);
   });
 });

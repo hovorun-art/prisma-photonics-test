@@ -33,14 +33,11 @@ export function WaypointStrip({
               onMouseEnter={select}
               className={cn(
                 'flex flex-1 cursor-pointer flex-col gap-0.5 rounded-lg border px-2.5 py-2 text-left',
-                pressed ? 'border-[#1F3FC4] bg-[#EBEFFD]' : 'border-border bg-card',
+                pressed ? 'border-link bg-status-processing-bg' : 'border-border bg-card',
               )}
             >
               <span
-                className={cn(
-                  'font-mono text-xs',
-                  pressed ? 'text-[#1F3FC4]' : 'text-muted-foreground',
-                )}
+                className={cn('font-mono text-xs', pressed ? 'text-link' : 'text-muted-foreground')}
               >
                 {waypoint.time}
               </span>

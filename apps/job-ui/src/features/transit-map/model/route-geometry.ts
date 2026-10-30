@@ -1,7 +1,7 @@
 import type { FlightTransitJobResult } from '@job-queue/contracts';
 
 /** A map position, `[lat, lon]` in degrees; a longitude may lie outside ±180 after unwrapping. */
-export type MapPoint = readonly [number, number];
+export type MapPoint = [number, number];
 
 export interface RouteRouteGeometryRequest {
   readonly report: FlightTransitJobResult;

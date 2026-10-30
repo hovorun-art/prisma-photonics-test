@@ -137,4 +137,21 @@ describe('MercatorRouteGeometry', () => {
       route.path,
     );
   });
+
+  it('a route of only its two airports: flown is empty at the departure and the whole leg at the arrival', () => {
+    const report = {
+      ...atlantic,
+      path: [atlantic.path[0]!, atlantic.path.at(-1)!],
+      waypoints: [atlantic.waypoints[0]!, atlantic.waypoints.at(-1)!],
+    };
+    const route = geometry.route({ report });
+
+    expect(geometry.flown({ path: route.path, point: route.waypoints[0]! }).path).toEqual([]);
+    expect(geometry.flown({ path: route.path, point: route.waypoints[1]! }).path).toEqual(
+      route.path,
+    );
+    const { degrees } = geometry.heading({ path: route.path, point: route.waypoints[1]! });
+    expect(degrees).toBeGreaterThan(180);
+    expect(degrees).toBeLessThan(360);
+  });
 });

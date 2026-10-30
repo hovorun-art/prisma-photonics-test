@@ -17,5 +17,6 @@ export const UI_CONFIG: UiConfig = {
   copiedFeedbackMs: 1500,
   shortIdLength: 8,
   mapTileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-  mapTileAttribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+  mapTileAttribution:
+    '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
 };

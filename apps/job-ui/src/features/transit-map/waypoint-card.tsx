@@ -3,6 +3,7 @@ import { Plane } from 'lucide-react';
 import { cn } from '@/lib/class-names';
 import { en } from '@/locales';
 
+import { KeyValueList } from '../jobs/details/key-value-list';
 import type { WaypointTransitReportPresentationResponse } from './model/transit-report-presentation';
 
 /** The details of the selected waypoint, shown over the map (design "TransitReport"). */
@@ -32,14 +33,7 @@ export function WaypointCard({
         <span className="text-[13px] font-semibold">{card.name}</span>
         <span className="font-mono text-xs text-muted-foreground">{card.time}</span>
       </div>
-      <dl className="m-0 grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
-        {rows.map(([key, value]) => (
-          <div key={key} className="contents">
-            <dt className="text-muted-foreground">{key}</dt>
-            <dd className="m-0 text-right font-mono">{value}</dd>
-          </div>
-        ))}
-      </dl>
+      <KeyValueList rows={rows} size="xs" />
       <div className="flex items-center gap-2 border-t border-border-soft pt-2 text-xs text-subtle-foreground">
         <Plane aria-hidden="true" className="size-3.5" />
         {card.aircraft}

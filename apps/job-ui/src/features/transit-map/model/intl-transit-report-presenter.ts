@@ -1,3 +1,4 @@
+import { IntlWholeNumberFormat } from '@/lib/whole-number-format';
 import { en } from '@/locales';
 
 import type {
@@ -25,7 +26,7 @@ interface PositionRequest {
 
 /** `TransitReportPresentation` with `Intl` formats and the strings from `locales/en.ts`. */
 export class IntlTransitReportPresenter implements TransitReportPresentation {
-  private readonly number = new Intl.NumberFormat('en-GB');
+  private readonly number = new IntlWholeNumberFormat();
   private readonly utcTime = new Intl.DateTimeFormat('en-GB', {
     hour: '2-digit',
     minute: '2-digit',
@@ -126,7 +127,7 @@ export class IntlTransitReportPresenter implements TransitReportPresentation {
 
   /** A whole number with thousands grouped, e.g. `5,540`. */
   private km(value: number): string {
-    return this.number.format(Math.round(value));
+    return this.number.format({ value }).text;
   }
 
   /** `FL360` for 36,000 ft: hundreds of feet, three digits. */
