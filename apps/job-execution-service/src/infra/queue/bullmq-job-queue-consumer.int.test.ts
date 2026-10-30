@@ -20,9 +20,9 @@ describe('BullMqJobQueueConsumer against Redis', () => {
   let producer: Queue;
   let consumer: BullMqJobQueueConsumer | undefined;
 
-  /** Adds an entry the way job-service does: data `{ jobId }`, id `<jobId>_<attempt>`. */
-  const enqueue = async (jobId: string, attempt = 1): Promise<void> => {
-    const entryId = JobQueueEntryId.encode({ jobId, attempt });
+  /** Adds an entry the way job-service does: data `{ jobId }`, id `<jobId>_<run>_<attempt>`. */
+  const enqueue = async (jobId: string, attempt = 1, run = 1): Promise<void> => {
+    const entryId = JobQueueEntryId.encode({ jobId, run, attempt });
     await producer.add(entryId, { jobId }, { jobId: entryId });
   };
 
@@ -59,9 +59,48 @@ describe('BullMqJobQueueConsumer against Redis', () => {
       return Promise.resolve();
     });
 
-    await enqueue(JOB_ID, 2);
+    await enqueue(JOB_ID, 2, 3);
 
     await expect.poll(() => seen, POLL).toEqual([{ jobId: JOB_ID, attempt: 2 }]);
+  });
+
+  it('takes an entry queued before runs existed (`<jobId>_<attempt>`)', async () => {
+    const seen: JobQueueEntry[] = [];
+    startConsumer(1, (entry) => {
+      seen.push(entry);
+      return Promise.resolve();
+    });
+
+    await producer.add(`${JOB_ID}_2`, { jobId: JOB_ID }, { jobId: `${JOB_ID}_2` });
+
+    await expect.poll(() => seen, POLL).toEqual([{ jobId: JOB_ID, attempt: 2 }]);
+  });
+
+  it('drops a malformed entry with an error log and does not run it', async () => {
+    const error = vi.fn<(message: unknown, context?: string) => void>();
+    const seen: JobQueueEntry[] = [];
+    consumer = new BullMqJobQueueConsumer(
+      { logger: { warn: vi.fn(), error } },
+      { redisUrl: container.getConnectionUrl(), concurrency: 1 },
+    );
+    consumer.start({
+      execute: (entry) => {
+        seen.push(entry);
+        return Promise.resolve();
+      },
+    });
+    const otherId = JobQueueEntryId.encode({ jobId: randomUUID(), run: 1, attempt: 1 });
+
+    // An id that is no entry id, and an id of another job than the entry's data.
+    await producer.add('bad', { jobId: JOB_ID }, { jobId: 'not-an-entry-id' });
+    await producer.add('mismatch', { jobId: JOB_ID }, { jobId: otherId });
+    await enqueue(SECOND_JOB_ID);
+
+    await expect.poll(() => seen, POLL).toEqual([{ jobId: SECOND_JOB_ID, attempt: 1 }]);
+    expect(error.mock.calls).toEqual([
+      [{ entryId: 'not-an-entry-id' }, 'Dropped a malformed queue entry'],
+      [{ entryId: otherId }, 'Dropped a malformed queue entry'],
+    ]);
   });
 
   it('Failed attempt is not redelivered', async () => {
@@ -90,7 +129,7 @@ describe('BullMqJobQueueConsumer against Redis', () => {
       done += 1;
     });
 
-    for (let i = 0; i < 5; i += 1) await enqueue(`00000000-0000-4000-8000-00000000000${i}`);
+    for (let i = 0; i < 5; i += 1) await enqueue(randomUUID());
 
     await expect.poll(() => done, POLL).toBe(5);
     expect(maxRunning).toBe(2);

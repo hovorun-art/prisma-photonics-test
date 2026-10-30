@@ -188,7 +188,7 @@ describe('JobPresenter', () => {
   it.each([
     ['scheduled', { cancel: true, retry: false, delete: false }],
     ['pending', { cancel: true, retry: false, delete: false }],
-    ['processing', { cancel: false, retry: false, delete: false }],
+    ['processing', { cancel: true, retry: false, delete: false }],
     ['completed', { cancel: false, retry: false, delete: true }],
     ['failed', { cancel: false, retry: true, delete: true }],
     ['cancelled', { cancel: false, retry: false, delete: true }],

@@ -73,7 +73,7 @@ export class PrismaJobRepository implements JobRepository {
   async get(req: GetJobRepositoryRequest): Promise<GetJobRepositoryResponse> {
     const row = await this.d.prisma.job.findUnique({ where: { id: req.id } });
     if (row === null) throw new JobNotFoundError({ id: req.id });
-    return { job: this.toJob(row) };
+    return { job: this.toJob(row), run: row.run };
   }
 
   async query(req: QueryJobRepositoryRequest): Promise<QueryJobRepositoryResponse> {
@@ -158,6 +158,7 @@ export class PrismaJobRepository implements JobRepository {
     return {
       status: changes.status,
       ...(changes.attempts === undefined ? {} : { attempts: changes.attempts }),
+      ...(changes.run === undefined ? {} : { run: changes.run }),
       ...(changes.result === undefined ? {} : { result: this.toJsonColumn(changes.result) }),
       ...(changes.error === undefined ? {} : { error: this.toJsonColumn(changes.error) }),
       ...(changes.startedAt === undefined ? {} : { startedAt: this.toDate(changes.startedAt) }),
