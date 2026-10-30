@@ -135,11 +135,16 @@ services:
       target: job-ui
     environment:
       JOB_SERVICE_PORT: ${JOB_SERVICE_PORT:-3000}
+      JOB_GROUP_SERVICE_PORT: ${JOB_GROUP_SERVICE_PORT:-3002}
     ports:
       - '${JOB_UI_PORT:-8080}:80'
     depends_on:
       job-service:
         condition: service_healthy
+      # Started, not healthy: nginx only needs the name to resolve; the group pages show their
+      # error states while job-group-service is not ready.
+      job-group-service:
+        condition: service_started
     healthcheck:
       <<: *node-healthcheck
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:80/']

@@ -4,7 +4,7 @@ import { userEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { Route, Routes } from 'react-router';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { en } from '@/locales';
 
@@ -368,6 +368,271 @@ describe('JobPage', () => {
         '/jobs',
       );
     });
+  });
+
+  describe('status change', () => {
+    const processing = { ...pending, status: 'processing' as const, attempts: 1 };
+
+    /** Answers PATCH of the job; records each body sent. */
+    function answerStatusChange(id: string, response: () => Response | Promise<Response>) {
+      const bodies: unknown[] = [];
+      server.use(
+        http.patch(jobUrl(id), async ({ request }) => {
+          bodies.push(await request.json());
+          return response();
+        }),
+      );
+      return bodies;
+    }
+
+    /** The job's header: the title with its badges and actions. */
+    async function header(id: string) {
+      const heading = await screen.findByRole('heading', { level: 1, name: id });
+      return heading.parentElement!.parentElement!;
+    }
+
+    function getRequests(id: string) {
+      return requests.filter((r) => r === `GET /api/v1/jobs/${id}`);
+    }
+
+    it('Cancel a pending job: confirming sends the cancel and shows the job cancelled at once', async () => {
+      const user = userEvent.setup();
+      answerJob(pending.id, pending);
+      const bodies = answerStatusChange(pending.id, () =>
+        HttpResponse.json({ ...pending, status: 'cancelled' }),
+      );
+      renderJob(pending.id);
+      const top = await header(pending.id);
+
+      await user.click(within(top).getByRole('button', { name: en.job.cancelJob }));
+      const dialog = screen.getByRole('dialog', { name: en.job.cancelTitle });
+      await user.click(within(dialog).getByRole('button', { name: en.job.cancelConfirm }));
+
+      expect(await within(top).findByText(en.statuses.cancelled)).toBeVisible();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(bodies).toEqual([{ status: 'cancelled' }]);
+      // Shown from the answer, not from another read of the job.
+      expect(getRequests(pending.id)).toHaveLength(1);
+    });
+
+    // One status per scenario here; the presenter's test goes through every status.
+    it('Cancel a processing job: a processing job has the Cancel job button', async () => {
+      answerJob(processing.id, processing);
+
+      renderJob(processing.id);
+
+      expect(
+        within(await header(processing.id)).getByRole('button', { name: en.job.cancelJob }),
+      ).toBeVisible();
+    });
+
+    it('Keep the job: closing the dialog sends nothing and keeps the job', async () => {
+      const user = userEvent.setup();
+      answerJob(pending.id, pending);
+      renderJob(pending.id);
+      const top = await header(pending.id);
+
+      await user.click(within(top).getByRole('button', { name: en.job.cancelJob }));
+      const dialog = screen.getByRole('dialog', { name: en.job.cancelTitle });
+      await user.click(within(dialog).getByRole('button', { name: en.job.deleteCancel }));
+
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(within(top).getByText(en.statuses.pending)).toBeVisible();
+      expect(requests.filter((r) => r.startsWith('PATCH'))).toEqual([]);
+    });
+
+    it('No cancel for a finished job: no Cancel job button for a completed job', async () => {
+      answerJob(completed.id, completed);
+
+      renderJob(completed.id);
+
+      expect(
+        within(await header(completed.id)).queryByRole('button', { name: en.job.cancelJob }),
+      ).toBeNull();
+    });
+
+    it('Retry a failed job: one click sends the retry and shows the job pending with zero attempts', async () => {
+      const user = userEvent.setup();
+      answerJob(failed.id, failed);
+      const bodies = answerStatusChange(failed.id, () =>
+        HttpResponse.json({
+          ...failed,
+          status: 'pending',
+          attempts: 0,
+          error: null,
+          startedAt: null,
+          completedAt: null,
+        }),
+      );
+      renderJob(failed.id);
+      const top = await header(failed.id);
+
+      await user.click(within(top).getByRole('button', { name: en.job.retryJob }));
+
+      expect(await within(top).findByText(en.statuses.pending)).toBeVisible();
+      expect(screen.queryByRole('dialog')).toBeNull();
+      expect(detail(en.job.fields.attempts)).toHaveTextContent('0 / 3');
+      expect(bodies).toEqual([{ status: 'pending' }]);
+      expect(getRequests(failed.id)).toHaveLength(1);
+    });
+
+    it('No retry for a job that has not failed: no Retry job button for a cancelled job', async () => {
+      const cancelled = { ...pending, status: 'cancelled' as const };
+      answerJob(cancelled.id, cancelled);
+
+      renderJob(cancelled.id);
+
+      expect(
+        within(await header(cancelled.id)).queryByRole('button', { name: en.job.retryJob }),
+      ).toBeNull();
+    });
+
+    it('Retry in flight: the Retry job button is disabled until the answer arrives', async () => {
+      const user = userEvent.setup();
+      let answer: () => void = () => undefined;
+      answerJob(failed.id, failed);
+      answerStatusChange(
+        failed.id,
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = () => {
+              resolve(HttpResponse.json({ ...failed, status: 'pending', attempts: 0 }));
+            };
+          }),
+      );
+      renderJob(failed.id);
+      const top = await header(failed.id);
+      const retry = within(top).getByRole('button', { name: en.job.retryJob });
+
+      await user.click(retry);
+
+      await vi.waitFor(() => {
+        expect(retry).toBeDisabled();
+      });
+      await user.click(retry);
+      answer();
+      expect(await within(top).findByText(en.statuses.pending)).toBeVisible();
+      expect(requests.filter((r) => r.startsWith('PATCH'))).toHaveLength(1);
+    });
+
+    it('Cancel in flight: the dialog confirm button is disabled until the answer arrives', async () => {
+      const user = userEvent.setup();
+      let answer: () => void = () => undefined;
+      answerJob(pending.id, pending);
+      answerStatusChange(
+        pending.id,
+        () =>
+          new Promise<Response>((resolve) => {
+            answer = () => {
+              resolve(HttpResponse.json({ ...pending, status: 'cancelled' }));
+            };
+          }),
+      );
+      renderJob(pending.id);
+      const top = await header(pending.id);
+
+      await user.click(within(top).getByRole('button', { name: en.job.cancelJob }));
+      const dialog = screen.getByRole('dialog', { name: en.job.cancelTitle });
+      const confirm = within(dialog).getByRole('button', { name: en.job.cancelConfirm });
+      await user.click(confirm);
+
+      await vi.waitFor(() => {
+        expect(confirm).toBeDisabled();
+      });
+      answer();
+      expect(await within(top).findByText(en.statuses.cancelled)).toBeVisible();
+      expect(requests.filter((r) => r.startsWith('PATCH'))).toHaveLength(1);
+    });
+
+    it('Cancel rejected: the dialog stays open with the message and the job is not shown cancelled', async () => {
+      const user = userEvent.setup();
+      answerJob(pending.id, pending);
+      answerStatusChange(pending.id, () =>
+        HttpResponse.json(
+          {
+            code: 'JOB_STATUS_CONFLICT',
+            message: 'Job is completed',
+            details: { id: pending.id, status: 'completed' },
+          },
+          { status: 409 },
+        ),
+      );
+      renderJob(pending.id);
+      const top = await header(pending.id);
+
+      await user.click(within(top).getByRole('button', { name: en.job.cancelJob }));
+      const dialog = screen.getByRole('dialog', { name: en.job.cancelTitle });
+      await user.click(within(dialog).getByRole('button', { name: en.job.cancelConfirm }));
+
+      expect(await within(dialog).findByText('Job is completed')).toBeVisible();
+      expect(screen.getByRole('dialog')).toBeVisible();
+      expect(within(dialog).getByRole('button', { name: en.job.cancelConfirm })).toBeEnabled();
+      expect(within(top).getByText(en.statuses.pending)).toBeVisible();
+      expect(within(top).queryByText(en.statuses.cancelled)).toBeNull();
+    });
+
+    it('Cancel rejected: reopening the dialog shows no old error', async () => {
+      const user = userEvent.setup();
+      answerJob(pending.id, pending);
+      answerStatusChange(pending.id, () =>
+        HttpResponse.json(
+          { code: 'JOB_STATUS_CONFLICT', message: 'Job is completed', details: {} },
+          { status: 409 },
+        ),
+      );
+      renderJob(pending.id);
+      const top = await header(pending.id);
+      await user.click(within(top).getByRole('button', { name: en.job.cancelJob }));
+      await user.click(screen.getByRole('button', { name: en.job.cancelConfirm }));
+      await screen.findByText('Job is completed');
+
+      await user.click(screen.getByRole('button', { name: en.job.deleteCancel }));
+      await user.click(within(top).getByRole('button', { name: en.job.cancelJob }));
+
+      expect(screen.queryByText('Job is completed')).toBeNull();
+    });
+
+    it('Retry rejected: the message shows next to the actions and the job stays failed', async () => {
+      const user = userEvent.setup();
+      answerJob(failed.id, failed);
+      answerStatusChange(failed.id, () =>
+        HttpResponse.json(
+          {
+            code: 'JOB_STATUS_CONFLICT',
+            message: 'Job is not failed',
+            details: { id: failed.id, status: 'pending' },
+          },
+          { status: 409 },
+        ),
+      );
+      renderJob(failed.id);
+      const top = await header(failed.id);
+
+      await user.click(within(top).getByRole('button', { name: en.job.retryJob }));
+
+      expect(await within(top).findByRole('alert')).toHaveTextContent('Job is not failed');
+      expect(within(top).getByText(en.statuses.failed)).toBeVisible();
+      expect(within(top).getByRole('button', { name: en.job.retryJob })).toBeEnabled();
+    });
+
+    it.each([
+      [pending, en.job.cancelJob],
+      [failed, en.job.retryJob],
+    ])(
+      'Cancel and Retry are not disabled: the %#. button is enabled, without "Coming soon"',
+      async (job, name) => {
+        const user = userEvent.setup();
+        answerJob(job.id, job);
+        renderJob(job.id);
+        const button = within(await header(job.id)).getByRole('button', { name });
+
+        await user.hover(button);
+
+        expect(button).toBeEnabled();
+        expect(button.closest('[aria-disabled="true"]')).toBeNull();
+        expect(screen.queryByText(en.comingSoon)).toBeNull();
+      },
+    );
   });
 
   it('Completed webhook job page: type badge, webhook payload and the result', async () => {

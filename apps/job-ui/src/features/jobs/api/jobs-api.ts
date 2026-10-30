@@ -1,4 +1,5 @@
 import type {
+  ChangeJobStatusRequest,
   CreateJobRequest,
   ErrorCode,
   Job,
@@ -16,6 +17,10 @@ export interface JobListFilters {
 
 export interface QueryJobsApiRequest extends JobListFilters {
   readonly offset: number;
+  /** Only the jobs of this group. */
+  readonly groupId?: string;
+  /** Page size; left out means job-service's default. */
+  readonly limit?: number;
 }
 export type QueryJobsApiResponse = QueryJobsResponse;
 
@@ -30,6 +35,15 @@ export interface CreateJobsApiRequest {
   readonly request: CreateJobRequest;
 }
 export interface CreateJobsApiResponse {
+  readonly job: Job;
+}
+
+export interface ChangeStatusJobsApiRequest {
+  readonly id: string;
+  /** `cancelled` cancels the job, `pending` retries it. */
+  readonly status: ChangeJobStatusRequest['status'];
+}
+export interface ChangeStatusJobsApiResponse {
   readonly job: Job;
 }
 
@@ -54,6 +68,8 @@ export interface JobsApi {
   query(req: QueryJobsApiRequest): Promise<QueryJobsApiResponse>;
   get(req: GetJobsApiRequest): Promise<GetJobsApiResponse>;
   create(req: CreateJobsApiRequest): Promise<CreateJobsApiResponse>;
+  /** Cancels or retries a job (`PATCH /v1/jobs/:id`), answering the updated job. */
+  changeStatus(req: ChangeStatusJobsApiRequest): Promise<ChangeStatusJobsApiResponse>;
   delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse>;
   /** The queue statistics (`GET /v1/stats`), with job counts faceted by the filters. */
   stats(req: StatsJobsApiRequest): Promise<StatsJobsApiResponse>;

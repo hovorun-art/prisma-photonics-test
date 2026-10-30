@@ -1,6 +1,13 @@
 import { Navigate, Route, Routes } from 'react-router';
 
-import { AppFrame, JobPage, JobsListPage, SubmitJobPage } from '@/features';
+import {
+  AppFrame,
+  GroupPage,
+  GroupsListPage,
+  JobPage,
+  JobsListPage,
+  SubmitJobPage,
+} from '@/features';
 
 /** The pages and their URLs; `/` and unknown paths go to the jobs list. */
 export function AppRoutes() {
@@ -10,6 +17,8 @@ export function AppRoutes() {
         <Route path="/jobs" element={<JobsListPage />} />
         <Route path="/jobs/new" element={<SubmitJobPage />} />
         <Route path="/jobs/:id" element={<JobPage />} />
+        <Route path="/groups" element={<GroupsListPage />} />
+        <Route path="/groups/:id" element={<GroupPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/jobs" replace />} />
     </Routes>

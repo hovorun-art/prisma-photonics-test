@@ -1,4 +1,9 @@
-import { FINISHED_JOB_STATUSES, type Job, type JobStatus } from '@job-queue/contracts';
+import {
+  CANCELLABLE_JOB_STATUSES,
+  FINISHED_JOB_STATUSES,
+  type Job,
+  type JobStatus,
+} from '@job-queue/contracts';
 
 import { IntlWholeNumberFormat } from '@/lib/whole-number-format';
 import { en } from '@/locales';
@@ -23,6 +28,7 @@ export interface JobPresenterParams {
 }
 
 const FINISHED: readonly JobStatus[] = FINISHED_JOB_STATUSES;
+const CANCELLABLE: readonly JobStatus[] = CANCELLABLE_JOB_STATUSES;
 const MS_PER_SECOND = 1000;
 const SECONDS_PER_MINUTE = 60;
 
@@ -129,7 +135,7 @@ export class JobPresenter implements JobPresentation {
 
   actions({ job }: ActionsJobPresentationRequest): ActionsJobPresentationResponse {
     return {
-      cancel: job.status === 'pending' || job.status === 'scheduled',
+      cancel: CANCELLABLE.includes(job.status),
       retry: job.status === 'failed',
       delete: FINISHED.includes(job.status),
     };

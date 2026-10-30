@@ -1,4 +1,5 @@
 import type {
+  ChangeJobStatusRequest,
   CreateJobRequest,
   Job,
   JobStatus,
@@ -7,7 +8,8 @@ import type {
 } from '@job-queue/contracts';
 
 /**
- * Everything job-service does with jobs: the five operations plus `createMany`, the bulk `create`. `update` holds the lifecycle rules
+ * Everything job-service does with jobs: the five operations plus `createMany`, the bulk `create`,
+ * and `changeStatus`, a client's cancel or retry. `update` holds the worker's lifecycle rules
  * (start, completion, failure with retry or final failure); `delete` only removes finished jobs.
  */
 export interface JobService {
@@ -31,6 +33,12 @@ export interface JobService {
   query(req: QueryJobServiceRequest): Promise<QueryJobServiceResponse>;
   /** Throws `JobNotFoundError`, `JobStatusConflictError`, or `InvalidJobResultError` for a result that does not match the job type. */
   update(req: UpdateJobServiceRequest): Promise<UpdateJobServiceResponse>;
+  /**
+   * Cancels a job that has not finished (and tells the worker running it to stop), or retries a
+   * failed job: back to pending from its first attempt, queued again. Throws `JobNotFoundError`, or
+   * `JobStatusConflictError` when the job's status does not allow the change.
+   */
+  changeStatus(req: ChangeStatusJobServiceRequest): Promise<ChangeStatusJobServiceResponse>;
   /** Throws `JobNotFoundError`, or `JobStatusConflictError` for a job that has not finished. */
   delete(req: DeleteJobServiceRequest): Promise<DeleteJobServiceResponse>;
 }
@@ -83,6 +91,15 @@ export interface UpdateJobServiceRequest {
 }
 
 export interface UpdateJobServiceResponse {
+  job: Job;
+}
+
+export interface ChangeStatusJobServiceRequest {
+  id: string;
+  change: ChangeJobStatusRequest;
+}
+
+export interface ChangeStatusJobServiceResponse {
   job: Job;
 }
 

@@ -112,6 +112,22 @@ describe('job-service health, docs and shutdown', () => {
       expect(job?.get?.responses['200']?.content?.['application/json']?.schema).toBeDefined();
       expect(job?.get?.parameters?.map((parameter) => parameter.name)).toEqual(['id']);
       expect(Object.keys(job?.delete?.responses ?? {})).toContain('204');
+      // Status change: the cancel and retry body, the updated job and every error answer.
+      expect(job?.patch?.parameters?.map((parameter) => parameter.name)).toEqual(['id']);
+      expect(job?.patch?.requestBody?.content['application/json']?.schema).toBeDefined();
+      expect(job?.patch?.responses['200']?.content?.['application/json']?.schema).toBeDefined();
+      expect(Object.keys(job?.patch?.responses ?? {}).sort()).toEqual(['200', '400', '404', '409']);
+      // The body schema itself (not the whole components, which hold every job status) allows
+      // exactly the two target statuses.
+      const bodySchema = job?.patch?.requestBody?.content['application/json']?.schema as
+        { $ref?: string } | undefined;
+      const bodyName = bodySchema?.$ref?.replace('#/components/schemas/', '') ?? '';
+      const statusChange = JSON.stringify(components?.schemas?.[bodyName] ?? bodySchema);
+      expect(statusChange).toContain('"cancelled"');
+      expect(statusChange).toContain('"pending"');
+      for (const other of ['completed', 'failed', 'processing', 'scheduled']) {
+        expect(statusChange).not.toContain(`"${other}"`);
+      }
       // Every job type is in the submit body and the job schema, and every reference resolves.
       const schemas = JSON.stringify({ submit: jobs?.post, components });
       expect(schemas).toContain('"email"');
