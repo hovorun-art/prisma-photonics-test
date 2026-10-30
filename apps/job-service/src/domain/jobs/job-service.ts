@@ -15,7 +15,8 @@ export interface JobService {
    * Stores a new job, `scheduled` when its `scheduledAt` is in the future and `pending` otherwise,
    * and puts its first attempt on the queue with the job's priority, not handed out before its
    * `scheduledAt`. Throws `InvalidJobPayloadError` for a flight transit whose departure day (UTC) is
-   * over, then `InvalidJobFieldError` for a `scheduledAt` more than the contract's maximum ahead.
+   * over, or `InvalidJobFieldError` listing every broken rule when the `scheduledAt` is more than the
+   * contract's maximum ahead.
    */
   create(req: CreateJobServiceRequest): Promise<CreateJobServiceResponse>;
   /**

@@ -208,7 +208,7 @@ describe('JobServiceImpl', () => {
       expect(repository.create).toHaveBeenCalledOnce();
     });
 
-    it('reports an over departure day before an execution time too far ahead', async () => {
+    it('Execution time too far ahead on a transit whose departure day is over', async () => {
       const rejection = service.create({
         job: {
           type: 'flight-transit',
@@ -219,11 +219,18 @@ describe('JobServiceImpl', () => {
         },
       });
 
-      await expect(rejection).rejects.toBeInstanceOf(InvalidJobPayloadError);
+      await expect(rejection).rejects.toBeInstanceOf(InvalidJobFieldError);
       await expect(rejection).rejects.toMatchObject({
-        details: { issues: [expect.objectContaining({ path: ['payload', 'departureDate'] })] },
+        code: 'VALIDATION_FAILED',
+        details: {
+          issues: [
+            expect.objectContaining({ path: ['payload', 'departureDate'] }),
+            expect.objectContaining({ path: ['scheduledAt'] }),
+          ],
+        },
       });
       expect(repository.create).not.toHaveBeenCalled();
+      expect(queue.enqueue).not.toHaveBeenCalled();
     });
 
     it('Queue unavailable during a scheduled submit', async () => {

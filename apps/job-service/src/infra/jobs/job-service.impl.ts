@@ -121,10 +121,18 @@ export class JobServiceImpl implements JobService {
       job: req.job,
       departureDay: this.departureDayAt(now),
     });
-    if (departureIssues.length > 0) throw new InvalidJobPayloadError({ issues: departureIssues });
     const scheduleIssues = this.scheduleIssues({ job: req.job, now });
-    if (scheduleIssues.length > 0)
-      throw new InvalidJobFieldError({ field: [], issues: scheduleIssues });
+    // Every broken rule is reported; a payload-only problem keeps its own error class.
+    if (scheduleIssues.length > 0) {
+      throw new InvalidJobFieldError({
+        field: [],
+        issues: [
+          ...departureIssues.map((issue) => ({ ...issue, path: ['payload', ...issue.path] })),
+          ...scheduleIssues,
+        ],
+      });
+    }
+    if (departureIssues.length > 0) throw new InvalidJobPayloadError({ issues: departureIssues });
     const { job } = await this.d.repository.create({ job: this.newJob({ job: req.job, now }) });
     await this.enqueue({
       jobId: job.id,
