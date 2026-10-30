@@ -85,7 +85,7 @@ describe('PrismaJobRepository against Postgres', () => {
   });
 
   it('creates a job with a database-assigned UUID and gets it back unchanged', async () => {
-    const job = newJob();
+    const job = newJob({ priority: 10 });
 
     const { job: stored } = await repository.create({ job });
 
@@ -157,7 +157,10 @@ describe('PrismaJobRepository against Postgres', () => {
     it('Mixed job types are created in request order', async () => {
       const groupId = randomUUID();
       const jobs: NewJob[] = [
-        { ...newJob({ groupId }), createdAt: spacedCreatedAt(0) },
+        {
+          ...newJob({ groupId, status: 'scheduled', scheduledAt: '2026-11-02T08:30:00.000Z' }),
+          createdAt: spacedCreatedAt(0),
+        },
         {
           ...newJob({ groupId }),
           type: 'webhook',
@@ -618,12 +621,19 @@ describe('PrismaJobRepository against Postgres', () => {
     });
   });
 
-  it('lets exactly one of two concurrent updates from the same state win', async () => {
-    const job = await store();
+  it.each([
+    { name: 'Two workers start the same job', status: 'pending', scheduledAt: null },
+    {
+      name: 'Two workers start the same scheduled job',
+      status: 'scheduled',
+      scheduledAt: '2026-11-02T08:30:00.000Z',
+    },
+  ] as const)('$name', async ({ status, scheduledAt }) => {
+    const job = await store({ status, scheduledAt });
     const start = (): ReturnType<PrismaJobRepository['update']> =>
       repository.update({
         id: job.id,
-        expected: { status: 'pending', attempts: 0 },
+        expected: { status, attempts: 0 },
         changes: { status: 'processing', attempts: 1 },
       });
 
@@ -632,7 +642,21 @@ describe('PrismaJobRepository against Postgres', () => {
     expect(outcomes.filter((outcome) => outcome.status === 'fulfilled')).toHaveLength(1);
     const rejected = outcomes.find((outcome) => outcome.status === 'rejected');
     expect(rejected?.reason).toBeInstanceOf(JobStatusConflictError);
-    expect((await repository.get({ id: job.id })).job.attempts).toBe(1);
+    expect((rejected?.reason as JobStatusConflictError).details).toMatchObject({
+      status: 'processing',
+    });
+    expect((await repository.get({ id: job.id })).job).toMatchObject({
+      status: 'processing',
+      attempts: 1,
+      scheduledAt,
+    });
+  });
+
+  it('Execution time with a time zone offset', async () => {
+    const job = await store({ status: 'scheduled', scheduledAt: '2026-11-02T10:30:00.250+02:00' });
+
+    expect(job.scheduledAt).toBe('2026-11-02T08:30:00.250Z');
+    expect((await repository.get({ id: job.id })).job.scheduledAt).toBe('2026-11-02T08:30:00.250Z');
   });
 
   it('deletes a job whose status is allowed', async () => {

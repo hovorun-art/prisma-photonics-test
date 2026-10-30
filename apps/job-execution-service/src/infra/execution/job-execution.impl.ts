@@ -1,4 +1,10 @@
-import type { Job, JobError, UpdateJobRequest } from '@job-queue/contracts';
+import {
+  type Job,
+  type JobError,
+  type JobStatus,
+  STARTABLE_JOB_STATUSES,
+  type UpdateJobRequest,
+} from '@job-queue/contracts';
 import {
   DomainError,
   JobNotFoundError,
@@ -216,8 +222,8 @@ export class JobExecutionImpl implements JobExecution {
         entry,
         call: () => this.d.jobs.get({ id: fields.jobId, signal: entry.signal }),
       });
-      if (job.status !== 'pending') {
-        this.d.logger.log({ ...fields, status: job.status }, 'Skipped: job is no longer pending');
+      if (!(STARTABLE_JOB_STATUSES as readonly JobStatus[]).includes(job.status)) {
+        this.d.logger.log({ ...fields, status: job.status }, 'Skipped: job is no longer startable');
         return { outcome: 'skipped' };
       }
       return { job };

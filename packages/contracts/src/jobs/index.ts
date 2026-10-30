@@ -40,6 +40,7 @@ export {
   JsonObject,
   QueryJobsRequest,
   QueryJobsResponse,
+  STARTABLE_JOB_STATUSES,
   TransitAirport,
   TransitWaypoint,
   UpdateJobRequest,
