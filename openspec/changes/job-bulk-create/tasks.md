@@ -75,8 +75,8 @@ Owns: `apps/job-service/src/app/jobs/jobs.controller.ts`, `apps/job-service/src/
 
 Owns: none · Depends on: 3 · Parallel with: none
 
-- [ ] 4.1 Run the full checks (`npm run --silent typecheck`, `npm run --silent lint`, `npm test --silent`) and verify all pass
-- [ ] 4.2 Start the stack with `docker compose up --build --wait`, submit a bulk with a `groupId` and query it by group; verify the jobs complete
+- [x] 4.1 Run the full checks (`npm run --silent typecheck`, `npm run --silent lint`, `npm test --silent`) and verify all pass
+- [x] 4.2 Start the stack with `docker compose up --build --wait`, submit a bulk with a `groupId` and query it by group; verify the jobs complete
 
 ## Workflow follow-up
 
