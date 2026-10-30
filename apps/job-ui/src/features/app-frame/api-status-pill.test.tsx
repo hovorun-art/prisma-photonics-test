@@ -65,8 +65,10 @@ describe('ApiStatusPill', () => {
 
     renderPill();
 
-    expect(await screen.findByText(en.frame.apiOnline)).toBeVisible();
-    expect(screen.queryByText(en.comingSoon)).toBeNull();
+    const pill = await screen.findByText(en.frame.apiOnline);
+    expect(pill).toBeVisible();
+    // Statistics without data: the pill is not wrapped as a "Coming soon" control.
+    expect(pill.closest('[aria-disabled="true"]')).toBeNull();
   });
 
   it.each(['network-error', 'server-error'] as const)(

@@ -81,9 +81,12 @@ See proposal.md for the motivation and the specs for behaviour. Current state on
 - **List query**: `useJobsPage({ offset, filters })`, key `['jobs', { offset, ...filters }]`,
   `JobsApi.query` gains optional `status` / `type`; `FetchJobsApi` builds the query string with
   `URLSearchParams`. `JobsApi.stats(req: StatsJobsApiRequest)` likewise.
-- **First page on filter change**: `JobsListPage` reads the filters and renders the table part as
-  `<JobsListBody key={status + '|' + type} filters={filters} />`; the offset and previous-offsets
-  state live in `JobsListBody`, so any filter change (click, Back, link) remounts it at offset 0.
+- **First page on filter change**: `JobsListPage` keeps its paging (offset and previous offsets)
+  tagged with the filters it belongs to; when the URL's filters differ from the tag, the page
+  reads offset 0, so any filter change (click, Back, link) starts at the first page. Alternative:
+  remounting a keyed list body; rejected during implementation because the remount drops the
+  kept previous rows (a skeleton flash) and the live indicator above the cards needs the list
+  query's error state.
 - **Toolbar** (`JobsToolbar`): props `{ filters, counts, onChange }` where `counts` is
   `{ status, type } | undefined` (undefined while loading, on a first failure and while the
   placeholder shows). Status buttons from `JobStatus.options` with the existing labels; type

@@ -2,11 +2,19 @@ import type {
   CreateJobRequest,
   ErrorCode,
   Job,
+  JobStatus,
+  JobType,
   QueryJobsResponse,
   QueueStats,
 } from '@job-queue/contracts';
 
-export interface QueryJobsApiRequest {
+/** The list filters job-ui sends: at most one status and one type; left out means all. */
+export interface JobListFilters {
+  readonly status?: JobStatus;
+  readonly type?: JobType;
+}
+
+export interface QueryJobsApiRequest extends JobListFilters {
   readonly offset: number;
 }
 export type QueryJobsApiResponse = QueryJobsResponse;
@@ -32,6 +40,8 @@ export interface DeleteJobsApiResponse {
   readonly id: string;
 }
 
+export type StatsJobsApiRequest = JobListFilters;
+
 export interface StatsJobsApiResponse {
   readonly stats: QueueStats;
 }
@@ -45,8 +55,8 @@ export interface JobsApi {
   get(req: GetJobsApiRequest): Promise<GetJobsApiResponse>;
   create(req: CreateJobsApiRequest): Promise<CreateJobsApiResponse>;
   delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse>;
-  /** The queue statistics (`GET /v1/stats`). */
-  stats(): Promise<StatsJobsApiResponse>;
+  /** The queue statistics (`GET /v1/stats`), with job counts faceted by the filters. */
+  stats(req: StatsJobsApiRequest): Promise<StatsJobsApiResponse>;
 }
 
 /** A failed API call: the HTTP status and error body of job-service, or `null`s for a network failure. */
