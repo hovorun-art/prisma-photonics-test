@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { JOB_LOG_STREAM_NAME } from '@job-queue/contracts';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -47,7 +49,7 @@ describe('JobLogStreamDestinationFactory', () => {
         level: 30,
         time: 5,
         msg: 'hello',
-        jobId: '0b7d6f2e-6c0e-4c5e-9d3a-111111111111',
+        jobId: randomUUID(),
       }) + '\n',
     );
 

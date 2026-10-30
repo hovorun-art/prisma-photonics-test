@@ -49,6 +49,7 @@ export {
   type CreateJobLogDestinationFactoryResponse,
   type JobLogDestination,
   type JobLogDestinationFactory,
+  type OpenJobLogDestinationResponse,
 } from './domain/job-log/job-log-destination.js';
 export { JobLogStreamDestinationFactory } from './infra/job-log/job-log-stream-destination.factory.js';
 export { JobLogDestinationHook } from './app/job-log/job-log-destination.hook.js';

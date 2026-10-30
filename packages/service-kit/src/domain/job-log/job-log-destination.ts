@@ -9,8 +9,10 @@ export const JOB_LOG_DESTINATION = Symbol('JobLogDestination');
 /** Where the job lines of a service's logs go: they become entries of the job's log. */
 export interface JobLogDestination extends LogDestination, Closable {
   /** Resolves once entries can be sent; rejects when that takes too long. */
-  open(): Promise<unknown>;
+  open(): Promise<OpenJobLogDestinationResponse>;
 }
+
+export type OpenJobLogDestinationResponse = Record<string, never>;
 
 /** Builds the job log destination that feeds the job log stream. */
 export interface JobLogDestinationFactory {

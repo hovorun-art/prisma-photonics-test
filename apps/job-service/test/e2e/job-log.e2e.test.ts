@@ -13,7 +13,8 @@ import { JOB_LOG_STORE, type JobLogStore } from '../../src/domain/job-log/job-lo
 import { JobServiceUnderTest, TEST_CONFIG } from './job-service-under-test.js';
 
 const UNKNOWN_ID = randomUUID();
-const BASE_MS = Date.parse('2026-10-29T12:00:00.000Z');
+// Recent, so the configured retention (applied on read, by ClickHouse's clock) never hides them.
+const BASE_MS = Date.now() - 60_000;
 
 describe('job-service job log route', () => {
   let service: JobServiceUnderTest;

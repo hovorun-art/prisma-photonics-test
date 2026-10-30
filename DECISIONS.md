@@ -580,7 +580,10 @@ retries the same batch with a growing wait (`JOB_LOG_STORE_RETRY_DELAY_MS` 500 u
 startup delays the log, not the service: the writer creates the table itself, with the same retry,
 and the consumer group starts at the beginning of the stream, so entries written before it existed
 are still stored. Only connection errors and timeouts count as "store unavailable"; an SQL error
-is a bug and surfaces as a logged 500, not a 503.
+is a bug and surfaces as a logged 500, not a 503. One exception to "errors are handled by class
+or code, never by message": the ClickHouse client raises its request timeout as a plain
+`Error('Timeout error.')` with no class or code, so that exact text (one constant) is what marks
+a timeout as "store unavailable".
 *No duplicates:* a batch read again after a writer crash is the same rows, and the table is a
 `ReplacingMergeTree` keyed by job, position and entry id, read with `FINAL`, so each entry appears
 once. *Order:* entries are ordered by their stream id, which Redis assigns on arrival, not by the
