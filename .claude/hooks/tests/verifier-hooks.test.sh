@@ -11,15 +11,15 @@ make_transcript() {
   python3 -c 'import json,sys; print(json.dumps({"type":"assistant","message":{"role":"assistant","content":json.loads(sys.argv[1])}}))' "$1"
 }
 
-# run_case <name> <content-json> <expected first line of the verdict file>
+# run_case <name> <content-json> <expected first line of the verdict file> [last_assistant_message]
 run_case() {
-  local name="$1" content="$2" expected="$3"
+  local name="$1" content="$2" expected="$3" last="${4:-}"
   local dir
   dir=$(mktemp -d)
   mkdir -p "$dir/openspec/changes/demo" "$dir/.claude"
   make_transcript "$content" >"$dir/transcript.jsonl"
-  printf '{"agent_type":"change-verifier","agent_transcript_path":"%s","stop_hook_active":true}' \
-    "$dir/transcript.jsonl" | CLAUDE_PROJECT_DIR="$dir" bash "$HOOK" stop >/dev/null
+  python3 -c 'import json,sys; print(json.dumps({"agent_type":"change-verifier","agent_transcript_path":sys.argv[1],"stop_hook_active":True,"last_assistant_message":sys.argv[2]}))' \
+    "$dir/transcript.jsonl" "$last" | CLAUDE_PROJECT_DIR="$dir" bash "$HOOK" stop >/dev/null
   local actual
   actual=$(head -1 "$dir/openspec/changes/demo/.verdict" 2>/dev/null || echo "<no verdict file>")
   if [ "$actual" = "$expected" ]; then
@@ -38,5 +38,9 @@ run_case "records the verdict from a final text message" \
 
 run_case "records the verdict from a final SubagentHandback tool call" \
   "[{\"type\":\"tool_use\",\"name\":\"SubagentHandback\",\"input\":{\"message\":\"$REPORT\"}}]" "PASS"
+
+run_case "finds the hand-back report when the last message has no trailer" \
+  "[{\"type\":\"tool_use\",\"name\":\"SubagentHandback\",\"input\":{\"message\":\"$REPORT\"}}]" "PASS" \
+  "Report handed back."
 
 [ "$failures" -eq 0 ] && echo "all passed" || { echo "$failures failed"; exit 1; }
