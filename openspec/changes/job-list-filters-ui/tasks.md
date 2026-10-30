@@ -50,10 +50,10 @@ Owns: `apps/job-ui/src/features/jobs/api/jobs-api.ts`, `apps/job-ui/src/features
 
 Owns: `tests/system-e2e/jobs.spec.ts`, `DECISIONS.md`, `README.md`, `docs/roadmap/04-all-endpoints.md` · Depends on: 2, 3 · Parallel with: none
 
-- [ ] 4.1 Add the system e2e scenario in `tests/system-e2e/jobs.spec.ts`: submit an email job and a webhook job through the API, choose Webhook on the jobs list, and see only the webhook row (and the Webhook button's count); verify `npm run test:e2e` passes
-- [ ] 4.2 Record in `DECISIONS.md`: faceted counts on `GET /v1/stats` rather than in the list response, one value per filter on that route, the single `GROUP BY status, type` with faceting in the use case, its full-table cost and when a counter table or cache would be added, and filters living only in the URL; add a filtered `GET /v1/stats` example to `README.md`. Verify the text matches decisions.md
-- [ ] 4.3 Update the `job-list-filters-ui` intent in `docs/roadmap/04-all-endpoints.md` to include the faceted counts on `GET /v1/stats` (decided); verify the row reads so
-- [ ] 4.4 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run format:check`) and verify they all pass
+- [x] 4.1 Add the system e2e scenario in `tests/system-e2e/jobs.spec.ts`: submit an email job and a webhook job through the API, choose Webhook on the jobs list, and see only the webhook row (and the Webhook button's count); verify `npm run test:e2e` passes
+- [x] 4.2 Record in `DECISIONS.md`: faceted counts on `GET /v1/stats` rather than in the list response, one value per filter on that route, the single `GROUP BY status, type` with faceting in the use case, its full-table cost and when a counter table or cache would be added, and filters living only in the URL; add a filtered `GET /v1/stats` example to `README.md`. Verify the text matches decisions.md
+- [x] 4.3 Update the `job-list-filters-ui` intent in `docs/roadmap/04-all-endpoints.md` to include the faceted counts on `GET /v1/stats` (decided); verify the row reads so
+- [x] 4.4 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run format:check`) and verify they all pass
 
 ## Workflow follow-up
 

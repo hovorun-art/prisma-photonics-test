@@ -65,7 +65,13 @@ curl -s 'http://localhost:3000/v1/jobs?status=failed&status=cancelled&type=webho
 # day, and jobs completed per minute over the last 5 minutes (both windows are configurable)
 curl -s http://localhost:3000/v1/stats
 # {"pending":0,"processing":0,"scheduled":0,"recent":{"windowMinutes":1440,"completed":1,"failed":0},
-#  "throughput":{"windowMinutes":5,"perMinute":0.2}}
+#  "throughput":{"windowMinutes":5,"perMinute":0.2},
+#  "counts":{"status":{"scheduled":0,"pending":0,"processing":0,"completed":1,"failed":0,"cancelled":0},
+#            "type":{"email":1,"webhook":0,"flight-transit":0}}}
+
+# Job counts for the jobs list filters, faceted: with type=webhook the counts per status cover only
+# webhook jobs; with status=failed the counts per type cover only failed jobs (one value each)
+curl -s 'http://localhost:3000/v1/stats?status=failed&type=webhook'
 
 curl -i http://localhost:3000/no-such-route
 # HTTP/1.1 404 Not Found
