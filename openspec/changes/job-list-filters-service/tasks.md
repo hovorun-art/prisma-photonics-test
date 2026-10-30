@@ -9,9 +9,9 @@ groups run one after another; parallel: none.
 
 Owns: `packages/contracts/src/jobs/job.ts`, `packages/contracts/src/jobs/job.test.ts` · Depends on: none · Parallel with: none
 
-- [ ] 1.1 Write failing tests in `job.test.ts` for `QueryJobsRequest`: one `status` string becomes a one-element array; repeated values become an array; duplicates are removed; an unknown value, an empty string and an unknown value among known ones fail with an issue on `status`; the same cases for `type`; without the fields both stay undefined. Run `npm run test:unit -w packages/contracts` and see them fail
-- [ ] 1.2 Add the optional `status` and `type` fields to `QueryJobsRequest` (string or non-empty array of the enum, normalised to a de-duplicated array) and update its doc comment; verify the tests from 1.1 pass
-- [ ] 1.3 Run the `test-case-reviewer` subagent on `packages/contracts` unit tests (`src/jobs/job.test.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 1.1 Write failing tests in `job.test.ts` for `QueryJobsRequest`: one `status` string becomes a one-element array; repeated values become an array; duplicates are removed; an unknown value, an empty string and an unknown value among known ones fail with an issue on `status`; the same cases for `type`; without the fields both stay undefined. Run `npm run test:unit -w packages/contracts` and see them fail
+- [x] 1.2 Add the optional `status` and `type` fields to `QueryJobsRequest` (string or non-empty array of the enum, normalised to a de-duplicated array) and update its doc comment; verify the tests from 1.1 pass
+- [x] 1.3 Run the `test-case-reviewer` subagent on `packages/contracts` unit tests (`src/jobs/job.test.ts`); add the missing cases it reports or note why they belong elsewhere
 
 ## 2. Filtered job query in job-service
 

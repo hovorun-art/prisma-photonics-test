@@ -231,6 +231,63 @@ describe('QueryJobsRequest', () => {
       expect(result.error?.issues.map((issue) => issue.path)).toContainEqual(['limit']);
     }
   });
+
+  it('leaves both filters unset when they are omitted', () => {
+    const query = QueryJobsRequest.parse({});
+
+    expect(query.status).toBeUndefined();
+    expect(query.type).toBeUndefined();
+  });
+
+  it('Filter by one status', () => {
+    expect(QueryJobsRequest.parse({ status: 'failed' }).status).toEqual(['failed']);
+  });
+
+  it('Filter by several statuses', () => {
+    expect(QueryJobsRequest.parse({ status: ['failed', 'cancelled'] }).status).toEqual([
+      'failed',
+      'cancelled',
+    ]);
+  });
+
+  it('Repeated status value', () => {
+    expect(QueryJobsRequest.parse({ status: ['failed', 'failed'] }).status).toEqual(['failed']);
+  });
+
+  it('Filter by one type', () => {
+    expect(QueryJobsRequest.parse({ type: 'webhook' }).type).toEqual(['webhook']);
+  });
+
+  it('Filter by several types', () => {
+    expect(QueryJobsRequest.parse({ type: ['email', 'webhook', 'email'] }).type).toEqual([
+      'email',
+      'webhook',
+    ]);
+  });
+
+  it.each([
+    { name: 'Unknown status filter', status: 'done' },
+    { name: 'Empty filter value', status: '' },
+    { name: 'One unknown value among known ones', status: ['failed', 'done'] },
+    { name: 'an empty list', status: [] },
+    { name: 'a nested object', status: { in: 'failed' } },
+  ])('rejects a status filter: $name', ({ status }) => {
+    const result = QueryJobsRequest.safeParse({ status });
+
+    expect(result.error?.issues.map((issue) => issue.path[0])).toContain('status');
+  });
+
+  it.each([
+    { name: 'Unknown type filter', type: 'sms' },
+    { name: 'an empty value', type: '' },
+    { name: 'one unknown value among known ones', type: ['email', 'sms'] },
+    { name: 'an empty list', type: [] },
+    { name: 'a nested object', type: { in: 'email' } },
+  ])('rejects a type filter: $name', ({ type }) => {
+    const result = QueryJobsRequest.safeParse({ type });
+
+    expect(result.error?.issues.map((issue) => issue.path[0])).toContain('type');
+  });
 });
 
 describe('JobIdParams', () => {
