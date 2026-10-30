@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { en } from '@/locales';
 
-import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, transitJobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../testing/test-providers';
 import { JobsListPage } from './jobs-list-page';
 
@@ -322,5 +322,17 @@ describe('JobsListPage', () => {
     await screen.findByRole('link', { name: job.id.slice(0, 8) });
     const [, row] = screen.getAllByRole('row');
     expect(row).toHaveTextContent('Webhook POST https://hooks.example.com/orders answered 503');
+  });
+
+  it('Waiting or running transit job: a pending job\'s Details read "LHR → JFK · 28 Oct"', async () => {
+    const job = transitJobFixtures.build();
+    answerPages({ items: [job], total: 1 });
+
+    renderList();
+
+    await screen.findByRole('link', { name: job.id.slice(0, 8) });
+    const [, row] = screen.getAllByRole('row');
+    expect(row).toHaveTextContent('flight-transit');
+    expect(row).toHaveTextContent('LHR → JFK · 28 Oct');
   });
 });

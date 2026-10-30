@@ -5,9 +5,7 @@ import type { ReactNode } from 'react';
 import { cn } from '@/lib/class-names';
 import { en } from '@/locales';
 
-import { ComingSoon } from '../../app-frame/coming-soon';
-
-/** The type cards of "1. Job type" (the section names the group): Email and Webhook can be chosen; Aircraft transit is shown disabled. */
+/** The type cards of "1. Job type" (the section names the group): Email, Webhook and Aircraft transit. */
 export function JobTypePicker({
   selected,
   onSelect,
@@ -35,13 +33,15 @@ export function JobTypePicker({
         name={en.submit.types.webhook.name}
         description={en.submit.types.webhook.description}
       />
-      <ComingSoon className="w-full">
-        <TypeCard
-          icon={<Plane className="size-4" />}
-          name={en.submit.types.transit.name}
-          description={en.submit.types.transit.description}
-        />
-      </ComingSoon>
+      <TypeCard
+        selected={selected === 'flight-transit'}
+        onClick={() => {
+          onSelect('flight-transit');
+        }}
+        icon={<Plane className="size-4" />}
+        name={en.submit.types.transit.name}
+        description={en.submit.types.transit.description}
+      />
     </div>
   );
 }

@@ -1,20 +1,11 @@
-import type { FlightTransitJob, JobStatus } from '@job-queue/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, transitJobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
 import { JobPresenter } from './job-presenter';
 
 const presenter = new JobPresenter({ shortIdLength: 8 });
 
 describe('JobPresenter', () => {
-  /** A flight transit job; job-ui has no transit fixtures yet, since it shows nothing transit-specific. */
-  const transitJob = (status: JobStatus): FlightTransitJob => ({
-    ...jobFixtures.build({ status }),
-    type: 'flight-transit',
-    payload: { origin: 'LHR', destination: 'JFK', departureDate: '2030-06-15' },
-    result: null,
-  });
-
   it('shortId: the first characters of the id', () => {
     expect(presenter.shortId({ id: '7f3a9c21-4b5d-4e6f-8a7b-9c0d1e2f3a4b' })).toEqual({
       text: '7f3a9c21',
@@ -79,66 +70,47 @@ describe('JobPresenter', () => {
   });
 
   it.each(['scheduled', 'pending', 'processing'] as const)(
-    'a %s flight transit job has empty Details',
+    'Waiting or running transit job: a %s job shows "<origin> → <destination> · <day month>"',
     (status) => {
-      expect(presenter.details({ job: transitJob(status) }).text).toBe('');
+      const job = transitJobFixtures.build({ status });
+
+      expect(presenter.details({ job }).text).toBe('LHR → JFK · 28 Oct');
     },
   );
 
-  it('a completed flight transit job has empty Details, report and all', () => {
-    const lhr = {
-      iata: 'LHR',
-      name: 'Heathrow Airport',
-      city: 'London',
-      timeZone: 'Europe/London',
-      lat: 51.47,
-      lon: -0.4543,
-    };
-    const jfk = {
-      iata: 'JFK',
-      name: 'John F. Kennedy International Airport',
-      city: 'New York',
-      timeZone: 'America/New_York',
-      lat: 40.6413,
-      lon: -73.7781,
-    };
-    const waypoint = {
-      at: '2030-06-15T08:20:00.000Z',
-      altitudeFt: 0,
-      groundSpeedKmh: 0,
-      distanceFlownKm: 0,
-    };
-    const job: FlightTransitJob = {
-      ...transitJob('completed'),
-      result: {
-        flight: 'BA117',
-        aircraft: { model: 'Boeing 777-300ER', registration: 'G-STBA' },
-        origin: lhr,
-        destination: jfk,
-        departureAt: '2030-06-15T08:20:00.000Z',
-        arrivalAt: '2030-06-15T16:05:00.000Z',
-        distanceKm: 5555,
-        durationMin: 465,
-        cruiseAltitudeFt: 37_000,
-        path: [
-          [lhr.lat, lhr.lon],
-          [jfk.lat, jfk.lon],
-        ],
-        waypoints: [
-          { ...waypoint, name: 'Departure', lat: lhr.lat, lon: lhr.lon },
-          { ...waypoint, name: 'Arrival', lat: jfk.lat, lon: jfk.lon },
-        ],
-      },
-    };
+  it('Waiting or running transit job: the departure day is the calendar day in any browser time zone', () => {
+    process.env.TZ = 'America/New_York';
+    try {
+      const inNewYork = new JobPresenter({ shortIdLength: 8 });
 
-    expect(presenter.details({ job }).text).toBe('');
+      expect(inNewYork.details({ job: transitJobFixtures.build() }).text).toBe(
+        'LHR → JFK · 28 Oct',
+      );
+    } finally {
+      process.env.TZ = 'UTC';
+    }
   });
 
-  it('a failed flight transit job shows its error message, like any failed job', () => {
-    const job: FlightTransitJob = {
-      ...transitJob('failed'),
+  it('Completed transit job: shows "<flight> · <distance> km" with thousands grouped', () => {
+    const job = transitJobFixtures.completed();
+
+    expect(presenter.details({ job }).text).toBe('TX 401 · 5,540 km');
+  });
+
+  it('Completed transit job: a fractional distance is rounded to whole km', () => {
+    const completed = transitJobFixtures.completed();
+    const job = transitJobFixtures.completed({
+      result: completed.result && { ...completed.result, distanceKm: 8749.6 },
+    });
+
+    expect(presenter.details({ job }).text).toBe('TX 401 · 8,750 km');
+  });
+
+  it('Failed transit job: shows the error message, like any failed job', () => {
+    const job = transitJobFixtures.build({
+      status: 'failed',
       error: { code: 'TRANSIT_GENERATION_FAILED', message: 'No route between the airports' },
-    };
+    });
 
     expect(presenter.details({ job }).text).toBe('No route between the airports');
   });

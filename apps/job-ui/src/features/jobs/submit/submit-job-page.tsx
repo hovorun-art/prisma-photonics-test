@@ -14,12 +14,14 @@ import { Link, useNavigate, useSearchParams } from 'react-router';
 import { en } from '@/locales';
 
 import { useEmailJobDraft } from '../hooks/use-email-job-draft';
+import { useTransitJobDraft } from '../hooks/use-transit-job-draft';
 import { useWebhookJobDraft } from '../hooks/use-webhook-job-draft';
 import type { JobFormDraft, JobFormExecution } from '../model/job-form-draft';
 import { EmailPayloadFields } from './email-payload-fields';
 import { JobForm, type JobFormFields } from './job-form';
 import { JobTypePicker } from './job-type-picker';
 import { RequestPreview } from './request-preview';
+import { TransitPayloadFields } from './transit-payload-fields';
 import { WebhookPayloadFields } from './webhook-payload-fields';
 
 const DEFAULT_EXECUTION: JobFormExecution = {
@@ -28,20 +30,23 @@ const DEFAULT_EXECUTION: JobFormExecution = {
 };
 /** The query parameter that holds the chosen job type; without it the page shows Email. */
 const TYPE_PARAM = 'type';
+/** The types the page can show besides Email, by their `type` query value. */
+const OTHER_TYPES: readonly JobType[] = ['webhook', 'flight-transit'];
 
 /**
- * Submit a job (designs "SubmitJob", "SubmitWebhook"); the type is in the URL
+ * Submit a job (designs "SubmitJob", "SubmitWebhook", "SubmitTransit"); the type is in the URL
  * (`/jobs/new?type=webhook`), and after success the new job's page opens.
  */
 export function SubmitJobPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
-  const type: JobType = params.get(TYPE_PARAM) === 'webhook' ? 'webhook' : 'email';
+  const type: JobType = OTHER_TYPES.find((other) => other === params.get(TYPE_PARAM)) ?? 'email';
   // Priority and max attempts, kept in step with the form, so they carry over to the next type
   // whether the user switches with a card or with Back and Forward.
   const [execution, setExecution] = useState(DEFAULT_EXECUTION);
   const emailDraft = useEmailJobDraft();
   const webhookDraft = useWebhookJobDraft();
+  const transitDraft = useTransitJobDraft();
 
   const choose = (next: JobType) => {
     if (next === type) return;
@@ -66,7 +71,19 @@ export function SubmitJobPage() {
       </div>
       <div className="flex flex-wrap items-start gap-5">
         {/* Keyed by type: a switch starts a fresh form, so the payload fields start empty. */}
-        {type === 'webhook' ? (
+        {type === 'flight-transit' && (
+          <TypedSubmit
+            key="flight-transit"
+            type="flight-transit"
+            draft={transitDraft}
+            execution={execution}
+            payload={(fields) => <TransitPayloadFields fields={fields} />}
+            onExecutionChange={setExecution}
+            onChoose={choose}
+            onCreated={onCreated}
+          />
+        )}
+        {type === 'webhook' && (
           <TypedSubmit
             key="webhook"
             type="webhook"
@@ -77,7 +94,8 @@ export function SubmitJobPage() {
             onChoose={choose}
             onCreated={onCreated}
           />
-        ) : (
+        )}
+        {type === 'email' && (
           <TypedSubmit
             key="email"
             type="email"
