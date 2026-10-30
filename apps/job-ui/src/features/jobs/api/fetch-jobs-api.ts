@@ -1,9 +1,19 @@
-import { Job, JOBS_ROUTE, QueryJobsResponse, QueueStats, STATS_ROUTE } from '@job-queue/contracts';
+import {
+  CreateJobsBulkResponse,
+  Job,
+  JOBS_BULK_ROUTE,
+  JOBS_ROUTE,
+  QueryJobsResponse,
+  QueueStats,
+  STATS_ROUTE,
+} from '@job-queue/contracts';
 
 import type { z } from 'zod';
 
 import { FetchJsonApiClient, type FetchJsonApiClientParams } from './fetch-json-api-client';
 import type {
+  CreateBulkJobsApiRequest,
+  CreateBulkJobsApiResponse,
   CreateJobsApiRequest,
   CreateJobsApiResponse,
   DeleteJobsApiRequest,
@@ -56,6 +66,18 @@ export class FetchJobsApi implements JobsApi {
       },
     });
     return { job: await this.parse({ schema: Job, response }) };
+  }
+
+  async createBulk(req: CreateBulkJobsApiRequest): Promise<CreateBulkJobsApiResponse> {
+    const response = await this.send({
+      path: JOBS_BULK_ROUTE,
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobs: req.jobs }),
+      },
+    });
+    return { jobs: (await this.parse({ schema: CreateJobsBulkResponse, response })).items };
   }
 
   async delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse> {
