@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { Job } from '@job-queue/contracts';
+import type { EmailJob } from '@job-queue/contracts';
 import { DomainError, JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -29,7 +29,7 @@ describe('JobExecutionImpl', () => {
   let logger: DeepMockProxy<Pick<LoggerService, 'log' | 'warn' | 'error'>>;
   let execution: JobExecutionImpl;
 
-  const job = (overrides: Partial<Job> = {}): Job => ({
+  const job = (overrides: Partial<EmailJob> = {}): EmailJob => ({
     id: JOB_ID,
     type: 'email',
     payload: { to: 'ada@example.com', subject: 'Hello', body: 'Hi' },

@@ -4,6 +4,7 @@ import {
   JobQueueEntryId,
   type Job,
   type JobStatus,
+  type JobType,
 } from '@job-queue/contracts';
 import { Queue } from 'bullmq';
 
@@ -12,7 +13,7 @@ import { PrismaDatabase } from '../../../src/infra/prisma/prisma-database.js';
 
 /** Test-only access to job-service's data: jobs in states no public route can create yet, and the queue. */
 export interface JobFixtures {
-  /** Stores an email job in the given state, as if it had got there through the lifecycle. */
+  /** Stores a job (email unless another type is given) in the given state, as if it had got there through the lifecycle. */
   seed(req: SeedJobFixturesRequest): Promise<SeedJobFixturesResponse>;
   /** The attempts that have an entry on the job queue for the job, ascending. */
   queued(req: QueuedJobFixturesRequest): Promise<QueuedJobFixturesResponse>;
@@ -23,6 +24,7 @@ export interface JobFixtures {
 
 export interface SeedJobFixturesRequest {
   status: JobStatus;
+  type?: JobType;
   attempts?: number;
   maxAttempts?: number;
 }
@@ -63,15 +65,26 @@ export class ContainerJobFixtures implements JobFixtures {
   async seed(req: SeedJobFixturesRequest): Promise<SeedJobFixturesResponse> {
     const now = new Date().toISOString();
     const finished = (FINISHED_JOB_STATUSES as readonly JobStatus[]).includes(req.status);
+    const completed = req.status === 'completed';
+    const typed =
+      req.type === 'webhook'
+        ? {
+            type: 'webhook' as const,
+            payload: { method: 'POST' as const, url: 'https://hooks.example.com/seeded' },
+            result: completed ? { statusCode: 200, responseBody: { seeded: true } } : null,
+          }
+        : {
+            type: 'email' as const,
+            payload: { to: 'ada@example.com', subject: 'Seeded', body: 'Hi' },
+            result: completed ? { messageId: 'seeded-message' } : null,
+          };
     return this.repository.create({
       job: {
-        type: 'email',
-        payload: { to: 'ada@example.com', subject: 'Seeded', body: 'Hi' },
+        ...typed,
         status: req.status,
         priority: 5,
         attempts: req.attempts ?? (req.status === 'pending' ? 0 : 1),
         maxAttempts: req.maxAttempts ?? 3,
-        result: req.status === 'completed' ? { messageId: 'seeded-message' } : null,
         error: null,
         scheduledAt: null,
         startedAt: req.status === 'pending' ? null : now,

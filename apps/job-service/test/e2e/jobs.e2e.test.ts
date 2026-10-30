@@ -27,6 +27,15 @@ const EMAIL_JOB = {
   maxAttempts: 4,
 };
 
+const WEBHOOK_JOB = {
+  type: 'webhook',
+  payload: {
+    method: 'POST',
+    url: 'https://hooks.example.com/orders',
+    body: { orderId: 'ord_4821', event: 'order.paid' },
+  },
+};
+
 describe('job-service public job routes (the real app over HTTP)', () => {
   let dependencies: ContainerDependencies;
   let service: InProcessJobService;
@@ -213,6 +222,67 @@ describe('job-service public job routes (the real app over HTTP)', () => {
 
       expect(response.status).toBe(400);
       expect(await issuePaths(response)).toContainEqual(['id']);
+    });
+  });
+
+  describe('submit a webhook job', () => {
+    const rejected = async (payload: Record<string, unknown>, field: string): Promise<void> => {
+      const response = await submit({
+        ...WEBHOOK_JOB,
+        payload: { ...WEBHOOK_JOB.payload, ...payload },
+      });
+
+      expect(response.status).toBe(400);
+      expect(await issuePaths(response)).toContainEqual(['payload', field]);
+      const page = QueryJobsResponse.parse(await (await fetch(url())).json());
+      expect(page.total).toBe(0);
+    };
+
+    it('Valid webhook job is accepted', async () => {
+      const response = await submit(WEBHOOK_JOB);
+
+      expect(response.status).toBe(201);
+      expect(Job.parse(await response.json())).toMatchObject({
+        type: 'webhook',
+        status: 'pending',
+        attempts: 0,
+        payload: WEBHOOK_JOB.payload,
+        result: null,
+        error: null,
+      });
+    });
+
+    it('Webhook job without a body is accepted', async () => {
+      const payload = { method: 'GET', url: 'http://example.com/ping' };
+
+      const response = await submit({ type: 'webhook', payload });
+
+      expect(response.status).toBe(201);
+      expect(Job.parse(await response.json()).payload).toEqual(payload);
+    });
+
+    it('Webhook job is read and listed like any job', async () => {
+      const email = await submitted(EMAIL_JOB);
+      const webhook = await submitted(WEBHOOK_JOB);
+
+      const read = Job.parse(await (await fetch(url(`/${webhook.id}`))).json());
+      const page = QueryJobsResponse.parse(await (await fetch(url())).json());
+
+      expect(read).toEqual(webhook);
+      expect(page.items).toEqual([webhook, email]);
+    });
+
+    it('Method not allowed', async () => {
+      await rejected({ method: 'DELETE' }, 'method');
+      await rejected({ method: 'post' }, 'method');
+    });
+
+    it('URL with another scheme', async () => {
+      await rejected({ url: 'ftp://example.com/hook' }, 'url');
+    });
+
+    it('Body is not a JSON object', async () => {
+      await rejected({ body: ['a'] }, 'body');
     });
   });
 

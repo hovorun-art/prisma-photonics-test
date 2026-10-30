@@ -46,6 +46,22 @@ changing the contract and the enum; no job-service class needs new logic.
 column into text with a check. Rejected: the enum is already in place and adding a value is
 cheap and non-blocking in Postgres.
 
+**Found during apply: the union needs small job-service changes.** With two job types,
+`CreateJobRequest` and `Job` are unions, and three spots that assumed one object shape stopped
+compiling:
+- `job.dto.ts`: a class cannot extend a constructor whose instances are a union, so
+  `createZodDto(CreateJobRequest)` and `createZodDto(Job)` are typed as `new () => object` bases.
+  At runtime they keep the union schema, which Swagger reads.
+- `jobs.controller.ts`: the submit body is validated with `ZodValidationPipe(CreateJobRequest)` on
+  the parameter (the same pattern as the internal update route) and documented with
+  `@ApiBody({ type: CreateJobDto })`.
+- `JobServiceImpl.create` spreads the request (`...req.job`) instead of copying fields one by one,
+  so `type` and `payload` stay matched per branch.
+
+Test helpers that build email jobs are typed as the email branch. The contracts barrel
+(`jobs/index.ts`) also exports the new webhook names. The docs e2e test checks that every
+`$ref` in the OpenAPI document resolves, since `z.json()` is recursive.
+
 **Test fixtures**: the e2e `JobFixtures.seed` gains an optional `type` (default `email`) and seeds a
 valid webhook payload for `webhook`, so internal-route tests can start from a `processing` webhook
 job.

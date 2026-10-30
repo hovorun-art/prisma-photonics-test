@@ -6,10 +6,13 @@ import {
   CreateJobRequest,
   EMAIL_LIMITS,
   EmailJobResult,
+  Job,
   JOB_LIMITS,
   JobIdParams,
   QueryJobsRequest,
   UpdateJobRequest,
+  WEBHOOK_LIMITS,
+  WebhookJobResult,
 } from './job.js';
 
 const validEmailJob = {
@@ -79,6 +82,74 @@ describe('CreateJobRequest', () => {
       1.5,
     ]) {
       expect(issuePaths({ ...validEmailJob, maxAttempts })).toContainEqual(['maxAttempts']);
+    }
+  });
+});
+
+const validWebhookJob = {
+  type: 'webhook',
+  payload: {
+    method: 'POST',
+    url: 'https://hooks.example.com/orders',
+    body: { orderId: 'ord_4821', event: 'order.paid' },
+  },
+  priority: 5,
+  maxAttempts: 3,
+};
+
+describe('CreateJobRequest for a webhook job', () => {
+  const issuePaths = (input: unknown): PropertyKey[][] =>
+    CreateJobRequest.safeParse(input).error?.issues.map((issue) => issue.path) ?? [];
+  const withPayload = (payload: Record<string, unknown>): unknown => ({
+    ...validWebhookJob,
+    payload: { ...validWebhookJob.payload, ...payload },
+  });
+
+  it('Valid webhook job is accepted', () => {
+    expect(CreateJobRequest.parse(validWebhookJob)).toEqual(validWebhookJob);
+  });
+
+  it('Webhook job without a body is accepted', () => {
+    const job = { ...validWebhookJob, payload: { method: 'GET', url: 'http://example.com/ping' } };
+
+    expect(CreateJobRequest.parse(job)).toEqual(job);
+  });
+
+  it('Method not allowed', () => {
+    for (const method of ['DELETE', 'post']) {
+      expect(issuePaths(withPayload({ method }))).toContainEqual(['payload', 'method']);
+    }
+  });
+
+  it('URL with another scheme', () => {
+    expect(issuePaths(withPayload({ url: 'ftp://example.com/hook' }))).toContainEqual([
+      'payload',
+      'url',
+    ]);
+  });
+
+  it('URL missing or not a URL', () => {
+    const { url: _url, ...withoutUrl } = validWebhookJob.payload;
+
+    expect(issuePaths({ ...validWebhookJob, payload: withoutUrl })).toContainEqual([
+      'payload',
+      'url',
+    ]);
+    for (const url of ['not a url', '/orders']) {
+      expect(issuePaths(withPayload({ url }))).toContainEqual(['payload', 'url']);
+    }
+  });
+
+  it('URL too long', () => {
+    const prefix = 'https://example.com/';
+    const url = prefix + 'a'.repeat(WEBHOOK_LIMITS.urlMaxLength - prefix.length + 1);
+
+    expect(issuePaths(withPayload({ url }))).toContainEqual(['payload', 'url']);
+  });
+
+  it('Body is not a JSON object', () => {
+    for (const body of [['a'], 'text']) {
+      expect(issuePaths(withPayload({ body }))).toContainEqual(['payload', 'body']);
     }
   });
 });
@@ -154,5 +225,52 @@ describe('EmailJobResult', () => {
 
   it('Result does not match the job type', () => {
     expect(EmailJobResult.safeParse({ id: 'm-1' }).success).toBe(false);
+  });
+});
+
+describe('WebhookJobResult', () => {
+  it('Webhook result is stored', () => {
+    const result = { statusCode: 200, responseBody: { received: true } };
+
+    expect(WebhookJobResult.parse(result)).toEqual(result);
+  });
+
+  it('Webhook result does not match', () => {
+    for (const result of [
+      { responseBody: {} },
+      { statusCode: 404, responseBody: {} },
+      { statusCode: 199, responseBody: {} },
+      { statusCode: 200, responseBody: ['a'] },
+    ]) {
+      expect(WebhookJobResult.safeParse(result).success).toBe(false);
+    }
+  });
+});
+
+describe('Job', () => {
+  it('Failed webhook error is returned with its status code', () => {
+    const timestamp = new Date().toISOString();
+    const job = {
+      id: randomUUID(),
+      type: 'webhook',
+      status: 'failed',
+      priority: 5,
+      attempts: 3,
+      maxAttempts: 3,
+      payload: validWebhookJob.payload,
+      result: null,
+      error: {
+        code: 'WEBHOOK_HTTP_ERROR',
+        message: 'HTTP 503 Service Unavailable',
+        details: { statusCode: 503 },
+      },
+      scheduledAt: null,
+      startedAt: timestamp,
+      completedAt: timestamp,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+
+    expect(Job.parse(job)).toEqual(job);
   });
 });
