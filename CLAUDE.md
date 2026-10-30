@@ -153,10 +153,9 @@ packages/contracts          Zod schemas and inferred types: health response, err
 packages/service-kit        shared NestJS pieces for the backends: NestServiceBootstrap, base config
                             (NODE_ENV, LOG_LEVEL, REDIS_URL, port, INTERNAL_SERVICE_TOKEN), logging with redaction, Redis module,
                             health module, config module
-tests/support               test-only helpers for the integration and e2e tests (spawned-service
-                            harness, Redis and Postgres connection counters, Prisma migrate deploy
-                            for test databases); a dev dependency,
-                            never in a runtime image
+tests/support               test-only helpers for the integration and e2e tests (Redis and Postgres
+                            connection counters, Prisma migrate deploy for test databases,
+                            unreachable addresses); a dev dependency, never in a runtime image
 tests/system-e2e            Playwright suite against the full compose stack
 tooling/                    shared tsconfig, ESLint (layer and class rules) and Vitest presets
 Dockerfile                  one multi-stage file: job-service, job-execution-service, migrate, job-ui (nginx)

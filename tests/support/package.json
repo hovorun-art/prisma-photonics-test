@@ -2,7 +2,7 @@
   "name": "@job-queue/test-support",
   "version": "0.0.0",
   "private": true,
-  "description": "Test-only helpers shared by the integration and e2e tests of the backend apps: a spawned-service harness and Redis and Postgres connection counters. Never part of a runtime image.",
+  "description": "Test-only helpers shared by the integration and e2e tests of the backend apps: Redis and Postgres connection counters, Prisma migrate deploy for test databases and unreachable addresses. Never part of a runtime image.",
   "type": "module",
   "exports": {
     ".": {

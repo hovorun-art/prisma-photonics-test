@@ -82,6 +82,10 @@ describe('JobExecutionImpl', () => {
       jobs.get.mockResolvedValueOnce({ job: job({ status }) });
 
       await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'skipped' });
+      expect(logger.log).toHaveBeenLastCalledWith(
+        { jobId: JOB_ID, attempt: 1, status },
+        expect.stringContaining('Skipped'),
+      );
     }
     expect(email.run).not.toHaveBeenCalled();
     expect(jobs.update).not.toHaveBeenCalled();
@@ -126,9 +130,8 @@ describe('JobExecutionImpl', () => {
   });
 
   it('Invalid payload', async () => {
-    jobs.get.mockRejectedValueOnce(
-      new InvalidJobError({ id: JOB_ID, issues: [{ code: 'x', path: ['payload'], message: 'x' }] }),
-    );
+    const issues = [{ code: 'invalid_format', path: ['payload', 'to'], message: 'Invalid email' }];
+    jobs.get.mockRejectedValueOnce(new InvalidJobError({ id: JOB_ID, issues }));
     jobs.update
       .mockResolvedValueOnce({ job: job({ status: 'processing', attempts: 1 }) })
       .mockResolvedValueOnce({ job: job({ status: 'failed' }) });
@@ -138,7 +141,14 @@ describe('JobExecutionImpl', () => {
     // job-service accepts a failure only for a started job, so the worker starts it first.
     expect(jobs.update.mock.calls.map(([request]) => request.update)).toEqual([
       { status: 'processing' },
-      { status: 'failed', error: expect.objectContaining({ code: 'INVALID_PAYLOAD' }) as object },
+      {
+        status: 'failed',
+        error: {
+          code: 'INVALID_PAYLOAD',
+          message: expect.any(String) as string,
+          details: { id: JOB_ID, issues },
+        },
+      },
     ]);
     expect(email.run).not.toHaveBeenCalled();
   });
