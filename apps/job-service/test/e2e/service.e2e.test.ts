@@ -79,6 +79,7 @@ describe('job-service health, docs and shutdown', () => {
       expect(jobs?.post?.requestBody?.content['application/json']?.schema).toBeDefined();
       expect(jobs?.post?.responses['201']?.content?.['application/json']?.schema).toBeDefined();
       expect(jobs?.get?.parameters?.map((parameter) => parameter.name).sort()).toEqual([
+        'groupId',
         'limit',
         'offset',
         'status',

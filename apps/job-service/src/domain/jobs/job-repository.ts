@@ -7,6 +7,8 @@ import type { Job, JobError, JobStatus, JobType } from '@job-queue/contracts';
  */
 export interface JobRepository {
   create(req: CreateJobRepositoryRequest): Promise<CreateJobRepositoryResponse>;
+  /** Stores all jobs in one transaction, or none of them; returns them in the order given. */
+  createMany(req: CreateManyJobRepositoryRequest): Promise<CreateManyJobRepositoryResponse>;
   /** Throws `JobNotFoundError` for an unknown id. */
   get(req: GetJobRepositoryRequest): Promise<GetJobRepositoryResponse>;
   /** Newest first (ties broken by id), with the number of jobs that match the filters. */
@@ -23,10 +25,17 @@ export interface JobRepository {
   delete(req: DeleteJobRepositoryRequest): Promise<DeleteJobRepositoryResponse>;
 }
 
-/** A job before it is stored: the id and the created/updated times are set by the database. */
+/**
+ * A job before it is stored: the id and the updated time are set by the database, and so is the
+ * created time unless given (a bulk spaces its jobs apart to keep their order). Without a group the
+ * job's `groupId` is `null`.
+ */
 export type NewJob = Job extends infer J
   ? J extends Job
-    ? Omit<J, 'id' | 'createdAt' | 'updatedAt'>
+    ? Omit<J, 'id' | 'createdAt' | 'updatedAt' | 'groupId'> & {
+        groupId?: string | null | undefined;
+        createdAt?: string | undefined;
+      }
     : never
   : never;
 
@@ -37,6 +46,15 @@ export interface CreateJobRepositoryRequest {
 export interface CreateJobRepositoryResponse {
   /** The stored job with its database-assigned id. */
   job: Job;
+}
+
+export interface CreateManyJobRepositoryRequest {
+  jobs: NewJob[];
+}
+
+export interface CreateManyJobRepositoryResponse {
+  /** The stored jobs with their database-assigned ids, in the order of the request. */
+  jobs: Job[];
 }
 
 export interface GetJobRepositoryRequest {
@@ -54,6 +72,8 @@ export interface QueryJobRepositoryRequest {
   statuses?: JobStatus[] | undefined;
   /** Only jobs of one of these types; every type when omitted. */
   types?: JobType[] | undefined;
+  /** Only jobs of this group; jobs of every group and none when omitted. */
+  groupId?: string | undefined;
 }
 
 export interface QueryJobRepositoryResponse {

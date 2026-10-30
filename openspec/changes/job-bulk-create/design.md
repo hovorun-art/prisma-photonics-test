@@ -76,9 +76,10 @@ behaviour and tests); both share the private "new job from request" and departur
 
 ### Repository (`JobRepository.createMany`, `PrismaJobRepository`)
 `createMany({ jobs: NewJob[] }) → { jobs: Job[] }` in request order. Implemented with
-`prisma.job.createManyAndReturn` (one `INSERT ... RETURNING`, atomic on its own), then reordered by
-the returned rows' position (Postgres returns `RETURNING` rows in insert order, but the method sorts
-by `createdAt` to make the order explicit). `NewJob` gets optional `createdAt`; `create` keeps the
+`prisma.job.createManyAndReturn` (one `INSERT ... RETURNING`, atomic on its own). Postgres returns
+the rows of a multi-row `VALUES` in the order given, so the result keeps the request order whatever
+the creation times (sorting by `createdAt` was tried and dropped: it reorders a caller's
+non-ascending times). Integration tests pin this order with and without explicit `createdAt`. `NewJob` gets optional `createdAt`; `create` keeps the
 database default. `groupId` maps to a new nullable `group_id uuid` column.
 
 ### Query filter

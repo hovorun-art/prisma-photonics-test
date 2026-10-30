@@ -47,7 +47,11 @@ import { JobsController } from './jobs.controller.js';
       ) =>
         new JobServiceImpl(
           { repository, queue, clock, logger: new Logger('JobService') },
-          { queryDefaultLimit: config.queryDefaultLimit, queryMaxLimit: config.queryMaxLimit },
+          {
+            queryDefaultLimit: config.queryDefaultLimit,
+            queryMaxLimit: config.queryMaxLimit,
+            bulkMaxJobs: config.bulkMaxJobs,
+          },
         ),
       inject: [JOB_REPOSITORY, JOB_QUEUE, CLOCK, JOB_SERVICE_CONFIG],
     },

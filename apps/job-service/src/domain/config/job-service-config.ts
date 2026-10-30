@@ -13,4 +13,8 @@ export interface JobServiceConfig extends BaseConfig {
   readonly queryMaxLimit: number;
   /** How long putting a job on the queue may take before the job is left pending. */
   readonly enqueueTimeoutMs: number;
+  /** Most jobs one bulk submission may hold. */
+  readonly bulkMaxJobs: number;
+  /** The largest request body of the bulk submit route, in bytes; other routes keep `bodyLimitBytes`. */
+  readonly bulkBodyLimitBytes: number;
 }

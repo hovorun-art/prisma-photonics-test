@@ -29,9 +29,35 @@ describe('ZodJobServiceConfigParser', () => {
         queryDefaultLimit: 20,
         queryMaxLimit: 100,
         enqueueTimeoutMs: 2000,
+        bulkMaxJobs: 100,
+        bulkBodyLimitBytes: 1048576,
       },
     });
   });
+
+  it('reads the configured bulk limits', () => {
+    const env = {
+      ...ENV,
+      JOB_SERVICE_BULK_MAX_JOBS: '25',
+      JOB_SERVICE_BULK_BODY_LIMIT_BYTES: '524288',
+    };
+
+    expect(parser.parse({ env })).toMatchObject({
+      ok: true,
+      config: { bulkMaxJobs: 25, bulkBodyLimitBytes: 524288 },
+    });
+  });
+
+  it.each(['0', '-1', '1.5', 'many'])(
+    'rejects a bulk limit that is not a positive integer: %s',
+    (value) => {
+      for (const name of ['JOB_SERVICE_BULK_MAX_JOBS', 'JOB_SERVICE_BULK_BODY_LIMIT_BYTES']) {
+        const result = parser.parse({ env: { ...ENV, [name]: value } });
+
+        expect(result.ok ? '' : result.problems).toContain(name);
+      }
+    },
+  );
 
   it('reads the configured query page sizes and enqueue timeout', () => {
     const env = {

@@ -25,6 +25,7 @@ const PENDING_JOB = {
   maxAttempts: 3,
   result: null,
   error: null,
+  groupId: null,
   scheduledAt: null,
   startedAt: null,
   completedAt: null,
