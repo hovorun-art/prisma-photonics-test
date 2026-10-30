@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { Job } from '@job-queue/contracts';
 import { render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
@@ -241,19 +243,21 @@ describe('JobPage', () => {
   });
 
   it('Job with a key: the Details list shows the Idempotency key row with the key', async () => {
-    const job = jobFixtures.build({ idempotencyKey: 'order-4821' });
+    const idempotencyKey = randomUUID();
+    const job = jobFixtures.build({ idempotencyKey });
     answerJob(job.id, job);
 
     renderJob(job.id);
 
     await screen.findByRole('heading', { level: 1, name: job.id });
-    expect(detail(en.job.fields.idempotencyKey)).toHaveTextContent('order-4821');
+    expect(detail(en.job.fields.idempotencyKey)?.textContent).toBe(idempotencyKey);
   });
 
   it('Job without a key: the Details list has no Idempotency key row', async () => {
-    answerJob(pending.id, pending);
+    const job = jobFixtures.build({ idempotencyKey: null });
+    answerJob(job.id, job);
 
-    renderJob(pending.id);
+    renderJob(job.id);
 
     const list = await screen.findByRole('region', { name: en.job.details });
     expect(within(list).queryByText(en.job.fields.idempotencyKey)).toBeNull();

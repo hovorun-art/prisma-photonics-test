@@ -122,6 +122,33 @@ describe('SubmitJobPage', () => {
     ]);
   });
 
+  it('Submit form unchanged: the key field stays disabled with its "Coming soon" tooltip and no key is sent', async () => {
+    const user = userEvent.setup();
+    answerCreate(() => HttpResponse.json(jobFixtures.build(), { status: 201 }));
+    renderSubmit();
+    const field = screen.getByLabelText(new RegExp(en.submit.idempotencyKey));
+    const comingSoon = field.closest('[aria-disabled="true"]');
+
+    expect(field).toBeDisabled();
+    expect(screen.getByRole('button', { name: en.submit.generate })).toBeDisabled();
+    expect(comingSoon).not.toBeNull();
+    await user.hover(comingSoon!);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent(en.comingSoon);
+
+    await fillEmail(user);
+    await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+    await screen.findByRole('status', { name: 'current path' });
+    expect(posted).toEqual([
+      {
+        type: 'email',
+        payload: { to: 'ops@acme.test', subject: 'Weekly digest', body: 'Hi team' },
+        priority: JOB_LIMITS.priority.default,
+        maxAttempts: JOB_LIMITS.maxAttempts.default,
+      },
+    ]);
+  });
+
   it('Defaults in the form: Priority and Max attempts hold the API defaults', () => {
     renderSubmit();
 

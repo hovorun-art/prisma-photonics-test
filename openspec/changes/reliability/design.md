@@ -180,9 +180,11 @@ See proposal.md for the motivation and decisions.md for every behaviour choice; 
   `jobId`, `run`, `attempt`; both return `skipped`.
 
 ### D7. job-ui
-- `JobPresenter` adds a Details row `{ label: en.job.details.idempotencyKey, value }` only when
-  `job.idempotencyKey !== null`; `en.ts` gets the label under the job details section (the submit
-  section's label stays for the disabled field). Fixtures gain `idempotencyKey: null`.
+- `JobPresenter.idempotencyKey({ job })` gives the key's text (`null` without a key), and
+  `JobDetailsList`, which builds the Details rows, appends the row `en.job.fields.idempotencyKey`
+  only when that text is not `null`; the row is not added to `useJobFields`, so the transit
+  report's Job card is unchanged. `en.ts` gets the label under the job fields (the submit section's
+  label stays for the disabled field). Fixtures gain `idempotencyKey: null`.
 
 ### D8. Tests and the e2e stack
 - Unit: `ExponentialJitterRetryDelay`, `Sha256JobRequestFingerprint` (key order, offset notation,

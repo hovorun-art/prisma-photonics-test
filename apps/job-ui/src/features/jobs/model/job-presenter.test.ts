@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { describe, expect, it } from 'vitest';
 
 import { jobFixtures, transitJobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
@@ -13,9 +15,10 @@ describe('JobPresenter', () => {
   });
 
   it('Job with a key: the idempotency key text is the key', () => {
-    const job = jobFixtures.build({ idempotencyKey: 'order-4821' });
+    const idempotencyKey = randomUUID();
+    const job = jobFixtures.build({ idempotencyKey });
 
-    expect(presenter.idempotencyKey({ job })).toEqual({ text: 'order-4821' });
+    expect(presenter.idempotencyKey({ job })).toEqual({ text: idempotencyKey });
   });
 
   it('Job without a key: there is no idempotency key text', () => {
