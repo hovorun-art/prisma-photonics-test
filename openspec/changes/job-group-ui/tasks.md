@@ -59,16 +59,16 @@ none
 Owns: `src/features/groups/list/*`, `src/features/groups/hooks/use-groups-page.ts` · Depends on: 1
 · Parallel with: 3
 
-- [ ] 2.1 Write failing `groups-list-page.test.tsx` (MSW) for "Groups in the table", "Finished
+- [x] 2.1 Write failing `groups-list-page.test.tsx` (MSW) for "Groups in the table", "Finished
   group in the table", "Running group in the table" and "Open a group from the list"
-- [ ] 2.2 Implement `useGroupsPage` (polled, keeps the last page, first-load failure to the error
+- [x] 2.2 Implement `useGroupsPage` (polled, keeps the last page, first-load failure to the error
   boundary), `GroupsTable` and `GroupsListPage`; verify 2.1 passes
-- [ ] 2.3 Write failing tests for "First page of groups", "Next page of groups", "Last page of
+- [x] 2.3 Write failing tests for "First page of groups", "Next page of groups", "Last page of
   groups", "Loading groups", "No groups", "Groups list fails to load", "Status change appears in
   the groups list" and "API unreachable while polling groups"
-- [ ] 2.4 Implement paging with the reused `JobsPager`, skeleton rows, "No groups yet", the live
+- [x] 2.4 Implement paging with the reused `JobsPager`, skeleton rows, "No groups yet", the live
   indicator and the error states; verify 2.3 passes
-- [ ] 2.5 Run the `test-case-reviewer` subagent on job-ui component test
+- [x] 2.5 Run the `test-case-reviewer` subagent on job-ui component test
   `groups-list-page.test.tsx`; add the missing cases it reports or note why they belong elsewhere
 
 ## 3. Group page
