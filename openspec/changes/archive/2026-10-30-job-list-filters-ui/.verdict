@@ -1,0 +1,2 @@
+PARTIAL
+- apps/job-ui/src/features/jobs/list/jobs-toolbar.tsx:23-25 defines module-level free functions `capitalized` and `sum`, breaking CLAUDE.md "No free functions" (only React components and hooks are exempt); inline them in JobsToolbar or move them into a class implementing an interface (like IntlStatsFormat)
