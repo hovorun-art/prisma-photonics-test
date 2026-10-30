@@ -50,11 +50,11 @@ Review note (4.3): the reviewer also listed untested branches of `JobExecutionIm
 
 Owns: `tests/system-e2e/jobs.spec.ts`, `DECISIONS.md`, `docs/roadmap/05-reliability.md` · Depends on: 1, 2, 3, 4 · Parallel with: none
 
-- [ ] 5.1 Write the system e2e test "Scheduled job runs after its time" in `tests/system-e2e/jobs.spec.ts` (a job scheduled a few seconds ahead is `scheduled` with zero attempts, then `completed` with `startedAt >= scheduledAt`; also covers "Scheduled job waits"); verify it passes with `npm run test:e2e`
-- [ ] 5.2 Run the `test-case-reviewer` subagent on the system e2e (`tests/system-e2e/jobs.spec.ts`); add the missing cases it reports or note why they belong elsewhere
-- [ ] 5.3 Fill in `DECISIONS.md` section 3 (BullMQ priority with our mapping, FIFO ties, strict priority without ageing, retries keep priority, scheduled jobs as delayed entries vs the rejected promoter, the stuck-`scheduled` risk handed to `crash-recovery`) and update section 1's "FIFO for now" note; verify the text matches `design.md`
-- [ ] 5.4 Add the `priority-scheduling-ui` change (enable "At a specific time" on the submit page, show the scheduled time) to `docs/roadmap/05-reliability.md`, depending on `priority-scheduling`
-- [ ] 5.5 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`) and verify all pass
+- [x] 5.1 Write the system e2e test "Scheduled job runs after its time" in `tests/system-e2e/jobs.spec.ts` (a job scheduled a few seconds ahead is `scheduled` with zero attempts, then `completed` with `startedAt >= scheduledAt`; also covers "Scheduled job waits"); verify it passes with `npm run test:e2e`
+- [x] 5.2 Run the `test-case-reviewer` subagent on the system e2e (`tests/system-e2e/jobs.spec.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 5.3 Fill in `DECISIONS.md` section 3 (BullMQ priority with our mapping, FIFO ties, strict priority without ageing, retries keep priority, scheduled jobs as delayed entries vs the rejected promoter, the stuck-`scheduled` risk handed to `crash-recovery`) and update section 1's "FIFO for now" note; verify the text matches `design.md`
+- [x] 5.4 Add the `priority-scheduling-ui` change (enable "At a specific time" on the submit page, show the scheduled time) to `docs/roadmap/05-reliability.md`, depending on `priority-scheduling`
+- [x] 5.5 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`) and verify all pass
 
 ## Workflow follow-up
 

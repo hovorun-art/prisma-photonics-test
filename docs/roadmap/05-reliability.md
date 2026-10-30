@@ -11,6 +11,7 @@ logged. `DECISIONS.md` sections 1–4 are filled in along the way.
 |---|---|---|
 | `retry-backoff` | Automatic retries with backoff up to the maximum attempts; the error is stored | `webhook-job` |
 | `priority-scheduling` | Higher-priority jobs run first; scheduled jobs start when their time arrives | `email-job-execution` |
+| `priority-scheduling-ui` | job-ui: "At a specific time" on the submit page (date and time in local time) and the scheduled time on the jobs list and job page | `priority-scheduling` |
 | `concurrent-pickup` | Several workers never execute the same job twice | `email-job-execution` |
 | `crash-recovery` | A job held by a worker that dies is recovered and finishes | `concurrent-pickup` |
 | `idempotency` | Submitting with an idempotency key already used returns the existing job | `job-api` |
