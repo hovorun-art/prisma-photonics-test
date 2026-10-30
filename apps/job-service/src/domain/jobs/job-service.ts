@@ -5,7 +5,10 @@ import type { CreateJobRequest, Job, UpdateJobRequest } from '@job-queue/contrac
  * (start, completion, failure with retry or final failure); `delete` only removes finished jobs.
  */
 export interface JobService {
-  /** Stores a new pending job and puts its first attempt on the queue. */
+  /**
+   * Stores a new pending job and puts its first attempt on the queue. Throws
+   * `InvalidJobPayloadError` for a flight transit whose departure day (UTC) is over.
+   */
   create(req: CreateJobServiceRequest): Promise<CreateJobServiceResponse>;
   /** Throws `JobNotFoundError` for an unknown id. */
   get(req: GetJobServiceRequest): Promise<GetJobServiceResponse>;

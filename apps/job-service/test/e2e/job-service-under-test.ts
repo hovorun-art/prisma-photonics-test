@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import {
   ErrorBody,
   FINISHED_JOB_STATUSES,
+  type FlightTransitJobResult,
   INTERNAL_JOBS_ROUTE,
   JOBS_ROUTE,
   Job,
@@ -40,6 +41,60 @@ export const TEST_CONFIG = {
 
 export const AUTHORIZATION = `${SERVICE_TOKEN_SCHEME} ${TEST_CONFIG.serviceToken}`;
 
+const MS_PER_DAY = 86_400_000;
+
+/** A well-formed report of a flight transit job, for the route `LHR` to `JFK`. */
+export const TRANSIT_REPORT: FlightTransitJobResult = {
+  flight: 'BA117',
+  aircraft: { model: 'Boeing 777-300ER', registration: 'G-STBA' },
+  origin: {
+    iata: 'LHR',
+    name: 'Heathrow Airport',
+    city: 'London',
+    timeZone: 'Europe/London',
+    lat: 51.47,
+    lon: -0.4543,
+  },
+  destination: {
+    iata: 'JFK',
+    name: 'John F. Kennedy International Airport',
+    city: 'New York',
+    timeZone: 'America/New_York',
+    lat: 40.6413,
+    lon: -73.7781,
+  },
+  departureAt: '2030-06-15T08:20:00.000Z',
+  arrivalAt: '2030-06-15T16:05:00.000Z',
+  distanceKm: 5555,
+  durationMin: 465,
+  cruiseAltitudeFt: 37_000,
+  path: [
+    [51.47, -0.4543],
+    [52.1, -40.5],
+    [40.6413, -73.7781],
+  ],
+  waypoints: [
+    {
+      name: 'Departure',
+      at: '2030-06-15T08:20:00.000Z',
+      lat: 51.47,
+      lon: -0.4543,
+      altitudeFt: 0,
+      groundSpeedKmh: 0,
+      distanceFlownKm: 0,
+    },
+    {
+      name: 'Arrival',
+      at: '2030-06-15T16:05:00.000Z',
+      lat: 40.6413,
+      lon: -73.7781,
+      altitudeFt: 0,
+      groundSpeedKmh: 0,
+      distanceFlownKm: 5555,
+    },
+  ],
+};
+
 export interface SeedRequest {
   status: JobStatus;
   type?: JobType;
@@ -69,6 +124,18 @@ export interface ConflictRequest {
   /** The job's current status, expected in the error's details. */
   status: JobStatus;
 }
+
+interface TypedFieldsRequest {
+  type: JobType;
+  completed: boolean;
+}
+
+/** Per job type, so `type`, `payload` and `result` stay matched. */
+type TypedFields = Job extends infer J
+  ? J extends Job
+    ? Pick<J, 'type' | 'payload' | 'result'>
+    : never
+  : never;
 
 interface JobServiceUnderTestDeps {
   postgres: StartedPostgreSqlContainer;
@@ -223,6 +290,11 @@ export class JobServiceUnderTest implements Closable {
     expect(body.details).toMatchObject({ status });
   }
 
+  /** The UTC date `days` days from now (negative for the past), as a flight transit's `departureDate`. */
+  utcDate(days: number): string {
+    return new Date(Date.now() + days * MS_PER_DAY).toISOString().slice(0, 10);
+  }
+
   // --- Data in states no route can create in one step ------------------------------------------
 
   /** Stores a job in the given state through the app's own repository. */
@@ -231,18 +303,7 @@ export class JobServiceUnderTest implements Closable {
     const finished = (FINISHED_JOB_STATUSES as readonly JobStatus[]).includes(status);
     const completed = status === 'completed';
     const notStarted = status === 'pending' || status === 'scheduled';
-    const typed =
-      options.type === 'webhook'
-        ? {
-            type: 'webhook' as const,
-            payload: { method: 'POST' as const, url: 'https://hooks.example.com/seeded' },
-            result: completed ? { statusCode: 200, responseBody: { seeded: true } } : null,
-          }
-        : {
-            type: 'email' as const,
-            payload: { to: 'ada@example.com', subject: 'Seeded', body: 'Hi' },
-            result: completed ? { messageId: 'seeded-message' } : null,
-          };
+    const typed = this.typedFields({ type: options.type ?? 'email', completed });
     const { job } = await this.app.get<JobRepository>(JOB_REPOSITORY).create({
       job: {
         ...typed,
@@ -257,6 +318,30 @@ export class JobServiceUnderTest implements Closable {
       },
     });
     return job;
+  }
+
+  /** The type, a valid payload and (when completed) a valid result of a seeded job. */
+  private typedFields({ type, completed }: TypedFieldsRequest): TypedFields {
+    switch (type) {
+      case 'webhook':
+        return {
+          type,
+          payload: { method: 'POST', url: 'https://hooks.example.com/seeded' },
+          result: completed ? { statusCode: 200, responseBody: { seeded: true } } : null,
+        };
+      case 'flight-transit':
+        return {
+          type,
+          payload: { origin: 'LHR', destination: 'JFK', departureDate: this.utcDate(1) },
+          result: completed ? TRANSIT_REPORT : null,
+        };
+      case 'email':
+        return {
+          type,
+          payload: { to: 'ada@example.com', subject: 'Seeded', body: 'Hi' },
+          result: completed ? { messageId: 'seeded-message' } : null,
+        };
+    }
   }
 
   private authorized(authorization: string | null = AUTHORIZATION): Record<string, string> {

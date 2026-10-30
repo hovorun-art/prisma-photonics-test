@@ -53,6 +53,9 @@ export class JobPresenter implements JobPresentation {
         return job.status === 'completed'
           ? { text: job.result ? en.details.webhookCompleted(job.result.statusCode) : '' }
           : { text: en.details.webhookWaiting(job.payload.method, job.payload.url) };
+      case 'flight-transit':
+        // Nothing transit-specific in the list yet; the transit map change shows the report.
+        return { text: '' };
     }
   }
 

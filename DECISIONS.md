@@ -286,6 +286,36 @@ job attempt, not an answer of our API, so it lives with the job failure codes of
 (`WEBHOOK_JOB_ERROR_CODES` next to `JOB_ERROR_CODES`). *Trade-off:* two failure paths in the worker,
 one for returned and one for thrown failures; both end in the same `failed` report.
 
+**Flight transit: a bundled airport list in the contracts.** A transit job names two airports from
+a static list of 56 major hubs on every inhabited continent (`AIRPORTS` in `packages/contracts`,
+with IATA code, name, city, country, coordinates and IANA time zone). The payload schema accepts
+only those codes (`z.enum`), so `lhr`, `LH` and `XXX` all answer 400 on the field, and OpenAPI
+lists the allowed codes. *Why:* the task forbids an external API, and one typed constant serves
+job-service's validation, the later report generator and the UI's airport pickers alike. *Why not a
+JSON file loaded at runtime:* it would need a loader in the browser and would lose the literal
+union of codes. *Trade-off:* adding an airport means a release of the contracts, and a 56-value
+enum makes the OpenAPI document and the error message long.
+
+**Flight transit: the departure-day rule runs in job-service, in UTC.** A transit job is accepted
+while its `departureDate` (UTC) is not over at job-service's time: today passes, yesterday answers
+400 on `payload.departureDate`. The shared schema only checks the form (`YYYY-MM-DD`, a real
+calendar date); `JobServiceImpl.create` checks the day against the injected `Clock` and throws
+`InvalidJobPayloadError` (`VALIDATION_FAILED`, so the API answer looks like any schema failure).
+*Why not a Zod refine reading the time:* the contracts are shared by the browser and stay free of
+time, and a schema that reads `new Date()` cannot be tested deterministically. *Trade-off:* a client
+late in its local evening may already be on the next UTC day (or still on the previous one), so
+"today" is UTC's, not the user's.
+
+**Flight transit: job-service checks the report's shape, not its content.** A completed transit
+job's report must match `FlightTransitJobResult` (coordinates in range, no negative numbers, at
+least two path points and two waypoints), but job-service does not check that it names the
+payload's airports or date. *Why:* as for webhook, job-service owns state and shape; the worker owns
+the content it generates. *Trade-off:* a buggy generator could store a report for the wrong route;
+its own tests guard that. The type was added before its handler (`flight-transit-job-execution`),
+so until then a queued transit job fails as `UNSUPPORTED_JOB_TYPE` after its attempts. Postgres
+stores the type as `flight-transit`; Prisma names the enum value `flight_transit` (no `-` allowed),
+so the repository maps between the two.
+
 ---
 
 ## 1. Job Pickup Strategy

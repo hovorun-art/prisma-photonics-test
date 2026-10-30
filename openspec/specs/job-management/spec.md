@@ -3,7 +3,7 @@
 ## Purpose
 Lets API clients submit background jobs, read and query them and delete finished ones, with
 predictable answers for every normal and error case. Each job type's payload and result are defined
-in its own spec (`email-job`, `webhook-job`).
+in its own spec (`email-job`, `webhook-job`, `flight-transit-job`).
 
 ## Requirements
 

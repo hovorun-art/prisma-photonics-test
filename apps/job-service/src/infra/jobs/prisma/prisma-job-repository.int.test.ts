@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto';
 
 import { fileURLToPath } from 'node:url';
 
-import { FINISHED_JOB_STATUSES, type Job, type WebhookJobPayload } from '@job-queue/contracts';
+import {
+  FINISHED_JOB_STATUSES,
+  type FlightTransitJobPayload,
+  type Job,
+  type WebhookJobPayload,
+} from '@job-queue/contracts';
 import { CONTAINER_IMAGES, PrismaMigrateDeploy } from '@job-queue/test-support';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -112,6 +117,26 @@ describe('PrismaJobRepository against Postgres', () => {
       expect(stored).toMatchObject({ type: 'webhook', payload });
       expect((await repository.get({ id: stored.id })).job).toEqual(stored);
     }
+  });
+
+  it('creates a flight transit job, gets it back unchanged and lists it next to an email job', async () => {
+    const email = await store();
+    const payload: FlightTransitJobPayload = {
+      origin: 'LHR',
+      destination: 'JFK',
+      departureDate: '2030-06-15',
+    };
+
+    const { job: transit } = await repository.create({
+      job: { ...newJob(), type: 'flight-transit', payload, result: null },
+    });
+
+    expect(transit).toMatchObject({ type: 'flight-transit', payload });
+    expect((await repository.get({ id: transit.id })).job).toEqual(transit);
+    const page = await repository.query({ limit: 10, offset: 0 });
+    expect(page.items.map((job) => job.type).sort()).toEqual(['email', 'flight-transit']);
+    expect(page.items).toContainEqual(transit);
+    expect(page.items).toContainEqual(email);
   });
 
   it('throws JobNotFoundError when getting an unknown id', async () => {

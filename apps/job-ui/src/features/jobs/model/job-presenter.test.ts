@@ -1,3 +1,4 @@
+import type { FlightTransitJob, JobStatus } from '@job-queue/contracts';
 import { describe, expect, it } from 'vitest';
 
 import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
@@ -6,6 +7,14 @@ import { JobPresenter } from './job-presenter';
 const presenter = new JobPresenter({ shortIdLength: 8 });
 
 describe('JobPresenter', () => {
+  /** A flight transit job; job-ui has no transit fixtures yet, since it shows nothing transit-specific. */
+  const transitJob = (status: JobStatus): FlightTransitJob => ({
+    ...jobFixtures.build({ status }),
+    type: 'flight-transit',
+    payload: { origin: 'LHR', destination: 'JFK', departureDate: '2030-06-15' },
+    result: null,
+  });
+
   it('shortId: the first characters of the id', () => {
     expect(presenter.shortId({ id: '7f3a9c21-4b5d-4e6f-8a7b-9c0d1e2f3a4b' })).toEqual({
       text: '7f3a9c21',
@@ -67,6 +76,71 @@ describe('JobPresenter', () => {
     expect(presenter.details({ job }).text).toBe(
       'Webhook POST https://hooks.example.com/orders answered 503',
     );
+  });
+
+  it.each(['scheduled', 'pending', 'processing'] as const)(
+    'a %s flight transit job has empty Details',
+    (status) => {
+      expect(presenter.details({ job: transitJob(status) }).text).toBe('');
+    },
+  );
+
+  it('a completed flight transit job has empty Details, report and all', () => {
+    const lhr = {
+      iata: 'LHR',
+      name: 'Heathrow Airport',
+      city: 'London',
+      timeZone: 'Europe/London',
+      lat: 51.47,
+      lon: -0.4543,
+    };
+    const jfk = {
+      iata: 'JFK',
+      name: 'John F. Kennedy International Airport',
+      city: 'New York',
+      timeZone: 'America/New_York',
+      lat: 40.6413,
+      lon: -73.7781,
+    };
+    const waypoint = {
+      at: '2030-06-15T08:20:00.000Z',
+      altitudeFt: 0,
+      groundSpeedKmh: 0,
+      distanceFlownKm: 0,
+    };
+    const job: FlightTransitJob = {
+      ...transitJob('completed'),
+      result: {
+        flight: 'BA117',
+        aircraft: { model: 'Boeing 777-300ER', registration: 'G-STBA' },
+        origin: lhr,
+        destination: jfk,
+        departureAt: '2030-06-15T08:20:00.000Z',
+        arrivalAt: '2030-06-15T16:05:00.000Z',
+        distanceKm: 5555,
+        durationMin: 465,
+        cruiseAltitudeFt: 37_000,
+        path: [
+          [lhr.lat, lhr.lon],
+          [jfk.lat, jfk.lon],
+        ],
+        waypoints: [
+          { ...waypoint, name: 'Departure', lat: lhr.lat, lon: lhr.lon },
+          { ...waypoint, name: 'Arrival', lat: jfk.lat, lon: jfk.lon },
+        ],
+      },
+    };
+
+    expect(presenter.details({ job }).text).toBe('');
+  });
+
+  it('a failed flight transit job shows its error message, like any failed job', () => {
+    const job: FlightTransitJob = {
+      ...transitJob('failed'),
+      error: { code: 'TRANSIT_GENERATION_FAILED', message: 'No route between the airports' },
+    };
+
+    expect(presenter.details({ job }).text).toBe('No route between the airports');
   });
 
   it('listTime: local time of day', () => {

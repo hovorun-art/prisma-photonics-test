@@ -357,6 +357,10 @@ artifacts:
       - Test first: in each group, the task that writes the failing test for a
         scenario comes before the task that implements it, and names the
         scenario.
+      - Test review: every group that writes or changes tests ends with a
+        task "Run the `test-case-reviewer` subagent on <its test areas>; add
+        the missing cases it reports or note why they belong elsewhere",
+        naming each test area (app and level, or file) the group touched.
       - End with an integration group that is not parallel and runs the full
         checks (CHECK_CMDS in .claude/flow.conf).
     requires:
@@ -369,6 +373,10 @@ apply:
   instruction: |
     Read context files, work through pending tasks, mark complete as you go.
     Work on the change's own branch, never on the main branch. Test first:
-    write the scenario's test, see it fail, then implement. Pause if you hit
+    write the scenario's test, see it fail, then implement. When a group's
+    tests are written, run the `test-case-reviewer` subagent on each test area
+    it touched (give it only the area, not your reasoning) and act on its
+    report before the group counts as done, even if tasks.md has no review
+    task for it. Pause if you hit
     blockers or need clarification; a new behaviour question goes into
     decisions.md and to the user, never into the code as an assumption.

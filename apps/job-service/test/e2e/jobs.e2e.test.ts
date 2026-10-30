@@ -253,6 +253,96 @@ describe('job-service public job routes', () => {
     });
   });
 
+  describe('submit a flight transit job', () => {
+    const transitJob = (payload: Record<string, unknown> = {}): Record<string, unknown> => ({
+      type: 'flight-transit',
+      payload: {
+        origin: 'LHR',
+        destination: 'JFK',
+        departureDate: service.utcDate(1),
+        ...payload,
+      },
+    });
+
+    /** A submission rejected with exactly these issue paths, after which nothing is stored or queued. */
+    const expectOnlyIssues = async (body: unknown, paths: unknown[][]): Promise<void> => {
+      expect(await service.issuePaths(await service.submit(body))).toEqual(paths);
+      expect(await service.total()).toBe(0);
+      expect(service.queue.enqueue).not.toHaveBeenCalled();
+    };
+
+    it('Valid flight transit job is accepted', async () => {
+      const body = transitJob();
+      service.queue.enqueue.mockResolvedValueOnce({});
+
+      const response = await service.submit(body);
+
+      expect(response.status).toBe(201);
+      const job = Job.parse(await response.json());
+      expect(job).toMatchObject({
+        type: 'flight-transit',
+        status: 'pending',
+        attempts: 0,
+        priority: JOB_LIMITS.priority.default,
+        maxAttempts: JOB_LIMITS.maxAttempts.default,
+        payload: body.payload,
+        result: null,
+        error: null,
+      });
+      expect(service.queue.enqueue).toHaveBeenCalledExactlyOnceWith({ jobId: job.id, attempt: 1 });
+    });
+
+    it('Flight transit job is read and listed like any job', async () => {
+      const email = await service.submitted(EMAIL_JOB);
+      const webhook = await service.submitted(WEBHOOK_JOB);
+      const transit = await service.submitted(transitJob());
+
+      const read = Job.parse(await (await service.get(transit.id)).json());
+      const page = QueryJobsResponse.parse(await (await fetch(service.url(JOBS_ROUTE))).json());
+
+      expect(read).toEqual(transit);
+      expect(page.items).toEqual([transit, webhook, email]);
+    });
+
+    it('Unknown airport code', async () => {
+      await expectOnlyIssues(transitJob({ origin: 'XXX' }), [['payload', 'origin']]);
+    });
+
+    it('Same airport twice', async () => {
+      await expectOnlyIssues(transitJob({ destination: 'LHR' }), [['payload', 'destination']]);
+    });
+
+    it('Departure yesterday is rejected', async () => {
+      await expectOnlyIssues(transitJob({ departureDate: service.utcDate(-1) }), [
+        ['payload', 'departureDate'],
+      ]);
+    });
+
+    it('Missing payload fields', async () => {
+      await expectOnlyIssues({ type: 'flight-transit', payload: {} }, [
+        ['payload', 'origin'],
+        ['payload', 'destination'],
+        ['payload', 'departureDate'],
+      ]);
+    });
+
+    it('Lower-case airport code', async () => {
+      await expectOnlyIssues(transitJob({ destination: 'jfk' }), [['payload', 'destination']]);
+    });
+
+    it('Airport code of the wrong form', async () => {
+      for (const origin of ['LH', 'LHRX']) {
+        await expectOnlyIssues(transitJob({ origin }), [['payload', 'origin']]);
+      }
+    });
+
+    it('Departure date is not a calendar date', async () => {
+      for (const departureDate of ['2026-02-30', '30/10/2026', '2030-06-15T08:00:00.000Z']) {
+        await expectOnlyIssues(transitJob({ departureDate }), [['payload', 'departureDate']]);
+      }
+    });
+  });
+
   describe('get', () => {
     it('Existing job', async () => {
       const job = await service.seed({ status: 'completed' });

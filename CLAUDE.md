@@ -85,7 +85,9 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
 - After writing or changing tests, run the `test-case-reviewer` subagent in the foreground on that
   area. Give it only the app and test level (or the file), not your own reasoning, so it judges the
   cases independently. Add the missing corner cases it reports, or tell the user why a case does
-  not belong to that area.
+  not belong to that area. This covers every area with test changes (shared packages, each app,
+  each level), not only the main one; `tasks.md` gives each group that writes tests a review task,
+  and `/apply` runs the review even when that task is missing.
 - With `TDD_STRICT=1` in `.claude/flow.conf`, a hook blocks edits to source files until a test file
   has changed on the branch.
 

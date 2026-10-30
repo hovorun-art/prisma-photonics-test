@@ -1,4 +1,5 @@
 import {
+  type CreateJobRequest,
   FINISHED_JOB_STATUSES,
   JOB_RESULT_SCHEMAS,
   type Job,
@@ -8,6 +9,7 @@ import {
 import { type Clock, JobStatusConflictError } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 
+import { InvalidJobPayloadError } from '../../domain/jobs/errors/invalid-job-payload.error.js';
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
 import { QueryLimitExceededError } from '../../domain/jobs/errors/query-limit-exceeded.error.js';
 import type { JobQueue } from '../../domain/jobs/job-queue.js';
@@ -25,6 +27,9 @@ import type {
   UpdateJobServiceRequest,
   UpdateJobServiceResponse,
 } from '../../domain/jobs/job-service.js';
+
+/** Length of the date part (`YYYY-MM-DD`) of an ISO timestamp. */
+const ISO_DATE_LENGTH = 10;
 
 export interface JobServiceImplDeps {
   repository: JobRepository;
@@ -74,6 +79,7 @@ export class JobServiceImpl implements JobService {
   ) {}
 
   async create(req: CreateJobServiceRequest): Promise<CreateJobServiceResponse> {
+    this.requireDepartureDayNotOver(req.job);
     const { job } = await this.d.repository.create({
       job: {
         ...req.job,
@@ -152,6 +158,24 @@ export class JobServiceImpl implements JobService {
     return current.attempts < current.maxAttempts
       ? { status: 'pending', error, completedAt: null }
       : { status: 'failed', error, completedAt: now };
+  }
+
+  /** A flight transit may be submitted until its departure day (in UTC) is over at job-service's time. */
+  private requireDepartureDayNotOver(job: CreateJobRequest): void {
+    if (job.type !== 'flight-transit') return;
+    const today = this.now().slice(0, ISO_DATE_LENGTH);
+    // ISO dates (YYYY-MM-DD) order the same as strings.
+    if (job.payload.departureDate < today) {
+      throw new InvalidJobPayloadError({
+        issues: [
+          {
+            code: 'custom',
+            path: ['departureDate'],
+            message: `The departure day is over: ${job.payload.departureDate} is before ${today} (UTC)`,
+          },
+        ],
+      });
+    }
   }
 
   private requireStatus({ current, status }: RequireStatusRequest): void {
