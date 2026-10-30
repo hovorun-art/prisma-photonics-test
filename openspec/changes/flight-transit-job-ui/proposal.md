@@ -44,3 +44,5 @@ submit a transit job from the UI and read its report, route included, there.
   `FlightTransitJobResult`, `AIRPORTS`); no API change.
 - `docs/roadmap/03-all-job-types.md`: `flight-transit-map` is replaced by this change.
 - `DECISIONS.md`: the combobox library choice with its numbers.
+- `packages/kernel` and `apps/job-service`: the "departure day not over in UTC" rule moves into one
+  shared kernel class used by job-service and job-ui (decided during apply); no behaviour change.

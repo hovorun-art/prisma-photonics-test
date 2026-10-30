@@ -6,7 +6,12 @@ import {
   type JobError,
   type JobStatus,
 } from '@job-queue/contracts';
-import { type Clock, JobStatusConflictError } from '@job-queue/kernel';
+import {
+  type Clock,
+  type DepartureDay,
+  JobStatusConflictError,
+  UtcDepartureDay,
+} from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 
 import { InvalidJobPayloadError } from '../../domain/jobs/errors/invalid-job-payload.error.js';
@@ -27,9 +32,6 @@ import type {
   UpdateJobServiceRequest,
   UpdateJobServiceResponse,
 } from '../../domain/jobs/job-service.js';
-
-/** Length of the date part (`YYYY-MM-DD`) of an ISO timestamp. */
-const ISO_DATE_LENGTH = 10;
 
 export interface JobServiceImplDeps {
   repository: JobRepository;
@@ -73,10 +75,15 @@ interface EnqueueRequest {
  * job for good. Queueing problems never fail a request: the job stays pending and is logged.
  */
 export class JobServiceImpl implements JobService {
+  /** The UTC day rule job-ui's form applies too, shared through the kernel. */
+  private readonly departureDay: DepartureDay;
+
   constructor(
     private readonly d: JobServiceImplDeps,
     private readonly p: JobServiceImplParams,
-  ) {}
+  ) {
+    this.departureDay = new UtcDepartureDay({ clock: d.clock });
+  }
 
   async create(req: CreateJobServiceRequest): Promise<CreateJobServiceResponse> {
     this.requireDepartureDayNotOver(req.job);
@@ -163,9 +170,8 @@ export class JobServiceImpl implements JobService {
   /** A flight transit may be submitted until its departure day (in UTC) is over at job-service's time. */
   private requireDepartureDayNotOver(job: CreateJobRequest): void {
     if (job.type !== 'flight-transit') return;
-    const today = this.now().slice(0, ISO_DATE_LENGTH);
-    // ISO dates (YYYY-MM-DD) order the same as strings.
-    if (job.payload.departureDate < today) {
+    const { today, over } = this.departureDay.check({ departureDate: job.payload.departureDate });
+    if (over) {
       throw new InvalidJobPayloadError({
         issues: [
           {

@@ -29,6 +29,8 @@
 - The report page refreshes by the same polling as the job page, and the "Job not found", loading and error states are those of the job page (user confirmed assumption)
 - The roadmap's `flight-transit-map` row is replaced by `flight-transit-job-ui`, depending on `flight-transit-job` and `job-ui-crud`; `flight-transit-job-execution` stays a separate change (user confirmed assumption)
 - Tests: unit tests for the presenter and form schema, component tests (Vitest + Testing Library) for the form, combobox, Details cell and report page, and a job-ui Playwright test of the report with its map against a mocked API; no system e2e until the worker generates reports (user confirmed assumption)
+- The "departure day is not over in UTC" rule lives once, in `packages/kernel` (an interface and a tested class taking the `Clock`); job-service and job-ui's transit form both use it and keep their own error messages; this touches job-service beyond the planned job-ui-only scope (user, during apply after the change-verifier found the duplicate)
+- `master` (which now includes `flight-transit-job-execution`) is merged into this branch, and the proposal's and decisions' lines that transit jobs cannot complete yet are corrected; no system e2e is added in this change (user, during apply)
 
 ## Assumed
 

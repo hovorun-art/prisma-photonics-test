@@ -23,6 +23,14 @@ export {
   type SleepSleeperResponse,
   type Sleeper,
 } from './domain/sleeper.js';
+export type {
+  CalendarDate,
+  CheckDepartureDayRequest,
+  CheckDepartureDayResponse,
+  DepartureDay,
+  TodayDepartureDayResponse,
+} from './domain/jobs/departure-day.js';
+export { UtcDepartureDay, type UtcDepartureDayDeps } from './infra/utc-departure-day.js';
 export { SystemClock } from './infra/system-clock.js';
 export { UniformRandom } from './infra/uniform-random.js';
 export { SystemRandom } from './infra/system-random.js';

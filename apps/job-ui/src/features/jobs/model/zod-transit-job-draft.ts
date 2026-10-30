@@ -1,5 +1,5 @@
 import { CreateFlightTransitJobRequest } from '@job-queue/contracts';
-import type { Clock } from '@job-queue/kernel';
+import { type Clock, type DepartureDay, UtcDepartureDay } from '@job-queue/kernel';
 import { z } from 'zod';
 
 import { en } from '@/locales';
@@ -28,9 +28,6 @@ export interface ZodTransitJobDraftDeps {
   readonly clock: Clock;
 }
 
-/** Length of an ISO calendar date, `YYYY-MM-DD`. */
-const ISO_DATE_LENGTH = 10;
-
 /**
  * The flight transit job's submit form for the shared Zod schemas, with the strings from
  * `locales/en.ts`. Like job-service, it accepts a departure day while that day is not over in UTC.
@@ -43,7 +40,12 @@ export class ZodTransitJobDraft implements JobFormDraft<TransitFormValues, Trans
   private readonly withDate = z.object({ payload: z.object({ departureDate: z.iso.date() }) });
   private readonly form = this.formSchema();
 
-  constructor(private readonly d: ZodTransitJobDraftDeps) {}
+  /** The UTC day rule job-service applies, shared through the kernel. */
+  private readonly departureDay: DepartureDay;
+
+  constructor(d: ZodTransitJobDraftDeps) {
+    this.departureDay = new UtcDepartureDay({ clock: d.clock });
+  }
 
   emptyValues({
     execution,
@@ -110,8 +112,10 @@ export class ZodTransitJobDraft implements JobFormDraft<TransitFormValues, Trans
     // user sees every invalid field at once.
     return CreateFlightTransitJobRequest.superRefine(
       (request, ctx) => {
-        const today = this.today();
-        if (request.payload.departureDate < today) {
+        const { today, over } = this.departureDay.check({
+          departureDate: request.payload.departureDate,
+        });
+        if (over) {
           ctx.addIssue({
             code: 'custom',
             path: ['payload', 'departureDate'],
@@ -130,6 +134,6 @@ export class ZodTransitJobDraft implements JobFormDraft<TransitFormValues, Trans
 
   /** Today's calendar date in UTC, `YYYY-MM-DD`. */
   private today(): string {
-    return this.d.clock.now().now.toISOString().slice(0, ISO_DATE_LENGTH);
+    return this.departureDay.today().today;
   }
 }
