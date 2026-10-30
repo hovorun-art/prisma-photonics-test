@@ -35,9 +35,9 @@ Owns: `apps/job-group-service/package.json`, `apps/job-group-service/tsconfig*.j
 
 Owns: `apps/job-group-service/src/infra/groups/prisma/**` · Depends on: 2 · Parallel with: 4, 5
 
-- [ ] 3.1 Write failing integration tests in `prisma-job-group-repository.int.test.ts`: `create` stores a running group with zero stats and null `checkedAt`/`finishedAt`; `get` returns it and nothing for an unknown id; `query` pages newest first with a stable order for equal `createdAt` and counts all; `delete` removes it and reports whether a row existed; `listRunning` returns only running groups ordered by id, limited to the page size, after the given id; `recordCheck` keeps the larger of the stored and the given `total`, writes the stats, status, `checkedAt` and `finishedAt`, and changes nothing for a deleted or already finished group; see them fail
-- [ ] 3.2 Implement `PrismaJobGroupRepository` (`recordCheck` as one conditional `UPDATE ... WHERE status = 'running'` with `GREATEST`); verify 3.1 passes
-- [ ] 3.3 Run the `test-case-reviewer` subagent on job-group-service integration tests (`src/infra/groups/prisma/prisma-job-group-repository.int.test.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 3.1 Write failing integration tests in `prisma-job-group-repository.int.test.ts`: `create` stores a running group with zero stats and null `checkedAt`/`finishedAt`; `get` returns it and nothing for an unknown id; `query` pages newest first with a stable order for equal `createdAt` and counts all; `delete` removes it and reports whether a row existed; `listRunning` returns only running groups ordered by id, limited to the page size, after the given id; `recordCheck` keeps the larger of the stored and the given `total`, writes the stats, status, `checkedAt` and `finishedAt`, and changes nothing for a deleted or already finished group; see them fail
+- [x] 3.2 Implement `PrismaJobGroupRepository` (`recordCheck` as one conditional `UPDATE ... WHERE status = 'running'` with `GREATEST`); verify 3.1 passes
+- [x] 3.3 Run the `test-case-reviewer` subagent on job-group-service integration tests (`src/infra/groups/prisma/prisma-job-group-repository.int.test.ts`); add the missing cases it reports or note why they belong elsewhere
 
 ## 4. Child-jobs adapter
 
