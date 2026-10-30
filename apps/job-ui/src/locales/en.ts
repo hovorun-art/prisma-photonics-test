@@ -60,9 +60,10 @@ export const en = {
     typeFilters: {
       email: 'Email',
       webhook: 'Webhook',
-      transit: 'Aircraft transit',
-      batch: 'Batch',
+      'flight-transit': 'Aircraft transit',
     },
+    noMatchTitle: 'No jobs match these filters',
+    clearFilters: 'Clear filters',
     searchLabel: 'Search by job ID or idempotency key',
     searchPlaceholder: 'Job ID or idempotency key',
     tableLabel: 'Jobs',

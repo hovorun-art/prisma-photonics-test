@@ -12,10 +12,10 @@ contracts workspace only.
 
 Owns: `packages/contracts/src/jobs/queue-stats.ts`, `packages/contracts/src/jobs/queue-stats.test.ts`, `packages/contracts/src/jobs/index.ts`, `apps/job-ui/src/locales/en.ts` · Depends on: none · Parallel with: none
 
-- [ ] 1.1 Write failing tests in `queue-stats.test.ts`: `QueryStatsRequest` accepts no parameters, one known `status`, one known `type` and both; rejects an unknown status, an unknown type, an empty value and an array of two values, each with an issue on that field. `QueueStats` with `counts` parses; a missing status or type key in `counts`, a negative and a non-integer count are rejected. Run `npm run test:unit -w packages/contracts` and see them fail
-- [ ] 1.2 Add `QueryStatsRequest` and the `counts` part of `QueueStats` (design "Contract"), export them from `jobs/index.ts`; verify 1.1 passes and `npm run typecheck -w packages/contracts` passes
-- [ ] 1.3 In `en.ts` add `list.noMatchTitle` ("No jobs match these filters") and `list.clearFilters` ("Clear filters"); change `list.typeFilters` to the keys `email`, `webhook`, `flight-transit` ("Aircraft transit") and drop `batch`; verify `npm run typecheck -w apps/job-ui` reports no error from `en.ts` itself
-- [ ] 1.4 Run the `test-case-reviewer` subagent on `packages/contracts` unit tests (`src/jobs/queue-stats.test.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 1.1 Write failing tests in `queue-stats.test.ts`: `QueryStatsRequest` accepts no parameters, one known `status`, one known `type` and both; rejects an unknown status, an unknown type, an empty value and an array of two values, each with an issue on that field. `QueueStats` with `counts` parses; a missing status or type key in `counts`, a negative and a non-integer count are rejected. Run `npm run test:unit -w packages/contracts` and see them fail
+- [x] 1.2 Add `QueryStatsRequest` and the `counts` part of `QueueStats` (design "Contract"), export them from `jobs/index.ts`; verify 1.1 passes and `npm run typecheck -w packages/contracts` passes
+- [x] 1.3 In `en.ts` add `list.noMatchTitle` ("No jobs match these filters") and `list.clearFilters` ("Clear filters"); change `list.typeFilters` to the keys `email`, `webhook`, `flight-transit` ("Aircraft transit") and drop `batch`; verify `npm run typecheck -w apps/job-ui` reports no error from `en.ts` itself
+- [x] 1.4 Run the `test-case-reviewer` subagent on `packages/contracts` unit tests (`src/jobs/queue-stats.test.ts`); add the missing cases it reports or note why they belong elsewhere
 
 ## 2. Faceted counts in job-service
 
