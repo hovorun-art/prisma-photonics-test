@@ -1,5 +1,5 @@
 import { EMAIL_LIMITS, JOB_LIMITS } from '@job-queue/contracts';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
@@ -786,6 +786,214 @@ describe('SubmitJobPage', () => {
       expect(response).toHaveTextContent(en.submit.example);
       expect(response).toHaveTextContent('"type": "flight-transit"');
       expect(response).toHaveTextContent('"status": "pending"');
+    });
+  });
+
+  describe('run choice', () => {
+    /** Tests run in UTC (test-setup), so the local time typed is also the UTC time sent. */
+    const NOW = new Date('2026-10-30T12:00:00.000Z');
+    const LOCAL_TIME = '2026-10-31T09:30';
+    const SENT_TIME = '2026-10-31T09:30:00.000Z';
+
+    beforeEach(() => {
+      // Only Date: user-event's own timers keep running.
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(NOW);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    /** Chooses "At a specific time" and enters the time as the `datetime-local` input holds it. */
+    async function scheduleAt(user: ReturnType<typeof userEvent.setup>, value: string) {
+      await user.click(screen.getByRole('button', { name: en.submit.runLater }));
+      fireEvent.change(screen.getByLabelText(en.submit.scheduledAt), { target: { value } });
+    }
+
+    it('Immediately at first: "Immediately" is selected, no time input, no scheduledAt in the preview', () => {
+      renderSubmit();
+
+      expect(screen.getByRole('button', { name: en.submit.runNow })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByRole('button', { name: en.submit.runLater })).toHaveAttribute(
+        'aria-pressed',
+        'false',
+      );
+      expect(screen.queryByLabelText(en.submit.scheduledAt)).toBeNull();
+      expect(screen.getByRole('region', { name: en.submit.request })).not.toHaveTextContent(
+        'scheduledAt',
+      );
+    });
+
+    it("Choose a specific time: a date and time input shows, with a hint naming the browser's time zone", async () => {
+      const user = userEvent.setup();
+      renderSubmit();
+
+      await user.click(screen.getByRole('button', { name: en.submit.runLater }));
+
+      expect(screen.getByRole('button', { name: en.submit.runLater })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      const input = screen.getByLabelText(en.submit.scheduledAt);
+      expect(input).toHaveAttribute('type', 'datetime-local');
+      expect(input).toHaveAccessibleDescription(en.submit.scheduleHint('UTC'));
+    });
+
+    it('Run choice is enabled: both choices can be chosen and show no "Coming soon"', async () => {
+      const user = userEvent.setup();
+      renderSubmit();
+
+      expect(screen.getByRole('button', { name: en.submit.runNow })).toBeEnabled();
+      expect(screen.getByRole('button', { name: en.submit.runLater })).toBeEnabled();
+      await user.hover(screen.getByRole('button', { name: en.submit.runLater }));
+      expect(screen.queryByRole('tooltip')).toBeNull();
+    });
+
+    it('Submit a scheduled job: the local time is sent as scheduledAt in UTC and the job page opens', async () => {
+      const user = userEvent.setup();
+      const created = jobFixtures.build();
+      answerCreate(() => HttpResponse.json(created, { status: 201 }));
+      renderSubmit();
+
+      await fillEmail(user);
+      await scheduleAt(user, LOCAL_TIME);
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      expect(await screen.findByRole('status', { name: 'current path' })).toHaveTextContent(
+        `/jobs/${created.id}`,
+      );
+      expect(posted).toEqual([
+        {
+          type: 'email',
+          payload: { to: 'ops@acme.test', subject: 'Weekly digest', body: 'Hi team' },
+          priority: JOB_LIMITS.priority.default,
+          maxAttempts: JOB_LIMITS.maxAttempts.default,
+          scheduledAt: SENT_TIME,
+        },
+      ]);
+    });
+
+    it('Back to immediately: a time entered before choosing "Immediately" is not sent', async () => {
+      const user = userEvent.setup();
+      answerCreate(() => HttpResponse.json(jobFixtures.build(), { status: 201 }));
+      renderSubmit();
+
+      await fillEmail(user);
+      await scheduleAt(user, LOCAL_TIME);
+      await user.click(screen.getByRole('button', { name: en.submit.runNow }));
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      await expect.poll(() => posted.length).toBe(1);
+      expect(posted[0]).not.toHaveProperty('scheduledAt');
+      expect(screen.queryByLabelText(en.submit.scheduledAt)).toBeNull();
+    });
+
+    it.each([
+      ['No time entered', '', en.submit.errors.scheduleRequired],
+      ['Time in the past', '2026-10-30T11:59', en.submit.errors.schedulePast],
+      [
+        'Time too far ahead',
+        '2026-11-29T12:01',
+        en.submit.errors.scheduleTooFar(JOB_LIMITS.scheduledAt.maxAheadDays),
+      ],
+    ])('%s: the time input shows its error and nothing is sent', async (_name, value, message) => {
+      const user = userEvent.setup();
+      renderSubmit();
+
+      await fillEmail(user);
+      await scheduleAt(user, value);
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      const input = screen.getByLabelText(en.submit.scheduledAt);
+      await expect.poll(() => input.getAttribute('aria-invalid')).toBe('true');
+      expect(input).toHaveAccessibleDescription(message);
+      expect(posted).toEqual([]);
+    });
+
+    it('a time that has passed since it was entered is rejected on submit', async () => {
+      const user = userEvent.setup();
+      renderSubmit();
+
+      await fillEmail(user);
+      await scheduleAt(user, '2026-10-30T12:02');
+      vi.setSystemTime(new Date('2026-10-30T12:03:00.000Z'));
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      const input = screen.getByLabelText(en.submit.scheduledAt);
+      await expect.poll(() => input.getAttribute('aria-invalid')).toBe('true');
+      expect(input).toHaveAccessibleDescription(en.submit.errors.schedulePast);
+      expect(posted).toEqual([]);
+    });
+
+    it('a missing time and a missing subject are shown together', async () => {
+      const user = userEvent.setup();
+      renderSubmit();
+
+      await user.type(screen.getByLabelText(en.submit.to), 'ops@acme.test');
+      await scheduleAt(user, '');
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      const input = screen.getByLabelText(en.submit.scheduledAt);
+      await expect.poll(() => input.getAttribute('aria-invalid')).toBe('true');
+      expect(screen.getByLabelText(en.submit.subject)).toHaveAttribute('aria-invalid', 'true');
+      expect(posted).toEqual([]);
+    });
+
+    it('API validation error on the scheduled time: the time input shows the issue and the values stay', async () => {
+      const user = userEvent.setup();
+      answerCreate(() =>
+        HttpResponse.json(
+          {
+            code: 'VALIDATION_FAILED',
+            message: 'Validation failed',
+            details: { issues: [{ path: ['scheduledAt'], message: 'Too far ahead' }] },
+          },
+          { status: 400 },
+        ),
+      );
+      renderSubmit();
+
+      await fillEmail(user);
+      await scheduleAt(user, LOCAL_TIME);
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      const input = screen.getByLabelText(en.submit.scheduledAt);
+      await expect.poll(() => input.getAttribute('aria-invalid')).toBe('true');
+      expect(input).toHaveAccessibleDescription('Too far ahead');
+      expect(input).toHaveValue(LOCAL_TIME);
+      expect(screen.getByLabelText(en.submit.subject)).toHaveValue('Weekly digest');
+    });
+
+    it('Preview of a scheduled request: the preview, the cURL and the example response carry the time', async () => {
+      const user = userEvent.setup();
+      renderSubmit();
+
+      await scheduleAt(user, LOCAL_TIME);
+
+      const preview = screen.getByRole('region', { name: en.submit.request });
+      expect(preview).toHaveTextContent(`"scheduledAt": "${SENT_TIME}"`);
+      await user.click(within(preview).getByRole('button', { name: en.copy.copyCurl }));
+      expect(await navigator.clipboard.readText()).toContain(`"scheduledAt": "${SENT_TIME}"`);
+      const response = screen.getByRole('region', { name: en.submit.response });
+      expect(response).toHaveTextContent('"status": "scheduled"');
+      expect(response).toHaveTextContent(`"scheduledAt": "${SENT_TIME}"`);
+    });
+
+    it('Switching keeps the scheduled time: the webhook form keeps "At a specific time" and the time', async () => {
+      const user = userEvent.setup();
+      renderSubmit();
+
+      await scheduleAt(user, LOCAL_TIME);
+      await user.click(screen.getByRole('button', { name: /^Webhook/ }));
+
+      expect(screen.getByRole('button', { name: en.submit.runLater })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByLabelText(en.submit.scheduledAt)).toHaveValue(LOCAL_TIME);
     });
   });
 });

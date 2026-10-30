@@ -1,10 +1,18 @@
 import type { CreateJobRequest, JobType } from '@job-queue/contracts';
 import type { z } from 'zod';
 
-/** Priority and max attempts: the part of the form every job type shares and a type switch keeps. */
+import type { JobRun } from './run-schedule';
+
+/**
+ * Priority, max attempts and when to run: the part of the form every job type shares and a type
+ * switch keeps.
+ */
 export interface JobFormExecution {
   readonly priority: number;
   readonly maxAttempts: number;
+  readonly run: JobRun;
+  /** The `datetime-local` text of the time to run at, local time; empty until entered. */
+  readonly scheduledAt: string;
 }
 
 /** The request the submit page previews: what will be sent, or as close to it as the form allows. */
@@ -13,6 +21,8 @@ export interface JobRequestPreview {
   readonly payload: Readonly<Record<string, unknown>>;
   readonly priority?: unknown;
   readonly maxAttempts?: unknown;
+  /** UTC ISO timestamp, only when the form will send one. */
+  readonly scheduledAt?: string;
 }
 
 /** One message per form field that has a problem. */
