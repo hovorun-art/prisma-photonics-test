@@ -104,7 +104,8 @@ Two new job-service settings, parsed by `ZodJobServiceConfigParser`, documented 
   no data and the query failed. `ComingSoon` wrappers are removed.
 - `features/app-frame/api-status-pill.tsx`: uses `useQueueStats()` (same query key, so TanStack
   shares one request) and shows "API online" / "API offline"; while the first request is pending
-  it keeps the neutral "API status —" text. App-frame imports the hook through `features/index.ts`.
+  it keeps the neutral "API status —" text. App-frame imports the hook from `features/jobs/hooks/` directly (going through
+  `features/index.ts` would be circular, since the index exports `AppFrame`).
 - Locales: `frame.apiOnline`, `frame.apiOffline`, `list.stats.perMinute`.
 
 ### Tests per level

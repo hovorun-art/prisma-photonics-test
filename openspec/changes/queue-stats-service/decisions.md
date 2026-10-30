@@ -18,6 +18,8 @@
 - While the first statistics request is loading, the cards show skeletons; when a later poll fails, the last numbers stay and the pill turns "API offline" (user confirmed assumption)
 - Counts are formatted with thousands separators (`1,234`), throughput with one decimal and the unit (`2.4/min`) (user confirmed assumption)
 - When the first statistics request fails, each card shows "—" until a poll succeeds; the rest of the jobs list works normally and the pill reads "API offline" (user)
+- `GET /v1/stats` and its response schema are listed in job-service's OpenAPI docs, like every public route (user)
+- Until the first statistics request answers, the header pill reads "API status —" (the existing neutral text) (user)
 
 ## Assumed
 
@@ -38,3 +40,5 @@
 - [x] How often does the UI refresh the statistics?
 - [x] Are the 24h cards a rolling window or a calendar day?
 - [x] What do the cards show when the first statistics request fails?
+- [x] Is the statistics route part of the OpenAPI docs?
+- [x] What does the header pill read before the first statistics answer?

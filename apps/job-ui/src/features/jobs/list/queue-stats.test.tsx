@@ -104,6 +104,26 @@ describe('QueueStats', () => {
     }
   });
 
+  it('Large count: the Pending card shows 1,234', async () => {
+    answerStats(queueStatsFixtures.build({ pending: 1234 }));
+
+    renderStats();
+
+    await expect
+      .poll(() => card(en.list.stats.pending).querySelector('[data-stat-value]')?.textContent)
+      .toBe('1,234');
+  });
+
+  it('Throughput value: the Throughput card shows 2.4/min', async () => {
+    answerStats(queueStatsFixtures.build({ throughput: { windowMinutes: 5, perMinute: 2.4 } }));
+
+    renderStats();
+
+    await expect
+      .poll(() => card(en.list.stats.throughput).querySelector('[data-stat-value]')?.textContent)
+      .toBe('2.4/min');
+  });
+
   it('Statistics loading: each card shows a skeleton until the first answer', () => {
     server.use(http.get(STATS_URL, () => new Promise<never>(() => undefined)));
 

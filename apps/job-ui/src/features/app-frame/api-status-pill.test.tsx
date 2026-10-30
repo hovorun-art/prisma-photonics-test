@@ -52,7 +52,7 @@ function renderPill(pollIntervalMs?: number) {
 }
 
 describe('ApiStatusPill', () => {
-  it('reads "API status —" until the first statistics request answers', () => {
+  it('API status unknown: reads "API status —" until the first statistics request answers', () => {
     server.use(http.get(STATS_URL, () => new Promise<never>(() => undefined)));
 
     renderPill();

@@ -51,8 +51,12 @@ rest of the jobs list SHALL keep working.
 
 ### Requirement: Header shows the API status
 The header pill SHALL show the API status from the statistics poll: "API online" while the latest
-statistics request succeeded and "API offline" when it failed. It SHALL no longer be shown as
-disabled.
+statistics request succeeded and "API offline" when it failed; until the first statistics request
+answers it SHALL read "API status —". It SHALL no longer be shown as disabled.
+
+#### Scenario: API status unknown
+- **WHEN** the first statistics request has not answered yet
+- **THEN** the header pill reads "API status —"
 
 #### Scenario: API online
 - **WHEN** the latest statistics request succeeded
@@ -70,8 +74,8 @@ disabled.
 
 ### Requirement: Features not built yet are shown disabled
 Design elements that need API features not built yet SHALL be shown muted and disabled, with a
-"Coming soon" tooltip on hover and focus: status and type filters, search, Cancel and Retry, the
-Aircraft transit job type, the idempotency key and "At a specific time".
+"Coming soon" tooltip on hover and focus: status and type filters, search, Cancel and Retry, "Run
+again" on the transit report, the idempotency key and "At a specific time".
 
 #### Scenario: Disabled filter
 - **WHEN** a user hovers over or focuses a status filter on the jobs list
@@ -83,4 +87,8 @@ Aircraft transit job type, the idempotency key and "At a specific time".
 
 #### Scenario: Disabled job types
 - **WHEN** a user opens the submit page
-- **THEN** the Aircraft transit job type is disabled, the Webhook job type can be chosen and Email is selected
+- **THEN** the Webhook and Aircraft transit job types can be chosen and Email is selected
+
+#### Scenario: Run again is disabled
+- **WHEN** a user hovers over or focuses "Run again" on the report of a completed transit job
+- **THEN** it is disabled and a "Coming soon" tooltip is shown
