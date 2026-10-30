@@ -13,6 +13,7 @@ interface OpenApiOperation {
 interface OpenApiDocument {
   openapi: string;
   paths: Record<string, Record<string, OpenApiOperation>>;
+  components?: { schemas?: Record<string, unknown> };
 }
 
 describe('API documentation (job-service over HTTP)', () => {
@@ -66,5 +67,21 @@ describe('API documentation (job-service over HTTP)', () => {
     expect(job?.get?.parameters?.map((parameter) => parameter.name)).toEqual(['id']);
     expect(Object.keys(job?.delete?.responses ?? {})).toContain('204');
     expect(Object.keys(paths).filter((path) => path.startsWith('/internal'))).toEqual([]);
+  });
+
+  it('Docs list the job routes: the submit body and the job schema include the webhook job type', async () => {
+    const response = await fetch(service.url({ path: '/docs-json' }).url);
+    const { paths, components } = (await response.json()) as OpenApiDocument;
+    const submit = paths['/v1/jobs']?.post;
+    const schemas = JSON.stringify({ submit, components });
+
+    expect(submit?.requestBody?.content['application/json']?.schema).toBeDefined();
+    expect(schemas).toContain('"webhook"');
+    expect(schemas).toContain('"responseBody"');
+    const refs = [...schemas.matchAll(/"\$ref":"#\/components\/schemas\/([^"]+)"/g)].map(
+      (match) => match[1] ?? '',
+    );
+    const missing = refs.filter((name) => !Object.hasOwn(components?.schemas ?? {}, name));
+    expect(missing).toEqual([]);
   });
 });

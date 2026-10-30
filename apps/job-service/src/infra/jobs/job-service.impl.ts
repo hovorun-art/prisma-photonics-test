@@ -76,12 +76,9 @@ export class JobServiceImpl implements JobService {
   async create(req: CreateJobServiceRequest): Promise<CreateJobServiceResponse> {
     const { job } = await this.d.repository.create({
       job: {
-        type: req.job.type,
-        payload: req.job.payload,
+        ...req.job,
         status: 'pending',
-        priority: req.job.priority,
         attempts: 0,
-        maxAttempts: req.job.maxAttempts,
         result: null,
         error: null,
         scheduledAt: null,

@@ -1,6 +1,7 @@
 export {
   CreateEmailJobRequest,
   CreateJobRequest,
+  CreateWebhookJobRequest,
   EMAIL_LIMITS,
   EmailJob,
   EmailJobPayload,
@@ -17,8 +18,14 @@ export {
   JobPriority,
   JobStatus,
   JobType,
+  JsonObject,
   QueryJobsRequest,
   QueryJobsResponse,
   UpdateJobRequest,
+  WEBHOOK_LIMITS,
+  WEBHOOK_METHODS,
+  WebhookJob,
+  WebhookJobPayload,
+  WebhookJobResult,
 } from './job.js';
 export { JOB_QUEUE_NAME, JobQueueAttempt, JobQueueEntryId, JobQueueMessage } from './job-queue.js';

@@ -38,6 +38,13 @@ export const EMAIL_LIMITS = {
   bodyMaxLength: 10_000,
 } as const;
 
+/** HTTP methods a webhook job may call with, and its URL length limit, shared with the job-ui form. */
+export const WEBHOOK_METHODS = ['POST', 'PUT', 'GET'] as const;
+
+export const WEBHOOK_LIMITS = {
+  urlMaxLength: 2048,
+} as const;
+
 export const JobPriority = z
   .number()
   .int()
@@ -70,13 +77,33 @@ export type EmailJobPayload = z.infer<typeof EmailJobPayload>;
 export const EmailJobResult = z.object({ messageId: z.string().min(1) });
 export type EmailJobResult = z.infer<typeof EmailJobResult>;
 
+/** A JSON object with any JSON values: a webhook's request and response body. */
+export const JsonObject = z.record(z.string(), z.json());
+export type JsonObject = z.infer<typeof JsonObject>;
+
+/** The call a webhook job makes: method, absolute http(s) URL and an optional JSON object body. */
+export const WebhookJobPayload = z.object({
+  method: z.enum(WEBHOOK_METHODS),
+  url: z.url({ protocol: /^https?$/ }).max(WEBHOOK_LIMITS.urlMaxLength),
+  body: JsonObject.optional(),
+});
+export type WebhookJobPayload = z.infer<typeof WebhookJobPayload>;
+
+/** What a completed webhook job returns: the (simulated) 2xx status and response body. */
+export const WebhookJobResult = z.object({
+  statusCode: z.number().int().min(200).max(299),
+  responseBody: JsonObject,
+});
+export type WebhookJobResult = z.infer<typeof WebhookJobResult>;
+
 /** The closed list of job types; each later job type adds itself here. */
-export const JobType = z.enum(['email']);
+export const JobType = z.enum(['email', 'webhook']);
 export type JobType = z.infer<typeof JobType>;
 
 /** The result schema of each job type, checked when job-execution-service reports a completion. */
 export const JOB_RESULT_SCHEMAS: Readonly<Record<JobType, z.ZodType>> = {
   email: EmailJobResult,
+  webhook: WebhookJobResult,
 };
 
 const Timestamp = z.iso.datetime();
@@ -103,8 +130,15 @@ export const EmailJob = JobBase.extend({
 });
 export type EmailJob = z.infer<typeof EmailJob>;
 
+export const WebhookJob = JobBase.extend({
+  type: z.literal('webhook'),
+  payload: WebhookJobPayload,
+  result: WebhookJobResult.nullable(),
+});
+export type WebhookJob = z.infer<typeof WebhookJob>;
+
 /** A job as every job route returns it; the type decides the payload and result shapes. */
-export const Job = z.discriminatedUnion('type', [EmailJob]);
+export const Job = z.discriminatedUnion('type', [EmailJob, WebhookJob]);
 export type Job = z.infer<typeof Job>;
 
 /** Options every job type accepts on submit; omitted ones get the defaults of `JOB_LIMITS`. */
@@ -118,8 +152,16 @@ export const CreateEmailJobRequest = CreateJobOptions.extend({
   payload: EmailJobPayload,
 });
 
+export const CreateWebhookJobRequest = CreateJobOptions.extend({
+  type: z.literal('webhook'),
+  payload: WebhookJobPayload,
+});
+
 /** Body of `POST /v1/jobs`: one branch per job type. */
-export const CreateJobRequest = z.discriminatedUnion('type', [CreateEmailJobRequest]);
+export const CreateJobRequest = z.discriminatedUnion('type', [
+  CreateEmailJobRequest,
+  CreateWebhookJobRequest,
+]);
 export type CreateJobRequest = z.infer<typeof CreateJobRequest>;
 
 /** Path parameters of the routes that address one job. */

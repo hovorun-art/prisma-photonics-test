@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 
 import { fileURLToPath } from 'node:url';
 
-import { FINISHED_JOB_STATUSES, type Job } from '@job-queue/contracts';
+import { FINISHED_JOB_STATUSES, type Job, type WebhookJobPayload } from '@job-queue/contracts';
 import { CONTAINER_IMAGES, PrismaMigrateDeploy } from '@job-queue/test-support';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -13,6 +13,8 @@ import { PrismaDatabase } from '../../prisma/prisma-database.js';
 import { PrismaJobRepository } from './prisma-job-repository.js';
 
 const APP_DIR = fileURLToPath(new URL('../../../..', import.meta.url));
+type NewEmailJob = Extract<NewJob, { type: 'email' }>;
+
 const UNKNOWN_ID = randomUUID();
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -23,7 +25,7 @@ describe('PrismaJobRepository against Postgres', () => {
   let sequence = 0;
 
   /** A complete pending email job, as `JobService` hands it to the repository. */
-  const newJob = (overrides: Partial<NewJob> = {}): NewJob => {
+  const newJob = (overrides: Partial<NewEmailJob> = {}): NewEmailJob => {
     sequence += 1;
     return {
       type: 'email',
@@ -58,7 +60,7 @@ describe('PrismaJobRepository against Postgres', () => {
   };
 
   /** Stores a new job and returns it with the id and timestamps the database assigned. */
-  const store = async (overrides: Partial<NewJob> = {}): Promise<Job> =>
+  const store = async (overrides: Partial<NewEmailJob> = {}): Promise<Job> =>
     (await repository.create({ job: newJob(overrides) })).job;
 
   beforeAll(async () => {
@@ -90,6 +92,26 @@ describe('PrismaJobRepository against Postgres', () => {
       updatedAt: expect.any(String) as string,
     });
     expect((await repository.get({ id: stored.id })).job).toEqual(stored);
+  });
+
+  it('creates a webhook job, with and without a body, and gets it back unchanged', async () => {
+    const webhookJob = (payload: WebhookJobPayload): NewJob => ({
+      ...newJob(),
+      type: 'webhook',
+      payload,
+      result: null,
+    });
+    const payloads: WebhookJobPayload[] = [
+      { method: 'POST', url: 'https://hooks.example.com/orders', body: { orderId: 'ord_4821' } },
+      { method: 'GET', url: 'http://example.com/ping' },
+    ];
+
+    for (const payload of payloads) {
+      const { job: stored } = await repository.create({ job: webhookJob(payload) });
+
+      expect(stored).toMatchObject({ type: 'webhook', payload });
+      expect((await repository.get({ id: stored.id })).job).toEqual(stored);
+    }
   });
 
   it('throws JobNotFoundError when getting an unknown id', async () => {

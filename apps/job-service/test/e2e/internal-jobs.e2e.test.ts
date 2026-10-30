@@ -207,6 +207,56 @@ describe('job-service internal job routes (the real app over HTTP)', () => {
       }
     });
 
+    it('Webhook result is stored', async () => {
+      const { job } = await fixtures.seed({ status: 'processing', type: 'webhook' });
+      const result = { statusCode: 200, responseBody: { received: true } };
+
+      const response = await report(job.id, { status: 'completed', result });
+
+      expect(response.status).toBe(200);
+      expect(Job.parse(await response.json())).toMatchObject({ status: 'completed', result });
+      expect((await stored(job.id)).result).toEqual(result);
+    });
+
+    it('Webhook result does not match', async () => {
+      const { job } = await fixtures.seed({ status: 'processing', type: 'webhook' });
+
+      for (const result of [
+        { responseBody: {} },
+        { statusCode: 503, responseBody: {} },
+        { statusCode: 200, responseBody: 'ok' },
+      ]) {
+        const response = await report(job.id, { status: 'completed', result });
+
+        expect(response.status).toBe(400);
+        expect(ErrorBody.parse(await response.json()).code).toBe('VALIDATION_FAILED');
+      }
+      expect(await stored(job.id)).toEqual(job);
+    });
+
+    it('Failed webhook error is returned with its status code', async () => {
+      const { job } = await fixtures.seed({
+        status: 'processing',
+        type: 'webhook',
+        attempts: 3,
+        maxAttempts: 3,
+      });
+      const error = {
+        code: 'WEBHOOK_HTTP_ERROR',
+        message: 'HTTP 503 Service Unavailable',
+        details: { statusCode: 503 },
+      };
+
+      expect((await report(job.id, { status: 'failed', error })).status).toBe(200);
+
+      expect(await stored(job.id)).toMatchObject({
+        status: 'failed',
+        attempts: 3,
+        maxAttempts: 3,
+        error,
+      });
+    });
+
     it('Failure on the last attempt', async () => {
       const { job } = await fixtures.seed({ status: 'processing', attempts: 3, maxAttempts: 3 });
 
