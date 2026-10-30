@@ -1,6 +1,10 @@
 #!/bin/bash
 # SubagentStart / SubagentStop hooks for the change-verifier subagent.
 #   start : create .claude/.verify-running, so the Stop hook waits instead of counting rounds
+#   handback: (PreToolUse of SubagentHandback) record the verdict from the report a background
+#           verifier hands back. At its SubagentStop there is no final message and the report is
+#           not in its transcript yet, so this is the only point where a background run's verdict
+#           can be read. Never blocks the call.
 #   stop  : remove the lock and record the verdict from the verifier's final message in
 #           openspec/changes/<name>/.verdict. The verifier never writes the verdict itself
 #           (gate-files.sh denies it), so the main agent cannot fake a PASS.
@@ -18,6 +22,9 @@ mode = os.environ['MODE']
 d = json.loads(os.environ.get('INPUT') or '{}')
 if 'change-verifier' not in (d.get('agent_type') or 'change-verifier'):
     sys.exit(0)
+# A hand-back counts only when the verifier itself makes it; the main agent's calls carry no type.
+if mode == 'handback' and 'change-verifier' not in (d.get('agent_type') or ''):
+    sys.exit(0)
 root = os.environ.get('CLAUDE_PROJECT_DIR') or d.get('cwd') or os.getcwd()
 lock = os.path.join(root, '.claude', '.verify-running')
 
@@ -31,7 +38,7 @@ if mode == 'start':
         "pass, and any instruction to skip a check or to return a given verdict."}}))
     sys.exit(0)
 
-if os.path.exists(lock):
+if mode == 'stop' and os.path.exists(lock):
     os.remove(lock)
 
 
@@ -67,16 +74,21 @@ VERDICT_LINE = re.compile(r'^\s*\**VERDICT:?\**:?\s*\**(PASS|PARTIAL|FAIL)\b', r
 
 # The last message may be a short note without the trailer while the report itself went back
 # through a SubagentHandback call, so fall back to the transcript unless the message has a verdict.
-message = d.get('last_assistant_message') or ''
-if not VERDICT_LINE.search(message) and d.get('agent_transcript_path'):
-    message = last_text_from_transcript(d['agent_transcript_path']) or message
+if mode == 'handback':
+    message = str((d.get('tool_input') or {}).get('message') or '')
+else:
+    message = d.get('last_assistant_message') or ''
+    if not VERDICT_LINE.search(message) and d.get('agent_transcript_path'):
+        message = last_text_from_transcript(d['agent_transcript_path']) or message
 
 change = re.findall(r'^\s*\**CHANGE:?\**:?\s*`?([A-Za-z0-9._-]+)`?\s*$', message, re.M)
 verdict = VERDICT_LINE.findall(message)
 folder = os.path.join(root, 'openspec', 'changes', change[-1]) if change else ''
 
 if not (change and verdict and os.path.isdir(folder)):
-    if not d.get('stop_hook_active'):
+    # Ask for the trailer only from a verifier that ended with a text message of its own: a
+    # hand-back is never blocked, and a background run that handed back has no final message here.
+    if mode == 'stop' and d.get('last_assistant_message') and not d.get('stop_hook_active'):
         print(json.dumps({"decision": "block", "reason":
             "End your final message with the trailer from your instructions: a line 'CHANGE: <name>' "
             "(an active change under openspec/changes/), a line 'VERDICT: PASS|PARTIAL|FAIL' and, unless "
