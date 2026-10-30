@@ -57,11 +57,11 @@ Owns: `apps/job-ui/src/features/jobs/model/job-presenter.ts`,
 `apps/job-ui/src/features/jobs/list/jobs-list-page.test.tsx`,
 `apps/job-ui/src/features/jobs/testing/job-fixtures.ts` · Depends on: 1 · Parallel with: 2
 
-- [ ] 3.1 Write the failing `job-presenter.test.ts` cases: "Lifecycle of a scheduled job", "Lifecycle of a completed scheduled job", "Lifecycle of a job scheduled for a past time" (and that a job without `scheduledAt` keeps today's steps); run them and see them fail
-- [ ] 3.2 Implement the lifecycle rule of design decision 6 in `JobPresenter` (and `LifecycleStep`'s status type if needed); verify the presenter tests pass
-- [ ] 3.3 Write the failing page tests: in `job-page.test.tsx` "Scheduled time on the job page" and "No scheduled time on the job page"; in `jobs-list-page.test.tsx` "Scheduled job in the list" and "Started scheduled job in the list"; add a scheduled job to `job-fixtures.ts` if needed; run them and see them fail
-- [ ] 3.4 Add `scheduledFor` to `useJobFields`, the "Scheduled for" row to `JobDetailsList` (only when set) and the scheduled time under the badge in `JobRow` for status `scheduled`; verify the tests pass with `npx vitest related --run` on the changed files
-- [ ] 3.5 Run the `test-case-reviewer` subagent on job-ui unit tests `src/features/jobs/model/job-presenter.test.ts`, `src/features/jobs/details/job-page.test.tsx` and `src/features/jobs/list/jobs-list-page.test.tsx`; add the missing cases it reports or note why they belong elsewhere
+- [x] 3.1 Write the failing `job-presenter.test.ts` cases: "Lifecycle of a scheduled job", "Lifecycle of a completed scheduled job", "Lifecycle of a job scheduled for a past time" (and that a job without `scheduledAt` keeps today's steps); run them and see them fail
+- [x] 3.2 Implement the lifecycle rule of design decision 6 in `JobPresenter` (and `LifecycleStep`'s status type if needed); verify the presenter tests pass
+- [x] 3.3 Write the failing page tests: in `job-page.test.tsx` "Scheduled time on the job page" and "No scheduled time on the job page"; in `jobs-list-page.test.tsx` "Scheduled job in the list" and "Started scheduled job in the list"; add a scheduled job to `job-fixtures.ts` if needed; run them and see them fail
+- [x] 3.4 Add `scheduledFor` to `useJobFields`, the "Scheduled for" row to `JobDetailsList` (only when set) and the scheduled time under the badge in `JobRow` for status `scheduled`; verify the tests pass with `npx vitest related --run` on the changed files
+- [x] 3.5 Run the `test-case-reviewer` subagent on job-ui unit tests `src/features/jobs/model/job-presenter.test.ts`, `src/features/jobs/details/job-page.test.tsx` and `src/features/jobs/list/jobs-list-page.test.tsx`; add the missing cases it reports or note why they belong elsewhere
 
 ## 4. Integration
 

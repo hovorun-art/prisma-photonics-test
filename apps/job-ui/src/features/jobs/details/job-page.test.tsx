@@ -166,6 +166,39 @@ describe('JobPage', () => {
     expect(steps.map((s) => s.dataset.reached)).toEqual(['true', 'false', 'false']);
   });
 
+  it('Scheduled time on the job page: "Scheduled for" shows the local date and time, formatted like Created', async () => {
+    const job = jobFixtures.build({ status: 'scheduled', scheduledAt: '2026-10-30T08:00:00.000Z' });
+    answerJob(job.id, job);
+
+    renderJob(job.id);
+
+    await screen.findByRole('heading', { level: 1, name: job.id });
+    expect(detail(en.job.fields.scheduledFor)).toHaveTextContent('30 Oct, 08:00:00');
+    expect(detail(en.job.fields.created)).toHaveTextContent('29 Oct, 21:02:09');
+  });
+
+  it('No scheduled time on the job page: the Details list has no "Scheduled for" row', async () => {
+    answerJob(pending.id, pending);
+
+    renderJob(pending.id);
+
+    const list = await screen.findByRole('region', { name: en.job.details });
+    expect(within(list).queryByText(en.job.fields.scheduledFor)).toBeNull();
+  });
+
+  it('Lifecycle of a scheduled job: scheduled reached at the creation time, then processing and completed not yet', async () => {
+    const job = jobFixtures.build({ status: 'scheduled', scheduledAt: '2026-10-30T08:00:00.000Z' });
+    answerJob(job.id, job);
+
+    renderJob(job.id);
+
+    const lifecycle = await screen.findByRole('region', { name: en.job.lifecycle });
+    const steps = within(lifecycle).getAllByRole('listitem');
+    expect(steps.map((s) => s.dataset.reached)).toEqual(['true', 'false', 'false']);
+    expect(steps[0]).toHaveTextContent(`${en.statuses.scheduled}21:02:09`);
+    expect(lifecycle).not.toHaveTextContent(en.statuses.pending);
+  });
+
   it('Loading a job: skeleton cards while the job loads', () => {
     server.use(http.get(jobUrl(pending.id), () => new Promise<never>(() => undefined)));
 

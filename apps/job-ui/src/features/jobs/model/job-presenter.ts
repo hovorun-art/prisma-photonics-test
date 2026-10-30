@@ -104,8 +104,15 @@ export class JobPresenter implements JobPresentation {
   lifecycle(req: LifecycleJobPresentationRequest): LifecycleJobPresentationResponse {
     const { job } = req;
     const finished = FINISHED.includes(job.status);
+    // A job created for a later time waits as `scheduled` and goes to `processing` from there.
+    const scheduled =
+      job.scheduledAt !== null && Date.parse(job.scheduledAt) > Date.parse(job.createdAt);
     const steps: LifecycleStep[] = [
-      { status: 'pending', reached: true, at: this.listTime({ at: job.createdAt }).text },
+      {
+        status: scheduled ? 'scheduled' : 'pending',
+        reached: true,
+        at: this.listTime({ at: job.createdAt }).text,
+      },
       {
         status: 'processing',
         reached: job.startedAt !== null,
