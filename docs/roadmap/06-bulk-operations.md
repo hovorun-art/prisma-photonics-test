@@ -16,7 +16,7 @@ No bulk cancel, retry, update or delete, and no cancellation of a group's remain
 ## Open questions
 
 - [x] Limits on items per request; whether bulk submit is all-or-nothing or per item. (Answered in
-  `job-bulk-create`: all or nothing; a configured maximum of jobs per request, default 100, and the
-  bulk route's own body limit, default 1 MB.)
+  `job-bulk-create`: all or nothing; a configured maximum of jobs per request, default 100; one body
+  limit for every route, `JOB_SERVICE_BODY_LIMIT_BYTES`, its default raised to 1 MB.)
 - [ ] job-group-service: what happens when the group is stored but the bulk call fails (retry or mark
   the group failed); polling with several instances and after a restart.

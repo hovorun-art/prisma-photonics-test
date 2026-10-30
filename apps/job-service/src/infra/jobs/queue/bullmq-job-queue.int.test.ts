@@ -19,7 +19,13 @@ describe('BullMqJobQueue against Redis', () => {
 
   /** Stalls every client's writes (reads go on), so an enqueue waits on Redis until unpaused. */
   const pauseWrites = async (): Promise<void> => {
-    await container.exec(['redis-cli', 'CLIENT', 'PAUSE', String(ENQUEUE_TIMEOUT_MS * 10), 'WRITE']);
+    await container.exec([
+      'redis-cli',
+      'CLIENT',
+      'PAUSE',
+      String(ENQUEUE_TIMEOUT_MS * 10),
+      'WRITE',
+    ]);
   };
   const unpauseWrites = async (): Promise<void> => {
     await container.exec(['redis-cli', 'CLIENT', 'UNPAUSE']);
