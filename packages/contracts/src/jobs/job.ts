@@ -30,6 +30,13 @@ export const FINISHED_JOB_STATUSES = [
   'cancelled',
 ] as const satisfies readonly JobStatus[];
 
+/** Statuses a client may cancel a job from: it waits or it runs. */
+export const CANCELLABLE_JOB_STATUSES = [
+  'scheduled',
+  'pending',
+  'processing',
+] as const satisfies readonly JobStatus[];
+
 /** Ranges and defaults of a job's priority (higher = more urgent) and max attempts. */
 export const JOB_LIMITS = {
   priority: { min: 1, max: 10, default: 5 },
@@ -306,3 +313,13 @@ export const UpdateJobRequest = z.discriminatedUnion('status', [
   z.object({ status: z.literal('failed'), error: JobError }),
 ]);
 export type UpdateJobRequest = z.infer<typeof UpdateJobRequest>;
+
+/**
+ * Body of `PATCH /v1/jobs/:id`: the status a client moves a job to by hand. `cancelled` cancels a
+ * job that has not finished; `pending` retries a failed job from its first attempt.
+ */
+export const ChangeJobStatusRequest = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('cancelled') }),
+  z.object({ status: z.literal('pending') }),
+]);
+export type ChangeJobStatusRequest = z.infer<typeof ChangeJobStatusRequest>;

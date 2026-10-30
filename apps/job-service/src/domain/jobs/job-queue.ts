@@ -13,10 +13,18 @@ export interface JobQueue extends Closable {
    * timeout.
    */
   enqueueMany(req: EnqueueManyJobQueueRequest): Promise<EnqueueManyJobQueueResponse>;
+  /**
+   * Tells the workers that the job was cancelled, so the one running it stops. Fire and forget: a
+   * worker that is not listening misses it. Rejects with `JobQueueUnavailableError` when the queue
+   * cannot be reached within the configured timeout.
+   */
+  cancel(req: CancelJobQueueRequest): Promise<CancelJobQueueResponse>;
 }
 
 export interface EnqueueJobQueueRequest {
   jobId: string;
+  /** The job's run (1, plus one per manual retry); attempts start again at 1 in each run. */
+  run: number;
   /** The attempt the entry is for, starting at 1. */
   attempt: number;
 }
@@ -28,5 +36,11 @@ export interface EnqueueManyJobQueueRequest {
 }
 
 export type EnqueueManyJobQueueResponse = Record<string, never>;
+
+export interface CancelJobQueueRequest {
+  jobId: string;
+}
+
+export type CancelJobQueueResponse = Record<string, never>;
 
 export const JOB_QUEUE = Symbol('JobQueue');
