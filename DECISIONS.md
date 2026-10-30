@@ -144,6 +144,18 @@ environment config of job-service.
 docs. *Trade-off:* a shared secret in environment variables is weaker than service identity (mTLS,
 or gRPC with per-service credentials), but needs no certificate setup. It is replaceable behind the
 guard.
+The token is checked twice: by an Express middleware for every `/internal` path, which runs before
+the body parsers, and by the controllers' guard. Without the middleware a call with no token but a
+malformed or oversized body was answered 400 or 413, which tells an unauthenticated caller how the
+body is parsed; now it is 401 like any other call without the token. *Trade-off:* two places apply
+the same check (both go through one `InternalAccess` port, so the rule itself is written once).
+
+**Unreadable request bodies: 415 or 400, never 500.** A body in an encoding or charset the body
+parser does not support is answered 415 `UNSUPPORTED_MEDIA_TYPE`; a body that declares a supported
+encoding (e.g. `br`) but cannot be decompressed is malformed and is answered 400
+`VALIDATION_FAILED`, like invalid JSON. Before, both reached the error filter as unknown errors and
+were answered 500. *Why:* a 500 says the server failed, so clients and alerts would treat a client
+mistake as an outage.
 
 **Contracts through shared Zod schemas, not Pact.** Every request, response and error body is a
 Zod schema in `packages/contracts`, used by the server for validation and OpenAPI and by the tests
@@ -162,6 +174,26 @@ domain module can later move into its own service without rewrites, and named re
 objects keep signatures stable as fields are added. *Trade-off:* noticeably more boilerplate
 (request/response types, interfaces with a single implementation, factory wiring in modules) than
 idiomatic NestJS.
+
+**Tests: each case once, at the lowest level that can see it.** Schema rules (limits, types,
+`null`, every edge of a range) are tested in the contract schemas' unit tests; one class's logic
+(state rules, retry arithmetic) in its unit test; an adapter against its real dependency
+(Testcontainers) in its integration test. The per-app e2e tests check each spec scenario once
+through HTTP, plus what only the running app can show: races between two callers, the order of
+middleware (token before body), body limits and a retry cycle through the routes. In job-service
+they run the real `AppModule` with the bootstrap's own setup steps on a migrated Postgres
+Testcontainer, and mock the services around it at our ports (the job queue and the Redis
+connection) with `mockDeep`. A queue outage is a stub that rejects once, not a second app pointed at
+a dead address. The tests are split into files by spec area, sharing one small setup class instead
+of a folder of launchers, fixtures and probe controllers. A separate reviewer agent
+(`test-case-reviewer`) checks each test area for missing corner cases and for duplicates of lower
+levels. *Trade-offs:* job-service's shutdown is tested in the test process (`app.close()` closes
+the database, the queue and Redis once); no test sends SIGTERM to a real job-service process or
+checks its exit code, so the signal wiring is covered only by service-kit's unit tests. Jobs in
+states no route can create are seeded through the app's own repository, so a mapping bug there would
+affect the seeded data and the read-back alike (the repository's integration test guards the
+mapping). Each e2e file starts its own Postgres container, which costs a few seconds per file and
+loads Docker when all suites run at once.
 
 **One large commit for the scaffold, small commits after it.** The task asks for small, clean
 commits, and the feature work follows that. The project scaffold (workspaces, tooling, shared
