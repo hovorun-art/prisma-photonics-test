@@ -24,7 +24,9 @@ class RoutedJobService implements MockJobService {
       const id = new URL(request.url()).pathname.split('/v1/jobs/')[1];
       if (request.method() === 'POST') {
         const body = request.postDataJSON() as CreateJobRequest;
-        const job = this.job({ id: '99999999-9999-4999-8999-999999999999', ...body });
+        // Like job-service: a job submitted with a time to run waits as `scheduled`.
+        const status = body.scheduledAt === undefined ? 'pending' : 'scheduled';
+        const job = this.job({ id: '99999999-9999-4999-8999-999999999999', status, ...body });
         jobs.unshift(job);
         return route.fulfill({ status: 201, json: job });
       }
@@ -119,6 +121,37 @@ test('Submit a valid email job: the new job page opens', async ({ page }) => {
   await expect(
     page.getByRole('heading', { level: 1, name: '99999999-9999-4999-8999-999999999999' }),
   ).toBeVisible();
+});
+
+test.describe('in a time zone east of UTC', () => {
+  // Tokyo is UTC+9, so a local time and its UTC instant differ.
+  test.use({ timezoneId: 'Asia/Tokyo' });
+
+  test('Submit a scheduled job: the local time is sent in UTC and the job page shows it', async ({
+    page,
+  }) => {
+    await page.clock.setFixedTime(new Date('2026-10-30T10:00:00.000Z'));
+    await api.install({ page, jobs: [] });
+
+    await page.goto('/jobs/new');
+    await page.getByLabel(en.submit.to, { exact: true }).fill('ops@acme.test');
+    await page.getByLabel(en.submit.subject, { exact: true }).fill('Weekly digest');
+    await page.getByLabel(en.submit.body, { exact: true }).fill('Hi team');
+    await page.getByRole('button', { name: en.submit.runLater }).click();
+    await expect(page.getByText(en.submit.scheduleHint('Asia/Tokyo'))).toBeVisible();
+    await page.getByLabel(en.submit.scheduledAt, { exact: true }).fill('2026-10-31T09:30');
+    const posted = page.waitForRequest((request) => request.method() === 'POST');
+    await page.getByRole('button', { name: en.submit.submit }).click();
+
+    expect((await posted).postDataJSON()).toMatchObject({
+      scheduledAt: '2026-10-31T00:30:00.000Z',
+    });
+    await expect(page).toHaveURL(/\/jobs\/99999999-9999-4999-8999-999999999999$/);
+    const details = page.getByRole('region', { name: en.job.details });
+    await expect(details).toContainText(`${en.job.fields.scheduledFor}31 Oct, 09:30:00`);
+    const lifecycle = page.getByRole('region', { name: en.job.lifecycle });
+    await expect(lifecycle.getByRole('listitem').first()).toContainText(en.statuses.scheduled);
+  });
 });
 
 test('Delete a finished job: confirming deletes it and opens the jobs list', async ({ page }) => {
