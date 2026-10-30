@@ -13,4 +13,8 @@ export interface JobServiceConfig extends BaseConfig {
   readonly queryMaxLimit: number;
   /** How long putting a job on the queue may take before the job is left pending. */
   readonly enqueueTimeoutMs: number;
+  /** Length of the window in which `GET /v1/stats` counts completed and failed jobs. */
+  readonly statsRecentWindowMinutes: number;
+  /** Length of the window over which `GET /v1/stats` measures throughput. */
+  readonly statsThroughputWindowMinutes: number;
 }

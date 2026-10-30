@@ -4,6 +4,7 @@ import {
   type EmailJob,
   FlightTransitJob,
   type FlightTransitJobResult,
+  type QueueStats,
   type WebhookJob,
 } from '@job-queue/contracts';
 
@@ -11,6 +12,8 @@ export type BuildJobFixturesRequest = Partial<EmailJob>;
 export type BuildJobFixturesResponse = EmailJob;
 export type BuildWebhookJobFixturesRequest = Partial<WebhookJob>;
 export type BuildWebhookJobFixturesResponse = WebhookJob;
+export type BuildQueueStatsFixturesRequest = Partial<QueueStats>;
+export type BuildQueueStatsFixturesResponse = QueueStats;
 export type BuildTransitJobFixturesRequest = Partial<FlightTransitJob>;
 export type BuildTransitJobFixturesResponse = FlightTransitJob;
 
@@ -22,6 +25,11 @@ export interface JobFixtures {
 /** Builds valid webhook jobs for tests, like `JobFixtures` for email. */
 export interface WebhookJobFixtures {
   build(req?: BuildWebhookJobFixturesRequest): BuildWebhookJobFixturesResponse;
+}
+
+/** Builds valid queue statistics for tests, with a different value in every field. */
+export interface QueueStatsFixtures {
+  build(req?: BuildQueueStatsFixturesRequest): BuildQueueStatsFixturesResponse;
 }
 
 /** Builds valid flight transit jobs for tests: pending, or completed with a full report. */
@@ -82,6 +90,22 @@ export class PendingWebhookJobFixtures implements WebhookJobFixtures {
 }
 
 export const webhookJobFixtures: WebhookJobFixtures = new PendingWebhookJobFixtures();
+
+/** Test-only: statistics as job-service returns them, every value distinct so the cards can be told apart. */
+export class DistinctQueueStatsFixtures implements QueueStatsFixtures {
+  build(req: BuildQueueStatsFixturesRequest = {}): BuildQueueStatsFixturesResponse {
+    return {
+      pending: 12,
+      processing: 3,
+      scheduled: 7,
+      recent: { windowMinutes: 1440, completed: 1234, failed: 5 },
+      throughput: { windowMinutes: 5, perMinute: 2.4 },
+      ...req,
+    };
+  }
+}
+
+export const queueStatsFixtures: QueueStatsFixtures = new DistinctQueueStatsFixtures();
 
 /** The report of the design's TransitReport screen: LHR → JFK on 28 Oct 2026. */
 const ATLANTIC_REPORT: FlightTransitJobResult = {

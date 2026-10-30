@@ -4,6 +4,7 @@ import {
   JobIdParams,
   QueryJobsRequest,
   QueryJobsResponse,
+  QueueStats,
 } from '@job-queue/contracts';
 import { createZodDto } from 'nestjs-zod';
 
@@ -22,3 +23,4 @@ export class JobDto extends JobDtoBase {}
 export class JobIdParamsDto extends createZodDto(JobIdParams) {}
 export class QueryJobsDto extends createZodDto(QueryJobsRequest) {}
 export class QueryJobsResponseDto extends createZodDto(QueryJobsResponse) {}
+export class QueueStatsDto extends createZodDto(QueueStats) {}

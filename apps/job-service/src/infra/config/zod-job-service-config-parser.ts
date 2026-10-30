@@ -8,6 +8,8 @@ const DEFAULT_BODY_LIMIT_BYTES = 102_400;
 const DEFAULT_QUERY_DEFAULT_LIMIT = 20;
 const DEFAULT_QUERY_MAX_LIMIT = 100;
 const DEFAULT_ENQUEUE_TIMEOUT_MS = 2_000;
+const DEFAULT_STATS_RECENT_WINDOW_MINUTES = 24 * 60;
+const DEFAULT_STATS_THROUGHPUT_WINDOW_MINUTES = 5;
 
 const baseEnv = new ZodBaseEnvSchema({
   defaultNodeEnv: 'development',
@@ -39,6 +41,16 @@ const JobServiceEnv = baseEnv
       .int()
       .positive()
       .default(DEFAULT_ENQUEUE_TIMEOUT_MS),
+    JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_STATS_RECENT_WINDOW_MINUTES),
+    JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULT_STATS_THROUGHPUT_WINDOW_MINUTES),
   })
   .refine((env) => env.JOB_SERVICE_QUERY_DEFAULT_LIMIT <= env.JOB_SERVICE_QUERY_MAX_LIMIT, {
     path: ['JOB_SERVICE_QUERY_DEFAULT_LIMIT'],
@@ -51,6 +63,8 @@ const JobServiceEnv = baseEnv
     queryDefaultLimit: env.JOB_SERVICE_QUERY_DEFAULT_LIMIT,
     queryMaxLimit: env.JOB_SERVICE_QUERY_MAX_LIMIT,
     enqueueTimeoutMs: env.JOB_SERVICE_ENQUEUE_TIMEOUT_MS,
+    statsRecentWindowMinutes: env.JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES,
+    statsThroughputWindowMinutes: env.JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES,
   }));
 
 /** Validates the environment with the shared base schema extended by job-service's own fields. */

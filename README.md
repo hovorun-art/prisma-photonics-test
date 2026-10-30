@@ -61,6 +61,12 @@ curl -s 'http://localhost:3000/v1/jobs?limit=20&offset=0'
 # Only failed or cancelled webhook jobs (repeat a filter for several values; total counts matches)
 curl -s 'http://localhost:3000/v1/jobs?status=failed&status=cancelled&type=webhook'
 
+# Queue statistics: jobs pending, processing and scheduled now, completed and failed in the last
+# day, and jobs completed per minute over the last 5 minutes (both windows are configurable)
+curl -s http://localhost:3000/v1/stats
+# {"pending":0,"processing":0,"scheduled":0,"recent":{"windowMinutes":1440,"completed":1,"failed":0},
+#  "throughput":{"windowMinutes":5,"perMinute":0.2}}
+
 curl -i http://localhost:3000/no-such-route
 # HTTP/1.1 404 Not Found
 # {"code":"ROUTE_NOT_FOUND","message":"...","details":{}}

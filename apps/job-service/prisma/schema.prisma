@@ -56,5 +56,7 @@ model Job {
   @@index([status, createdAt(sort: Desc)], map: "jobs_status_created_at_idx")
   /// Type filters.
   @@index([type, createdAt(sort: Desc)], map: "jobs_type_created_at_idx")
+  /// The statistics' counts of jobs finished within a window.
+  @@index([status, completedAt], map: "jobs_status_completed_at_idx")
   @@map("jobs")
 }

@@ -7,6 +7,8 @@ export const en = {
     apiDocs: 'API docs',
     newJob: 'New job',
     apiStatus: 'API status —',
+    apiOnline: 'API online',
+    apiOffline: 'API offline',
   },
   comingSoon: 'Coming soon',
   pageError: {
@@ -49,6 +51,7 @@ export const en = {
       completed: 'Completed · 24h',
       failed: 'Failed · 24h',
       throughput: 'Throughput',
+      perMinute: '/min',
     },
     filterByStatus: 'Filter by status',
     filterByType: 'Filter by type',
