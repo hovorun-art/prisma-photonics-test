@@ -1,4 +1,11 @@
-import { HEALTH_ROUTE, HealthResponse, JOBS_ROUTE, JobStatus, JobType } from '@job-queue/contracts';
+import {
+  HEALTH_ROUTE,
+  HealthResponse,
+  JOBS_BULK_ROUTE,
+  JOBS_ROUTE,
+  JobStatus,
+  JobType,
+} from '@job-queue/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PrismaDatabase } from '../../src/infra/prisma/prisma-database.js';
@@ -78,6 +85,10 @@ describe('job-service health, docs and shutdown', () => {
 
       expect(jobs?.post?.requestBody?.content['application/json']?.schema).toBeDefined();
       expect(jobs?.post?.responses['201']?.content?.['application/json']?.schema).toBeDefined();
+      const bulk = paths[JOBS_BULK_ROUTE]?.post;
+      expect(bulk?.requestBody?.content['application/json']?.schema).toBeDefined();
+      expect(bulk?.responses['201']?.content?.['application/json']?.schema).toBeDefined();
+      expect(Object.keys(bulk?.responses ?? {}).sort()).toEqual(['201', '400', '413']);
       expect(jobs?.get?.parameters?.map((parameter) => parameter.name).sort()).toEqual([
         'groupId',
         'limit',

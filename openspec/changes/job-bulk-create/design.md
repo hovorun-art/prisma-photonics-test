@@ -42,14 +42,16 @@ See proposal.md for why; requirements are in `specs/job-management/spec.md`.
 
 ### Config (`apps/job-service/src/infra/config`, `.env.example`)
 - `JOB_SERVICE_BULK_MAX_JOBS` (default 100) → `bulkMaxJobs`.
-- `JOB_SERVICE_BULK_BODY_LIMIT_BYTES` (default 1 048 576) → `bulkBodyLimitBytes`.
+- `JOB_SERVICE_BODY_LIMIT_BYTES` keeps applying to every route; its default rises from 102 400 to
+  1 048 576 so a full bulk of large jobs fits.
 
-### Route-specific body limit (`RequestBodySetupStep`)
-Register `json({ limit: bulkBodyLimitBytes })` for the path `JOBS_BULK_ROUTE` before the general
-parsers. body-parser marks a parsed request and the general parser then skips it, so the bulk route
-gets its own limit and every other route keeps `bodyLimitBytes`. The same error mapping
-(`PayloadTooLargeError` with the limit that applied) covers both. Alternative: raising the global
-limit to 1 MB, rejected: it widens every route for one use.
+### One body limit for every route (`RequestBodySetupStep` unchanged)
+Nest's `useBodyParser` sets one limit for all routes. A route-scoped limit was tried
+(`express.json({ limit })` mounted on `JOBS_BULK_ROUTE` before the general parsers), but Express 5
+ships no types, so it needed `@types/express` (or `body-parser` with `@types/body-parser`, typed for
+1.x) as a new dependency. The user chose no new dependency: one limit, raised to 1 MB. Trade-off:
+single submits and internal reports also accept bodies up to 1 MB; the job contract's field limits
+(email body length, URL length) still bound what is stored per field.
 
 ### Service (`JobService.createMany`)
 New operation `createMany(req: CreateManyJobServiceRequest): Promise<CreateManyJobServiceResponse>`
@@ -116,8 +118,9 @@ segment, so nothing collides), validated with `ZodValidationPipe(CreateJobsBulkR
   known gap as single submit, not a new one.
 - [`groupId` is caller-supplied and unauthenticated: any client can add jobs to any group] → accepted;
   job-service gives it no meaning, and job-group-service only reads it. Noted in `DECISIONS.md`.
-- [A 1 MB body with 100 flight transit jobs costs one validation pass and one insert] → bounded by
-  the two configured limits.
+- [Every route now accepts bodies up to 1 MB, not only the bulk route] → accepted by the user to
+  avoid a new type dependency; the contract's per-field limits still apply, and a bulk is bounded by
+  the configured maximum of jobs.
 - [Adding `groupId` to `Job` changes the contract every app reads] → additive and nullable, no
   behaviour change in job-ui or job-execution-service; the Job literals in their tests and fixtures
   gain `groupId: null` in the same commit as the contract (group 1), so every check stays green.

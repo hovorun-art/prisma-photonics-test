@@ -45,8 +45,8 @@ job-service rule of its type, the whole request SHALL be answered with HTTP 400 
 ### Requirement: A bulk submission has a size range
 A bulk submission with no jobs, or with more jobs than the configured maximum per bulk, SHALL be
 answered with HTTP 400 and `VALIDATION_FAILED` with an issue for the `jobs` field, and SHALL store
-nothing. A body larger than the configured body size limit of the bulk route SHALL be answered with
-HTTP 413 and `PAYLOAD_TOO_LARGE`; the other routes keep their own configured limit.
+nothing. A body larger than the configured request body size limit, the same for every route, SHALL
+be answered with HTTP 413 and `PAYLOAD_TOO_LARGE`, and SHALL store nothing.
 
 #### Scenario: Empty bulk
 - **WHEN** a client submits a bulk with an empty `jobs` array
@@ -60,12 +60,12 @@ HTTP 413 and `PAYLOAD_TOO_LARGE`; the other routes keep their own configured lim
 - **WHEN** a client submits a bulk with exactly the configured maximum number of jobs
 - **THEN** the response has HTTP status 201 with that many jobs
 
-#### Scenario: Bulk body above the bulk limit
-- **WHEN** a client submits a bulk whose body is larger than the configured body size limit of the bulk route
-- **THEN** the response has HTTP status 413 and the code `PAYLOAD_TOO_LARGE`, and no job is stored
+#### Scenario: Bulk body above the body size limit
+- **WHEN** a client submits a bulk whose body is larger than the configured request body size limit
+- **THEN** the response has HTTP status 413 and the code `PAYLOAD_TOO_LARGE` naming the limit, and no job is stored
 
-#### Scenario: Bulk body above the single-submit limit
-- **WHEN** a client submits a bulk whose body is larger than the body size limit of the other routes but within the bulk route's limit
+#### Scenario: Bulk body at the body size limit
+- **WHEN** a client submits a bulk whose body is exactly the configured request body size limit
 - **THEN** the response has HTTP status 201 with the jobs
 
 ### Requirement: Bulk-submitted jobs are put on the queue

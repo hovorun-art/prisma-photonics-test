@@ -1,5 +1,7 @@
 import {
   CreateJobRequest,
+  CreateJobsBulkRequest,
+  CreateJobsBulkResponse,
   Job,
   JobIdParams,
   QueryJobsRequest,
@@ -19,6 +21,8 @@ const JobDtoBase: new () => object = createZodDto(Job);
 /** Request and response classes of the public job routes, generated from the shared Zod schemas. */
 export class CreateJobDto extends CreateJobDtoBase {}
 export class JobDto extends JobDtoBase {}
+export class CreateJobsBulkDto extends createZodDto(CreateJobsBulkRequest) {}
+export class CreateJobsBulkResponseDto extends createZodDto(CreateJobsBulkResponse) {}
 export class JobIdParamsDto extends createZodDto(JobIdParams) {}
 export class QueryJobsDto extends createZodDto(QueryJobsRequest) {}
 export class QueryJobsResponseDto extends createZodDto(QueryJobsResponse) {}

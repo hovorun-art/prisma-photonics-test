@@ -152,6 +152,48 @@ defaults and the email field lengths are constants in the shared Zod schemas, so
 UI form validate with the same rules. Values that operators tune (page sizes, enqueue timeout) are
 environment config of job-service.
 
+**Job groups instead of a Batch job type.** The task lists a Batch job that "processes multiple
+items with a small delay each, tracks progress percentage, returns a summary". We answer it with job
+groups: a client submits many real jobs at once (say an email campaign) and follows them as one
+group. The items are ordinary jobs of any type, so each one gets the system's pickup, retries,
+priority and recovery, instead of a second, smaller job system living inside one batch job.
+job-service only gains bulk submit and an opaque `groupId` on every job; following a group (status,
+counts per child status) is a separate service, `job-group-service`, with its own database.
+*Trade-off, said plainly:* there is no `batch` job type and the Job's progress percentage from the
+task's data model stays unused; a group's progress is its children's statuses, not a percentage on
+one job. A crash inside a group costs nothing extra: each child recovers like any job.
+
+**Bulk submit: all or nothing, one statement, one queue call.** `POST /v1/jobs/bulk` takes
+`{ jobs: [...] }`, at most a configured number (default 100). Every item is validated (schema, then
+the flight transit departure-day rule) before anything is stored; one bad item answers 400 with
+issues naming its position (`jobs.3.payload.to`) and stores nothing, so a client never has to work
+out which half of a campaign exists. The jobs are stored with one `INSERT ... RETURNING` (a single
+statement, atomic on its own) and queued with one BullMQ `addBulk` (one Redis `MULTI`), so a bulk
+costs one round trip to each store instead of one per job. The answer lists the jobs in request
+order: Postgres returns the rows of a multi-row `VALUES` in the order given, and job-service stamps
+the jobs one millisecond apart so the newest-first list keeps that order too (the last of 100 jobs
+is stamped 99 ms "in the future"). If the queue is down or slower than the enqueue timeout, the
+answer is still 201 and the jobs stay pending, as for a single submit. A Redis that only stalls may
+still add the entries after we gave up, so "not queued" means "not known to be queued": the job runs
+or is swept later, never twice, since the entry id is per attempt. *Alternatives:* per-item results
+(207-style), rejected because a half-created group is harder to reason about than a 400;
+N single inserts in one transaction (N round trips).
+
+**`groupId` is the caller's, unchecked.** Any job submission may carry a `groupId` (a UUID); job-service
+stores and returns it and filters by it (`GET /v1/jobs?groupId=`, one value, AND with status and
+type, served by a `(group_id, created_at DESC)` index) but gives it no meaning. *Trade-off:* any
+client can add jobs to any group; there is no authentication in this project to tie a group to its
+owner, and job-group-service only reads the field.
+
+**One request body limit, raised to 1 MB.** A full bulk of large jobs does not fit the Express
+default of 100 KB. A limit for the bulk route only would need a path-scoped JSON parser; Nest's
+`useBodyParser` is global, and Express 5 ships no types, so it meant a new dev dependency:
+`@types/express` (5.0.6, Oct 2026, ~89M weekly downloads) for `express.json`, or `@types/body-parser`
+(1.19.6, ~74M, typed for body-parser 1.x while 2.4.0 is installed). We chose no new dependency and
+one configured limit (`JOB_SERVICE_BODY_LIMIT_BYTES`, default now 1 MB) for every route.
+*Trade-off:* single submits and internal reports also accept bodies up to 1 MB; the contract's
+per-field limits still bound what is stored.
+
 **job-ui: polling, not push.** The jobs list and the job page fetch again every 2 s (TanStack
 Query `refetchInterval`); a failed poll keeps the last data on screen with a "Connection lost,
 retrying" note, and polling itself is the retry. *Alternatives:* Server-Sent Events or WebSockets

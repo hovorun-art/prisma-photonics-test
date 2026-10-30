@@ -16,8 +16,11 @@
 - No UI in this change (user)
 - The bulk route is `POST /v1/jobs/bulk` with body `{ jobs: [...] }`, answered with HTTP 201
   `{ items: [job, ...] }` in request order (user)
-- At most a configured number of jobs per bulk request, default 100; the bulk route has its own
-  configured body size limit, default 1 MB, while other routes keep theirs (user)
+- At most a configured number of jobs per bulk request, default 100 (user)
+- One configured request body size limit for every route, its default raised from 100 KB to 1 MB so
+  a full bulk fits; no separate bulk limit, since a route-scoped body parser would need a new type
+  dependency (`@types/express` or `@types/body-parser`) (user, during apply; replaces "the bulk route
+  has its own body size limit, default 1 MB, while other routes keep theirs")
 - `groupId` is a UUID (user)
 - More jobs than the configured maximum are rejected with HTTP 400 `VALIDATION_FAILED` naming the maximum (user confirmed assumption)
 - An empty array is rejected with HTTP 400 `VALIDATION_FAILED` (user confirmed assumption)

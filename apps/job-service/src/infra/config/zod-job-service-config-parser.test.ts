@@ -22,7 +22,7 @@ describe('ZodJobServiceConfigParser', () => {
         nodeEnv: 'production',
         logLevel: 'warn',
         port: 3000,
-        bodyLimitBytes: 102400,
+        bodyLimitBytes: 1048576,
         databaseUrl: 'postgresql://jobqueue:jobqueue@localhost:5432/jobqueue',
         redisUrl: 'redis://localhost:6379',
         internalServiceToken: 'a-long-random-token',
@@ -30,32 +30,23 @@ describe('ZodJobServiceConfigParser', () => {
         queryMaxLimit: 100,
         enqueueTimeoutMs: 2000,
         bulkMaxJobs: 100,
-        bulkBodyLimitBytes: 1048576,
       },
     });
   });
 
-  it('reads the configured bulk limits', () => {
-    const env = {
-      ...ENV,
-      JOB_SERVICE_BULK_MAX_JOBS: '25',
-      JOB_SERVICE_BULK_BODY_LIMIT_BYTES: '524288',
-    };
-
-    expect(parser.parse({ env })).toMatchObject({
+  it('reads the configured maximum of jobs per bulk', () => {
+    expect(parser.parse({ env: { ...ENV, JOB_SERVICE_BULK_MAX_JOBS: '25' } })).toMatchObject({
       ok: true,
-      config: { bulkMaxJobs: 25, bulkBodyLimitBytes: 524288 },
+      config: { bulkMaxJobs: 25 },
     });
   });
 
   it.each(['0', '-1', '1.5', 'many'])(
-    'rejects a bulk limit that is not a positive integer: %s',
+    'rejects a maximum of jobs per bulk that is not a positive integer: %s',
     (value) => {
-      for (const name of ['JOB_SERVICE_BULK_MAX_JOBS', 'JOB_SERVICE_BULK_BODY_LIMIT_BYTES']) {
-        const result = parser.parse({ env: { ...ENV, [name]: value } });
+      const result = parser.parse({ env: { ...ENV, JOB_SERVICE_BULK_MAX_JOBS: value } });
 
-        expect(result.ok ? '' : result.problems).toContain(name);
-      }
+      expect(result.ok ? '' : result.problems).toContain('JOB_SERVICE_BULK_MAX_JOBS');
     },
   );
 
