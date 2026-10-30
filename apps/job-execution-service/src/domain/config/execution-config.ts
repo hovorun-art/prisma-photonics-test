@@ -14,6 +14,10 @@ export interface ExecutionConfig extends BaseConfig {
   /** The simulated send time of an email job lies in [min, max] milliseconds. */
   readonly emailSendMinMs: number;
   readonly emailSendMaxMs: number;
+  /** How long a simulated webhook call takes, in milliseconds. */
+  readonly webhookCallMs: number;
+  /** The share of webhook attempts that fail, in [0, 1]. */
+  readonly webhookFailureRate: number;
   /**
    * How often a call to job-service that could not reach it is tried again; the wait before the
    * first retry, doubling (randomized) up to the maximum.

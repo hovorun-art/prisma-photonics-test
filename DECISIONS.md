@@ -181,8 +181,27 @@ error as `{ code, message, status, attempt, retryable }`. We keep the shared
 `attempts < maxAttempts`, so the UI derives both from fields every job already has. *Why:* one
 error schema for all job types, and no second copy of state the job already holds. *Trade-off:*
 `details` is untyped per job type, so the UI must read `details.statusCode` defensively. The webhook
-type was added to job-service before its handler in job-execution-service. Until the handler
-exists, a queued webhook job is reported as `UNSUPPORTED_JOB_TYPE` and fails after its attempts.
+type was added to job-service one change before its handler in job-execution-service
+(`webhook-job-execution`), so for one commit a queued webhook job failed as `UNSUPPORTED_JOB_TYPE`.
+
+**Simulated webhook calls.** A webhook job never calls its URL. The handler waits a fixed
+configured time (`WEBHOOK_CALL_MS`, 1500 ms), then fails the attempt at the configured rate
+(`WEBHOOK_FAILURE_RATE`, 0.2) with a random 500, 502, 503 or 504, or answers 200 with
+`{ received: true, requestId }`. The failure is drawn after the wait, so a failed call costs as much
+time as a real one; the wait and the draw come through the `Sleeper` and `Random` ports, so tests
+set the outcome. *Why:* the concept asks for a simulated webhook with random failures to exercise
+retries; a fixed wait keeps the processing state easy to watch. *Trade-off:* with the default rate
+and 3 attempts about 0.8% of webhook jobs fail for good, which is the point; set the rate to 0 for
+demos that need every job to succeed.
+
+**Handlers return expected failures instead of throwing them.** A `JobHandler` returns
+`{ outcome: 'completed', result }` or `{ outcome: 'failed', error }`, and the worker reports the
+error as is, `details` included. Thrown errors stay for the unexpected (`DomainError` code, or
+`HANDLER_ERROR`). *Why not a `DomainError` with a new code:* `ERROR_CODES` is the closed list of API
+errors, each mapped to an HTTP status by the exception filter; `WEBHOOK_HTTP_ERROR` is data about a
+job attempt, not an answer of our API, so it lives with the job failure codes of job-execution-service
+(`WEBHOOK_JOB_ERROR_CODES` next to `JOB_ERROR_CODES`). *Trade-off:* two failure paths in the worker,
+one for returned and one for thrown failures; both end in the same `failed` report.
 
 ---
 

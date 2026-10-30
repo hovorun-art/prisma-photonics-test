@@ -28,6 +28,8 @@ describe('ZodExecutionConfigParser', () => {
         concurrency: 5,
         emailSendMinMs: 1000,
         emailSendMaxMs: 3000,
+        webhookCallMs: 1500,
+        webhookFailureRate: 0.2,
         reportRetries: 3,
         reportRetryDelayMs: 500,
         reportRetryMaxDelayMs: 5000,
@@ -43,6 +45,8 @@ describe('ZodExecutionConfigParser', () => {
       JOB_EXECUTION_CONCURRENCY: '2',
       EMAIL_SEND_MIN_MS: '10',
       EMAIL_SEND_MAX_MS: '20',
+      WEBHOOK_CALL_MS: '0',
+      WEBHOOK_FAILURE_RATE: '1',
       JOB_REPORT_RETRIES: '0',
       JOB_REPORT_RETRY_DELAY_MS: '50',
       JOB_REPORT_RETRY_MAX_DELAY_MS: '60',
@@ -56,6 +60,8 @@ describe('ZodExecutionConfigParser', () => {
         concurrency: 2,
         emailSendMinMs: 10,
         emailSendMaxMs: 20,
+        webhookCallMs: 0,
+        webhookFailureRate: 1,
         reportRetries: 0,
         reportRetryDelayMs: 50,
         reportRetryMaxDelayMs: 60,
@@ -81,6 +87,20 @@ describe('ZodExecutionConfigParser', () => {
     });
 
     expect(result.ok ? '' : result.problems).toContain('EMAIL_SEND_MIN_MS');
+  });
+
+  it('rejects a webhook failure rate outside 0 to 1 and a negative webhook call time', () => {
+    for (const env of [
+      { WEBHOOK_FAILURE_RATE: '-0.1' },
+      { WEBHOOK_FAILURE_RATE: '1.5' },
+      { WEBHOOK_FAILURE_RATE: 'often' },
+    ]) {
+      const result = parser.parse({ env: { ...ENV, ...env } });
+
+      expect(result.ok ? '' : result.problems).toContain('WEBHOOK_FAILURE_RATE');
+    }
+    const negativeCall = parser.parse({ env: { ...ENV, WEBHOOK_CALL_MS: '-1' } });
+    expect(negativeCall.ok ? '' : negativeCall.problems).toContain('WEBHOOK_CALL_MS');
   });
 
   it('rejects a retry delay above its maximum', () => {

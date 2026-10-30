@@ -13,7 +13,7 @@ import type {
 import { InvalidJobError } from '../../domain/jobs/errors/invalid-job.error.js';
 import { JobServiceUnavailableError } from '../../domain/jobs/errors/job-service-unavailable.error.js';
 import type { JobRepository } from '../../domain/jobs/job-repository.js';
-import type { JobHandlers } from '../../domain/notifications/job-handler.js';
+import type { JobHandlers, RunJobHandlerResponse } from '../../domain/execution/job-handler.js';
 
 export interface JobExecutionImplDeps {
   jobs: JobRepository;
@@ -105,16 +105,20 @@ export class JobExecutionImpl implements JobExecution {
         });
       }
 
-      let result: unknown;
+      let ran: RunJobHandlerResponse;
       try {
-        ({ result } = await handler.run({ job, signal: this.running.signal }));
+        ran = await handler.run({ job, signal: this.running.signal });
       } catch (error) {
         if (this.running.signal.aborted) return this.abandon({ fields });
         return await this.fail({ fields, error: this.toJobError(error) });
       }
       if (this.running.signal.aborted) return this.abandon({ fields });
+      if (ran.outcome === 'failed') return await this.fail({ fields, error: ran.error });
 
-      const completed = await this.report({ fields, update: { status: 'completed', result } });
+      const completed = await this.report({
+        fields,
+        update: { status: 'completed', result: ran.result },
+      });
       if (completed !== 'delivered') return { outcome: 'abandoned' };
       this.d.logger.log(fields, 'Job completed');
       return { outcome: 'completed' };
@@ -168,7 +172,7 @@ export class JobExecutionImpl implements JobExecution {
   }
 
   private async fail({ fields, error }: FailRequest): Promise<ExecuteJobExecutionResponse> {
-    this.d.logger.warn({ ...fields, code: error.code }, 'Job failed');
+    this.d.logger.warn({ ...fields, code: error.code, details: error.details }, 'Job failed');
     const reported = await this.report({ fields, update: { status: 'failed', error } });
     return { outcome: reported === 'delivered' ? 'failed' : 'abandoned' };
   }

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 
-import type { EmailJob } from '@job-queue/contracts';
+import type { EmailJob, WebhookJob } from '@job-queue/contracts';
 import { DomainError, JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -9,7 +9,7 @@ import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { InvalidJobError } from '../../domain/jobs/errors/invalid-job.error.js';
 import { JobServiceUnavailableError } from '../../domain/jobs/errors/job-service-unavailable.error.js';
 import type { JobRepository } from '../../domain/jobs/job-repository.js';
-import type { JobHandler } from '../../domain/notifications/job-handler.js';
+import type { JobHandler } from '../../domain/execution/job-handler.js';
 import { JobExecutionImpl } from './job-execution.impl.js';
 
 const JOB_ID = randomUUID();
@@ -62,7 +62,7 @@ describe('JobExecutionImpl', () => {
 
   it('Pending job runs to completion', async () => {
     readAndStart();
-    email.run.mockResolvedValueOnce({ result: RESULT });
+    email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
     jobs.update.mockResolvedValueOnce({ job: job({ status: 'completed' }) });
 
     await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'completed' });
@@ -201,6 +201,58 @@ describe('JobExecutionImpl', () => {
     });
   });
 
+  describe('when a handler returns a failed outcome', () => {
+    const WEBHOOK_ERROR = {
+      code: 'WEBHOOK_HTTP_ERROR',
+      message: 'Webhook POST https://example.com/hook answered 503',
+      details: { statusCode: 503 },
+    };
+    let webhook: DeepMockProxy<JobHandler>;
+    let withWebhook: JobExecutionImpl;
+
+    const webhookJob = (overrides: Partial<WebhookJob> = {}): WebhookJob => ({
+      ...job(),
+      type: 'webhook',
+      payload: { method: 'POST', url: 'https://example.com/hook', body: { a: 1 } },
+      result: null,
+      ...overrides,
+    });
+
+    beforeEach(() => {
+      webhook = mockDeep<JobHandler>();
+      withWebhook = new JobExecutionImpl({ jobs, handlers: { webhook }, logger }, PARAMS);
+      jobs.get.mockResolvedValueOnce({ job: webhookJob() });
+      jobs.update
+        .mockResolvedValueOnce({ job: webhookJob({ status: 'processing', attempts: 1 }) })
+        .mockResolvedValueOnce({ job: webhookJob({ status: 'pending', attempts: 1 }) });
+      webhook.run.mockResolvedValueOnce({ outcome: 'failed', error: WEBHOOK_ERROR });
+    });
+
+    it('reports the returned error as is and no completion', async () => {
+      await expect(withWebhook.execute(ENTRY)).resolves.toEqual({ outcome: 'failed' });
+
+      expect(jobs.update.mock.calls.map(([request]) => request.update)).toEqual([
+        { status: 'processing' },
+        { status: 'failed', error: WEBHOOK_ERROR },
+      ]);
+    });
+
+    it('Failed webhook attempt is logged as a warning', async () => {
+      await withWebhook.execute(ENTRY);
+
+      // The instance id is added to every line by the logger itself.
+      expect(logger.warn).toHaveBeenCalledWith(
+        expect.objectContaining({
+          jobId: JOB_ID,
+          attempt: 1,
+          code: 'WEBHOOK_HTTP_ERROR',
+          details: { statusCode: 503 },
+        }),
+        expect.any(String),
+      );
+    });
+  });
+
   it('Grace period runs out', async () => {
     readAndStart();
     email.run.mockImplementationOnce(
@@ -226,7 +278,7 @@ describe('JobExecutionImpl', () => {
       { reportRetries: 2, reportRetryDelayMs: 60_000, reportRetryMaxDelayMs: 60_000 },
     );
     readAndStart();
-    email.run.mockResolvedValueOnce({ result: RESULT });
+    email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
     jobs.update.mockRejectedValueOnce(new JobServiceUnavailableError({ reason: 'HTTP 503' }));
 
     const running = slowRetries.execute(ENTRY);
@@ -240,7 +292,7 @@ describe('JobExecutionImpl', () => {
 
   it('passes the abort signal to every call to job-service', async () => {
     readAndStart();
-    email.run.mockResolvedValueOnce({ result: RESULT });
+    email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
     jobs.update.mockResolvedValueOnce({ job: job({ status: 'completed' }) });
 
     await execution.execute(ENTRY);
@@ -272,7 +324,7 @@ describe('JobExecutionImpl', () => {
 
     it('Report succeeds after a retry', async () => {
       readAndStart();
-      email.run.mockResolvedValueOnce({ result: RESULT });
+      email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
       jobs.update
         .mockRejectedValueOnce(unavailable())
         .mockResolvedValueOnce({ job: job({ status: 'completed' }) });
@@ -283,7 +335,7 @@ describe('JobExecutionImpl', () => {
 
     it('Report keeps failing', async () => {
       readAndStart();
-      email.run.mockResolvedValueOnce({ result: RESULT });
+      email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
       for (let i = 0; i <= PARAMS.reportRetries; i += 1) {
         jobs.update.mockRejectedValueOnce(unavailable());
       }
@@ -321,7 +373,7 @@ describe('JobExecutionImpl', () => {
     it('reads the job again, then runs it', async () => {
       jobs.get.mockRejectedValueOnce(unavailable());
       readAndStart();
-      email.run.mockResolvedValueOnce({ result: RESULT });
+      email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
       jobs.update.mockResolvedValueOnce({ job: job({ status: 'completed' }) });
 
       await expect(executeWithWaits()).resolves.toEqual({ outcome: 'completed' });
@@ -346,7 +398,7 @@ describe('JobExecutionImpl', () => {
 
   it('Logs of a completed job', async () => {
     readAndStart();
-    email.run.mockResolvedValueOnce({ result: RESULT });
+    email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
     jobs.update.mockResolvedValueOnce({ job: job({ status: 'completed' }) });
 
     await execution.execute(ENTRY);
