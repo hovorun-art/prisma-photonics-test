@@ -1,0 +1,96 @@
+import type { Job, JobStatus } from '@job-queue/contracts';
+
+import { en } from '@/locales';
+
+import type {
+  DetailsJobPresentationRequest,
+  JobPresentation,
+  LifecycleJobPresentationRequest,
+  LifecycleJobPresentationResponse,
+  LifecycleStep,
+  ShortIdJobPresentationRequest,
+  TextJobPresentationResponse,
+  TimeJobPresentationRequest,
+  TotalTimeJobPresentationRequest,
+  TotalTimeJobPresentationResponse,
+} from './job-presentation';
+
+export interface JobPresenterParams {
+  readonly shortIdLength: number;
+}
+
+const FINAL_STATUSES: readonly JobStatus[] = ['completed', 'failed', 'cancelled'];
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+
+/** `JobPresentation` in the browser's time zone, with the strings from `locales/en.ts`. */
+export class JobPresenter implements JobPresentation {
+  private readonly time = new Intl.DateTimeFormat('en-GB', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hourCycle: 'h23',
+  });
+  private readonly date = new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' });
+
+  constructor(private readonly p: JobPresenterParams) {}
+
+  shortId(req: ShortIdJobPresentationRequest): TextJobPresentationResponse {
+    return { text: req.id.slice(0, this.p.shortIdLength) };
+  }
+
+  details(req: DetailsJobPresentationRequest): TextJobPresentationResponse {
+    const { job } = req;
+    switch (job.status) {
+      case 'completed':
+        return { text: job.result?.messageId ?? '' };
+      case 'failed':
+        return { text: job.error?.message ?? '' };
+      default:
+        return { text: en.details.emailWaiting(job.payload.to, job.payload.subject) };
+    }
+  }
+
+  listTime(req: TimeJobPresentationRequest): TextJobPresentationResponse {
+    return { text: this.time.format(new Date(req.at)) };
+  }
+
+  dateTime(req: TimeJobPresentationRequest): TextJobPresentationResponse {
+    const at = new Date(req.at);
+    return { text: `${this.date.format(at)}, ${this.time.format(at)}` };
+  }
+
+  totalTime(req: TotalTimeJobPresentationRequest): TotalTimeJobPresentationResponse {
+    const { startedAt, completedAt } = req.job;
+    if (!startedAt || !completedAt) return { text: null };
+    const seconds = (Date.parse(completedAt) - Date.parse(startedAt)) / MS_PER_SECOND;
+    if (seconds < SECONDS_PER_MINUTE) return { text: `${seconds.toFixed(1)}s` };
+    const whole = Math.round(seconds);
+    return {
+      text: `${Math.floor(whole / SECONDS_PER_MINUTE)}m ${whole % SECONDS_PER_MINUTE}s`,
+    };
+  }
+
+  lifecycle(req: LifecycleJobPresentationRequest): LifecycleJobPresentationResponse {
+    const { job } = req;
+    const finished = FINAL_STATUSES.includes(job.status);
+    const steps: LifecycleStep[] = [
+      { status: 'pending', reached: true, at: this.listTime({ at: job.createdAt }).text },
+      {
+        status: 'processing',
+        reached: job.startedAt !== null,
+        at: this.optionalTime(job.startedAt),
+      },
+      {
+        status: finished ? job.status : 'completed',
+        reached: finished,
+        at: finished ? this.optionalTime(job.completedAt) : null,
+      },
+    ];
+    return { steps };
+  }
+
+  private optionalTime(at: Job['startedAt']): string | null {
+    return at ? this.listTime({ at }).text : null;
+  }
+}
