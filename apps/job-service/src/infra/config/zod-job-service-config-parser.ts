@@ -1,12 +1,10 @@
-import { ZodBaseEnvSchema, ZodConfigParser } from '@job-queue/service-kit';
+import { ZodBaseEnvSchema, ZodConfigParser, ZodPagingEnvSchema } from '@job-queue/service-kit';
 import { z } from 'zod';
 
 import type { JobServiceConfig } from '../../domain/config/job-service-config.js';
 
 /** 1 MiB: room for a bulk of the default maximum of jobs at their largest payloads. */
 const DEFAULT_BODY_LIMIT_BYTES = 1_048_576;
-const DEFAULT_QUERY_DEFAULT_LIMIT = 20;
-const DEFAULT_QUERY_MAX_LIMIT = 100;
 const DEFAULT_ENQUEUE_TIMEOUT_MS = 2_000;
 const DEFAULT_BULK_MAX_JOBS = 100;
 const DEFAULT_STATS_RECENT_WINDOW_MINUTES = 24 * 60;
@@ -16,6 +14,7 @@ const baseEnv = new ZodBaseEnvSchema({
   defaultNodeEnv: 'development',
   portVariable: 'JOB_SERVICE_PORT',
 });
+const paging = new ZodPagingEnvSchema({ prefix: 'JOB_SERVICE' });
 
 /** job-service's environment variables (names and initial values in `.env.example`). */
 const JobServiceEnv = baseEnv
@@ -27,16 +26,7 @@ const JobServiceEnv = baseEnv
       .positive()
       .default(DEFAULT_BODY_LIMIT_BYTES),
     DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
-    JOB_SERVICE_QUERY_DEFAULT_LIMIT: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(DEFAULT_QUERY_DEFAULT_LIMIT),
-    JOB_SERVICE_QUERY_MAX_LIMIT: z.coerce
-      .number()
-      .int()
-      .positive()
-      .default(DEFAULT_QUERY_MAX_LIMIT),
+    ...paging.create().shape,
     JOB_SERVICE_ENQUEUE_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -54,16 +44,14 @@ const JobServiceEnv = baseEnv
       .positive()
       .default(DEFAULT_STATS_THROUGHPUT_WINDOW_MINUTES),
   })
-  .refine((env) => env.JOB_SERVICE_QUERY_DEFAULT_LIMIT <= env.JOB_SERVICE_QUERY_MAX_LIMIT, {
-    path: ['JOB_SERVICE_QUERY_DEFAULT_LIMIT'],
-    message: 'must not be above JOB_SERVICE_QUERY_MAX_LIMIT',
+  .superRefine((env, ctx) => {
+    paging.check({ env, ctx });
   })
   .transform((env): JobServiceConfig => ({
     ...baseEnv.toConfig({ env }).config,
     bodyLimitBytes: env.JOB_SERVICE_BODY_LIMIT_BYTES,
     databaseUrl: env.DATABASE_URL,
-    queryDefaultLimit: env.JOB_SERVICE_QUERY_DEFAULT_LIMIT,
-    queryMaxLimit: env.JOB_SERVICE_QUERY_MAX_LIMIT,
+    ...paging.toConfig({ env }).config,
     enqueueTimeoutMs: env.JOB_SERVICE_ENQUEUE_TIMEOUT_MS,
     bulkMaxJobs: env.JOB_SERVICE_BULK_MAX_JOBS,
     statsRecentWindowMinutes: env.JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES,

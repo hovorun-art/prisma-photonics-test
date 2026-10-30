@@ -4,6 +4,16 @@ export {
   QueryLimitExceededError,
   type QueryLimitExceededErrorParams,
 } from './domain/validation/query-limit-exceeded.error.js';
+export {
+  PAGE_LIMIT,
+  type PageLimit,
+  type ResolvePageLimitRequest,
+  type ResolvePageLimitResponse,
+} from './domain/validation/page-limit.js';
+export {
+  ConfiguredPageLimit,
+  type ConfiguredPageLimitParams,
+} from './infra/configured-page-limit.js';
 export { DomainError, type DomainErrorParams, type ErrorDetails } from './domain/domain-error.js';
 export {
   JobNotFoundError,

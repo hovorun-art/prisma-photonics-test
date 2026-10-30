@@ -21,7 +21,7 @@ import {
 } from '../../domain/jobs/errors/invalid-job-field.error.js';
 import { InvalidJobPayloadError } from '../../domain/jobs/errors/invalid-job-payload.error.js';
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
-import { QueryLimitExceededError } from '@job-queue/kernel';
+import type { PageLimit } from '@job-queue/kernel';
 import type { JobQueue } from '../../domain/jobs/job-queue.js';
 import type { JobChanges, JobRepository, NewJob } from '../../domain/jobs/job-repository.js';
 import type {
@@ -45,13 +45,11 @@ export interface JobServiceImplDeps {
   queue: JobQueue;
   clock: Clock;
   logger: Pick<LoggerService, 'warn'>;
+  /** The configured page size rule of the job query. */
+  pageLimit: PageLimit;
 }
 
 export interface JobServiceImplParams {
-  /** Page size of a query without `limit`. */
-  queryDefaultLimit: number;
-  /** Largest `limit` a query may ask for. */
-  queryMaxLimit: number;
   /** Most jobs one `createMany` may hold. */
   bulkMaxJobs: number;
 }
@@ -147,10 +145,7 @@ export class JobServiceImpl implements JobService {
   }
 
   async query(req: QueryJobServiceRequest): Promise<QueryJobServiceResponse> {
-    const limit = req.limit ?? this.p.queryDefaultLimit;
-    if (limit > this.p.queryMaxLimit) {
-      throw new QueryLimitExceededError({ maxLimit: this.p.queryMaxLimit });
-    }
+    const { limit } = this.d.pageLimit.resolve({ limit: req.limit });
     return this.d.repository.query({
       limit,
       offset: req.offset,

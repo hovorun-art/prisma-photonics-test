@@ -1,4 +1,10 @@
-import { CLOCK, type Clock, FetchJobServiceHttp, SystemClock } from '@job-queue/kernel';
+import {
+  CLOCK,
+  type Clock,
+  ConfiguredPageLimit,
+  FetchJobServiceHttp,
+  SystemClock,
+} from '@job-queue/kernel';
 import { Logger, Module } from '@nestjs/common';
 
 import {
@@ -51,10 +57,14 @@ import { JobGroupsController } from './job-groups.controller.js';
         childJobs: GroupChildJobs,
         config: JobGroupServiceConfig,
       ) =>
-        new JobGroupServiceImpl(
-          { repository, childJobs },
-          { queryDefaultLimit: config.queryDefaultLimit, queryMaxLimit: config.queryMaxLimit },
-        ),
+        new JobGroupServiceImpl({
+          repository,
+          childJobs,
+          pageLimit: new ConfiguredPageLimit({
+            defaultLimit: config.queryDefaultLimit,
+            maxLimit: config.queryMaxLimit,
+          }),
+        }),
       inject: [JOB_GROUP_REPOSITORY, GROUP_CHILD_JOBS, JOB_GROUP_SERVICE_CONFIG],
     },
     {

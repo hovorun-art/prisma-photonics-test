@@ -1,7 +1,11 @@
 import { randomUUID } from 'node:crypto';
 
 import type { JobGroup } from '@job-queue/contracts';
-import { JobServiceUnavailableError, QueryLimitExceededError } from '@job-queue/kernel';
+import {
+  JobServiceUnavailableError,
+  type PageLimit,
+  QueryLimitExceededError,
+} from '@job-queue/kernel';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { type DeepMockProxy, mockDeep } from 'vitest-mock-extended';
 
@@ -12,11 +16,10 @@ import type { JobGroupRepository } from '../../domain/groups/job-group-repositor
 
 import { JobGroupServiceImpl } from './job-group-service.impl.js';
 
-const PARAMS = { queryDefaultLimit: 20, queryMaxLimit: 100 };
-
 describe('JobGroupServiceImpl', () => {
   let repository: DeepMockProxy<JobGroupRepository>;
   let childJobs: DeepMockProxy<GroupChildJobs>;
+  let pageLimit: DeepMockProxy<PageLimit>;
   let service: JobGroupServiceImpl;
   const id = randomUUID();
 
@@ -37,7 +40,8 @@ describe('JobGroupServiceImpl', () => {
   beforeEach(() => {
     repository = mockDeep<JobGroupRepository>();
     childJobs = mockDeep<GroupChildJobs>();
-    service = new JobGroupServiceImpl({ repository, childJobs }, PARAMS);
+    pageLimit = mockDeep<PageLimit>();
+    service = new JobGroupServiceImpl({ repository, childJobs, pageLimit });
   });
 
   describe('create', () => {
@@ -70,31 +74,35 @@ describe('JobGroupServiceImpl', () => {
   });
 
   describe('query', () => {
-    it('uses the configured default limit without limit', async () => {
+    it('asks the page limit for the size and reads that page, newest first', async () => {
+      pageLimit.resolve.mockReturnValueOnce({ limit: 20 });
       repository.query.mockResolvedValueOnce({ items: [group(id)], total: 1 });
 
       await expect(service.query({ offset: 5 })).resolves.toEqual({
         items: [group(id)],
         total: 1,
       });
+      expect(pageLimit.resolve).toHaveBeenCalledExactlyOnceWith({ limit: undefined });
       expect(repository.query).toHaveBeenCalledExactlyOnceWith({ limit: 20, offset: 5 });
     });
 
-    it('passes limit and offset on, accepting the maximum itself', async () => {
+    it('passes an asked limit to the page limit and the offset on', async () => {
+      pageLimit.resolve.mockReturnValueOnce({ limit: 7 });
       repository.query.mockResolvedValueOnce({ items: [], total: 0 });
 
-      await service.query({ limit: 100, offset: 3 });
+      await service.query({ limit: 7, offset: 3 });
 
-      expect(repository.query).toHaveBeenCalledExactlyOnceWith({ limit: 100, offset: 3 });
+      expect(pageLimit.resolve).toHaveBeenCalledExactlyOnceWith({ limit: 7 });
+      expect(repository.query).toHaveBeenCalledExactlyOnceWith({ limit: 7, offset: 3 });
     });
 
-    it('throws the page-limit error one above the maximum and reads nothing', async () => {
-      const error = await service.query({ limit: 101, offset: 0 }).catch((e: unknown) => e);
-
-      expect(error).toBeInstanceOf(QueryLimitExceededError);
-      expect(error).toMatchObject({
-        details: { issues: [{ path: ['limit'], maximum: 100 }] },
+    it('passes the page-limit error on and reads nothing', async () => {
+      const failure = new QueryLimitExceededError({ maxLimit: 100 });
+      pageLimit.resolve.mockImplementationOnce(() => {
+        throw failure;
       });
+
+      await expect(service.query({ limit: 101, offset: 0 })).rejects.toBe(failure);
       expect(repository.query).not.toHaveBeenCalled();
     });
   });

@@ -84,3 +84,19 @@ export {
   type SwaggerApiDocsSetupStepParams,
 } from './infra/docs/swagger-api-docs-setup-step.js';
 export { DatabaseShutdown } from './app/database/database-shutdown.js';
+export type {
+  CheckPagingEnvSchemaRequest,
+  CheckPagingEnvSchemaResponse,
+  CreatePagingEnvSchemaResponse,
+  PagingConfig,
+  PagingEnv,
+  PagingEnvSchema,
+  PagingEnvShape,
+  PagingVariable,
+  ToConfigPagingEnvSchemaRequest,
+  ToConfigPagingEnvSchemaResponse,
+} from './domain/config/paging-env-schema.js';
+export {
+  ZodPagingEnvSchema,
+  type ZodPagingEnvSchemaParams,
+} from './infra/config/zod-paging-env-schema.js';
