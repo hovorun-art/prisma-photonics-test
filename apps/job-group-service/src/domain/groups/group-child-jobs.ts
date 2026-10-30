@@ -14,7 +14,7 @@ export interface CountGroupChildJobsRequest {
 }
 
 export interface CountGroupChildJobsResponse {
-  /** All jobs with the group's id, whatever their status. */
+  /** All jobs with the group's id, whatever their status; never below `completed + failed`. */
   total: number;
   /** Jobs in status `completed`. */
   completed: number;

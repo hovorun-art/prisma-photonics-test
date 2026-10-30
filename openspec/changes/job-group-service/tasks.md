@@ -43,9 +43,9 @@ Owns: `apps/job-group-service/src/infra/groups/prisma/**` · Depends on: 2 · Pa
 
 Owns: `apps/job-group-service/src/infra/groups/http/**` · Depends on: 2 · Parallel with: 3, 5
 
-- [ ] 4.1 Write failing integration tests in `http-group-child-jobs.int.test.ts` against a local `node:http` server: `count` sends three `GET /v1/jobs` requests with the `groupId` and `limit=1` (one without status, one with `status=completed`, one with `status=failed&status=cancelled`) and returns their `total`s; a network error (`UNREACHABLE_HTTP_URL`), a timeout and a 5xx throw `JobServiceUnavailableError`; a 4xx or a body that does not parse as `QueryJobsResponse` throws a non-domain error; see them fail
-- [ ] 4.2 Implement `HttpGroupChildJobs` (parallel calls, `AbortSignal.timeout`, response parsed with the contract schema); verify 4.1 passes
-- [ ] 4.3 Run the `test-case-reviewer` subagent on job-group-service integration tests (`src/infra/groups/http/http-group-child-jobs.int.test.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 4.1 Write failing integration tests in `http-group-child-jobs.int.test.ts` against a local `node:http` server: `count` sends three `GET /v1/jobs` requests with the `groupId` and `limit=1` (one without status, one with `status=completed`, one with `status=failed&status=cancelled`) and returns their `total`s; a network error (`UNREACHABLE_HTTP_URL`), a timeout and a 5xx throw `JobServiceUnavailableError`; a 4xx or a body that does not parse as `QueryJobsResponse` throws a non-domain error; see them fail
+- [x] 4.2 Implement `HttpGroupChildJobs` (parallel calls, `AbortSignal.timeout`, response parsed with the contract schema); verify 4.1 passes
+- [x] 4.3 Run the `test-case-reviewer` subagent on job-group-service integration tests (`src/infra/groups/http/http-group-child-jobs.int.test.ts`); add the missing cases it reports or note why they belong elsewhere
 
 ## 5. Group use cases and tracker
 

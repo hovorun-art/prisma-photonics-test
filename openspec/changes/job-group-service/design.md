@@ -206,11 +206,11 @@ routes and validation failures as in job-service.
 
 ## Risks / Trade-offs
 
-- [The three counts are read in three requests, not one snapshot] → a child finishing between
-  them can be counted in neither or in "finished" while the total was read before it existed.
-  Finished statuses are final and disjoint, so `completed + failed` can only reach `total` early if
-  a child is added between the calls; the total call is made last to rule that out (a child added
-  then raises `total`). "Neither" only delays finishing to the next tick.
+- [The three counts are read in three requests, not one snapshot] → they run in parallel, so a
+  child submitted and finished between them can be counted as finished but missing from the
+  total; the adapter returns `total = max(total, completed + failed)`, so the group never counts
+  more finished children than children. A child counted in neither only delays finishing to the
+  next tick. Finished statuses are final and disjoint, so no child is counted twice.
 - [A child is deleted before any poll counted it] → it never enters `total`; the highest-count rule
   covers deletions after the first sighting only. Documented in `DECISIONS.md`.
 - [Deleting a group races with the client's own submit] → the delete sees no children and removes
