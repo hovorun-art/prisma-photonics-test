@@ -141,9 +141,9 @@ export class ExecutionModule implements OnApplicationBootstrap, BeforeApplicatio
   ) {}
 
   /**
-   * Listens before taking entries, so no cancel of a job it starts is missed. Not awaited: while
-   * Redis is down the subscription waits for it, and jobs still run (a missed cancel only means a
-   * refused report).
+   * Starts listening before it starts taking entries. Not awaited: while Redis is down the
+   * subscription waits for it, and jobs still run. A cancel announced before the subscription is
+   * active is missed; job-service then refuses the job's late report, so it stays cancelled.
    */
   onApplicationBootstrap(): void {
     this.cancellations

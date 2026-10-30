@@ -45,7 +45,7 @@ Owns: `apps/job-execution-service/package.json`, `apps/job-execution-service/src
 - [x] 3.3 Write failing integration tests in `redis-job-cancellations.int.test.ts` against real Redis: a published `{ jobId }` reaches `onCancel`; an invalid message is ignored with a warning; `close()` closes its connection once (connection counter from `tests/support`). See them fail
 - [x] 3.4 Implement `RedisJobCancellations` (design D4); verify 3.3 passes
 - [x] 3.5 Update `bullmq-job-queue-consumer.int.test.ts` for entry ids with run (and a legacy id still decoded); adjust the consumer if needed; verify it passes
-- [x] 3.6 Write failing per-app e2e tests in `job-execution.e2e.test.ts` (cancellation delivered through a `mockDeep<JobCancellations>()` whose `listen` callback the test invokes): "Running job is cancelled" and "Other jobs keep running" seen through the mocked `JobRepository` calls; extend the shutdown test in `service.e2e.test.ts` to assert the cancellations connection is closed once. See them fail
+- [x] 3.6 Write failing per-app e2e tests in `job-execution.e2e.test.ts` (cancellation delivered through a `mockDeep<JobCancellations>()` whose `listen` callback the test invokes): "Running job is cancelled" and "Cancellation of a job this worker does not run" seen through the mocked `JobRepository` calls ("Other jobs keep running" stays in the unit test only: the test review found the e2e copy repeated it, and the id wiring is shown by the second e2e case); extend the shutdown test in `service.e2e.test.ts` to assert the cancellations connection is closed once. See them fail
 - [x] 3.7 Wire `JobCancellations` in `execution.module.ts` (start listening on bootstrap, calling `JobExecution.cancel`; close on shutdown); verify 3.6 passes
 - [x] 3.8 Run the `test-case-reviewer` subagent on job-execution-service unit tests (`src/infra/execution/job-execution.impl.test.ts`), integration tests (`src/infra/queue/redis-job-cancellations.int.test.ts`, `src/infra/queue/bullmq-job-queue-consumer.int.test.ts`) and per-app e2e (`test/e2e/job-execution.e2e.test.ts`, `test/e2e/service.e2e.test.ts`); add the missing cases it reports or note why they belong elsewhere
 
@@ -68,7 +68,7 @@ Owns: `tests/system-e2e/support/stack-jobs.ts`, `tests/system-e2e/jobs.spec.ts`,
 - [x] 5.1 Add system e2e tests, named after "Cancelled waiting job never runs" and "Running job is stopped on the full system" (API, `jobs.spec.ts`), "Retried job runs again on the full system" (API), "Cancel a job from the UI on the full system" and "Retry a job from the UI on the full system" (`job-ui.spec.ts`), using the setups of design D7; verify `npm run test:e2e` passes
 - [x] 5.2 Record in `DECISIONS.md` (design D8): cancellation over Redis pub/sub and the alternatives, the `run` counter in entry ids, the refused-report safety net and cancelling running jobs beyond the task text; add `PATCH /v1/jobs/:id` cancel and retry examples to `README.md`. Verify the text matches decisions.md
 - [x] 5.3 In `docs/roadmap/04-all-endpoints.md`, replace the `job-cancel` and `job-retry` rows with `job-status-change` and answer the open question on cancelling running jobs (yes, decided); verify the file reads so
-- [ ] 5.4 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run format:check`) and verify they all pass
+- [x] 5.4 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run format:check`) and verify they all pass
 
 ## Workflow follow-up
 

@@ -1,6 +1,7 @@
 import {
   CreateJobsBulkResponse,
   type ChangeJobStatusRequest,
+  FINISHED_JOB_STATUSES,
   JOBS_BULK_ROUTE,
   JOBS_ROUTE,
   Job,
@@ -22,7 +23,7 @@ const QUEUE_AHEAD = CONCURRENCY_PER_INSTANCE * EXECUTION_INSTANCES * 6;
 /** Webhook jobs tried to get one failed one; with the stack's failure rate one fails all but surely. */
 const WEBHOOK_TRIES = 40;
 
-const FINISHED: readonly Job['status'][] = ['completed', 'failed', 'cancelled'];
+const FINISHED: readonly Job['status'][] = FINISHED_JOB_STATUSES;
 
 export interface SubmitStackJobsApiRequest {
   /** The body of `POST /v1/jobs`. */

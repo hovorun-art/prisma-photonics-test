@@ -77,8 +77,8 @@ retry (failure retries inside one run would then need it too, so it has to be st
 - Contracts: `JOB_CANCELLATIONS_CHANNEL = 'job-cancellations'` and
   `JobCancellationMessage = z.object({ jobId: z.uuid() })` in `job-queue.ts`.
 - job-service: `JobQueue.cancel(req: CancelJobQueueRequest { jobId }): Promise<CancelJobQueueResponse>`.
-  `BullMqJobQueue` publishes with the queue's own Redis client (`await this.queue.client`), bounded by
-  the same timeout as enqueue; it throws `JobQueueUnavailableError` on failure, which `changeStatus`
+  `BullMqJobQueue` publishes on an ioredis connection of its own (BullMQ 6's client has no typed
+  `publish`), bounded by the same timeout as enqueue; it throws `JobQueueUnavailableError` on failure, which `changeStatus`
   logs and swallows (D2).
 - job-execution-service: a new domain port `JobCancellations extends Closable` with
   `listen(req: ListenJobCancellationsRequest { onCancel: (jobId) => void })`, implemented by
@@ -108,8 +108,8 @@ job changed meanwhile") and returns `'skipped'` instead of today's silent `'aban
 - `useChangeJobStatus(id)` (TanStack `useMutation`): on success `setQueryData(['job', id], job)` so
   the page shows the new state at once, and invalidates `['jobs']` and the statistics queries.
 - `CancelJobDialog` (like `DeleteJobDialog`): confirm button disabled while pending, API error message
-  in the dialog, closes on success. Retry: a `RetryJobButton` disabled while pending; its error is an
-  `Alert` (`role="alert"`) under the header actions.
+  in the dialog, closes on success. Retry: a `RetryJobButton` disabled while pending; its error is a
+  `<p role="alert">` next to the header actions. Cancel and Delete share one `ConfirmJobDialog`.
 - `JobPresenter.actions` uses `CANCELLABLE_JOB_STATUSES` (adds `processing`); `ComingSoon` wrappers
   are removed. New locale strings: cancel dialog title, description, confirm ("Cancel job") and
   dismiss ("Keep job" is taken by delete; reuse it).
