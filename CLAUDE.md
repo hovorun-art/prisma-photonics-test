@@ -200,7 +200,7 @@ validated at the edge (HTTP and queue consumers); inner layers trust their types
 closed list `ERROR_CODES` in `packages/kernel` (a code outside it does not compile; contracts build
 the `ErrorCode` schema from the same list), plus structured `details`. A new failure adds its code to
 `ERROR_CODES` first (today: `INTERNAL_UNAUTHORIZED`, `ROUTE_NOT_FOUND`, `VALIDATION_FAILED`,
-`PAYLOAD_TOO_LARGE`, `JOB_NOT_FOUND`, `JOB_STATUS_CONFLICT`, `QUEUE_UNAVAILABLE`, `JOB_SERVICE_UNAVAILABLE`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table. Code handles errors by class or `code`, never by
+`PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `JOB_NOT_FOUND`, `JOB_STATUS_CONFLICT`, `QUEUE_UNAVAILABLE`, `JOB_SERVICE_UNAVAILABLE`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table. Code handles errors by class or `code`, never by
 message text. `domain/` interfaces declare these errors and `infra/` code throws them; one exception filter per app maps
 codes to HTTP status and a uniform response body (`code`, `message`, `details`). Never throw strings
 or bare `Error` for expected failures; unknown errors, including framework errors with no code of

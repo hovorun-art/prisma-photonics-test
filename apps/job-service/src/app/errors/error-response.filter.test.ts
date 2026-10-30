@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 import { MalformedBodyError } from '../../domain/http/malformed-body.error.js';
 import { PayloadTooLargeError } from '../../domain/http/payload-too-large.error.js';
+import { UnsupportedMediaTypeError } from '../../domain/http/unsupported-media-type.error.js';
 import { JobQueueUnavailableError } from '../../domain/jobs/errors/job-queue-unavailable.error.js';
 import { ErrorResponseFilter } from './error-response.filter.js';
 
@@ -113,6 +114,16 @@ describe('ErrorResponseFilter', () => {
     const body = ErrorBody.parse(reply.body);
     expect(body.code).toBe('VALIDATION_FAILED');
     expect(body.details).toEqual({ issues: [expect.objectContaining({ path: ['name'] })] });
+  });
+
+  it('maps an UnsupportedMediaTypeError to 415 UNSUPPORTED_MEDIA_TYPE', () => {
+    new ErrorResponseFilter().catch(new UnsupportedMediaTypeError(), host);
+
+    expect(reply.status).toBe(415);
+    expect(ErrorBody.parse(reply.body)).toMatchObject({
+      code: 'UNSUPPORTED_MEDIA_TYPE',
+      details: {},
+    });
   });
 
   it('maps a PayloadTooLargeError to 413 PAYLOAD_TOO_LARGE with the limit', () => {

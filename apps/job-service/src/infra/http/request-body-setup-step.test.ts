@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { JOB_SERVICE_CONFIG } from '../../domain/config/job-service-config.js';
 import { MalformedBodyError } from '../../domain/http/malformed-body.error.js';
 import { PayloadTooLargeError } from '../../domain/http/payload-too-large.error.js';
+import { UnsupportedMediaTypeError } from '../../domain/http/unsupported-media-type.error.js';
 import { RequestBodySetupStep } from './request-body-setup-step.js';
 
 type ErrorMiddleware = (
@@ -48,6 +49,18 @@ describe('RequestBodySetupStep', () => {
 
     expect(mapped).toBeInstanceOf(PayloadTooLargeError);
     expect((mapped as PayloadTooLargeError).details).toEqual({ limitBytes: 2048 });
+  });
+
+  it('turns a body that cannot be decompressed into MalformedBodyError', () => {
+    const decompression = Object.assign(new Error('Decompression failed'), { status: 400 });
+
+    expect(setup().pass(decompression)).toBeInstanceOf(MalformedBodyError);
+  });
+
+  it('turns an unsupported content encoding or charset into UnsupportedMediaTypeError', () => {
+    for (const type of ['encoding.unsupported', 'charset.unsupported']) {
+      expect(setup().pass({ type })).toBeInstanceOf(UnsupportedMediaTypeError);
+    }
   });
 
   it('passes any other error on untouched', () => {

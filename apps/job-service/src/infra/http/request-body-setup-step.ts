@@ -12,17 +12,21 @@ import {
 } from '../../domain/config/job-service-config.js';
 import { MalformedBodyError } from '../../domain/http/malformed-body.error.js';
 import { PayloadTooLargeError } from '../../domain/http/payload-too-large.error.js';
+import { UnsupportedMediaTypeError } from '../../domain/http/unsupported-media-type.error.js';
 
-/** The part of a body parser error this step reads (`body-parser` sets `type`, and `limit` on size). */
+/** The part of a body parser error this step reads (`type`, `limit` on size, the HTTP `status`). */
 interface BodyParserError {
-  readonly type: unknown;
+  readonly type?: unknown;
   readonly limit?: unknown;
+  readonly status?: unknown;
 }
 
 /**
  * Sets the request body limit explicitly from the configured `bodyLimitBytes`, and turns the body
- * parser's errors into domain errors: invalid JSON becomes `MalformedBodyError` and a body over
- * the limit becomes `PayloadTooLargeError`. Nest would otherwise replace the first by a generic
+ * parser's errors into domain errors: invalid JSON becomes `MalformedBodyError`, a body over the
+ * limit becomes `PayloadTooLargeError`, a body that cannot be decompressed becomes
+ * `MalformedBodyError` too, and an unsupported content encoding or charset becomes
+ * `UnsupportedMediaTypeError`. Nest would otherwise replace the first by a generic
  * 400 and let the second through as an unknown error. Any other error is passed on untouched.
  */
 export class RequestBodySetupStep implements ServiceSetupStep<INestApplication> {
@@ -40,15 +44,22 @@ export class RequestBodySetupStep implements ServiceSetupStep<INestApplication> 
   }
 
   private mapBodyParserError(error: unknown): unknown {
-    if (typeof error !== 'object' || error === null || !('type' in error)) {
+    if (typeof error !== 'object' || error === null) {
       return error;
     }
-    const { type, limit } = error as BodyParserError;
+    const { type, limit, status } = error as BodyParserError;
     if (type === 'entity.parse.failed') {
       return new MalformedBodyError();
     }
     if (type === 'entity.too.large' && typeof limit === 'number') {
       return new PayloadTooLargeError({ limitBytes: limit });
+    }
+    if (type === 'encoding.unsupported' || type === 'charset.unsupported') {
+      return new UnsupportedMediaTypeError();
+    }
+    // A body that cannot be decompressed (e.g. `content-encoding: br` on plain JSON) carries no type.
+    if (type === undefined && status === 400) {
+      return new MalformedBodyError();
     }
     return error;
   }

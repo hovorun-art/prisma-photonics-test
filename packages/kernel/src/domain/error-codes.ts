@@ -12,6 +12,8 @@ export const ERROR_CODES = [
   'VALIDATION_FAILED',
   /** The request body is larger than the configured limit; `details.limitBytes` holds the limit. */
   'PAYLOAD_TOO_LARGE',
+  /** The request body uses a content encoding or charset job-service cannot read. */
+  'UNSUPPORTED_MEDIA_TYPE',
   /** No job has the requested id. */
   'JOB_NOT_FOUND',
   /** The operation is not allowed in the job's current status; `details.status` holds that status. */
