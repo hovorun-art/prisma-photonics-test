@@ -141,9 +141,11 @@ TTL toDateTime(ts) + INTERVAL <retention days> DAY
   possible addition, not relied on.
 - Retention: the `TTL` clause from config (`JOB_LOG_RETENTION_DAYS`).
 - Schema: job-service applies it at startup (`CREATE TABLE IF NOT EXISTS`, then `ALTER TABLE ...
-  MODIFY TTL` with the configured days) through a `JobLogSchema` port called from a module init
-  hook, so no second migration tool is needed and e2e files that do not test the log override the
-  port (and `JobLogStore`, `JobLogWriter`) with mocks instead of starting ClickHouse. Alternatives:
+  MODIFY TTL` with the configured days) through a `JobLogSchema` port that the writer applies at
+  the start of its loop and retries with its backoff, so a ClickHouse that is down at startup
+  delays the log, not the service. No second migration tool is needed, and e2e files that do not
+  test the log override the port (and `JobLogStore`, `JobLogWriter`) with mocks instead of
+  starting ClickHouse. Alternatives:
   a bootstrap setup step (every e2e file would need ClickHouse, since they apply the real
   `JOB_SERVICE_SETUP_STEPS`); a ClickHouse migration tool in the `migrate` image (a new library for
   one table).

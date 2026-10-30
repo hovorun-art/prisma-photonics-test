@@ -25,7 +25,10 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { expect } from 'vitest';
 import { type DeepMockProxy, mockDeep, mockReset } from 'vitest-mock-extended';
 
-import { AppModule } from '../../src/app/app.module.js';
+import { AppModule, type JobLogDestination } from '../../src/app/app.module.js';
+import { JOB_LOG_SCHEMA, type JobLogSchema } from '../../src/domain/job-log/job-log-schema.js';
+import { JOB_LOG_STORE, type JobLogStore } from '../../src/domain/job-log/job-log-store.js';
+import { JOB_LOG_WRITER, type JobLogWriter } from '../../src/domain/job-log/job-log-writer.js';
 import { JOB_QUEUE, type JobQueue } from '../../src/domain/jobs/job-queue.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../src/domain/jobs/job-repository.js';
 import { JOB_SERVICE_SETUP_STEPS } from '../../src/infra/bootstrap/job-service-bootstrap.js';
@@ -202,8 +205,19 @@ export class JobServiceUnderTest implements Closable {
     const queue = mockDeep<JobQueue>();
     const redis = mockDeep<RedisConnection>();
     const moduleRef = await Test.createTestingModule({
-      imports: [AppModule.forRoot({ config: parsed.config })],
+      imports: [
+        AppModule.forRoot({
+          config: parsed.config,
+          jobLogDestination: mockDeep<JobLogDestination>(),
+        }),
+      ],
     })
+      .overrideProvider(JOB_LOG_SCHEMA)
+      .useValue(mockDeep<JobLogSchema>())
+      .overrideProvider(JOB_LOG_STORE)
+      .useValue(mockDeep<JobLogStore>())
+      .overrideProvider(JOB_LOG_WRITER)
+      .useValue(mockDeep<JobLogWriter>())
       .overrideProvider(JOB_QUEUE)
       .useValue(queue)
       .overrideProvider(REDIS_CONNECTION)
