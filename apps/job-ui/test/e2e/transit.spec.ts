@@ -1,8 +1,11 @@
-import type { Job } from '@job-queue/contracts';
+import type { Job, JobLogEntry } from '@job-queue/contracts';
 import { expect, type Locator, type Page, test } from '@playwright/test';
 
 import { API_BASE_PATH } from '../../src/config/api-base-path';
-import { transitJobFixtures } from '../../src/features/jobs/testing/job-fixtures';
+import {
+  jobLogEntryFixtures,
+  transitJobFixtures,
+} from '../../src/features/jobs/testing/job-fixtures';
 import { en } from '../../src/locales/en';
 
 /** A 1×1 transparent PNG: every map tile, so the test needs no network. */
@@ -13,15 +16,31 @@ const BLANK_TILE = Buffer.from(
 
 interface MockTransitBackend {
   /** Answers job-ui's call for the job, and every tile request with a blank tile. */
-  install(req: { page: Page; job: Job }): Promise<void>;
+  install(req: { page: Page; job: Job; logs?: JobLogEntry[] }): Promise<void>;
 }
 
 /** job-service's GET of one job and the tile server, behind `page.route`. */
 class RoutedTransitBackend implements MockTransitBackend {
-  async install({ page, job }: { page: Page; job: Job }): Promise<void> {
+  async install({
+    page,
+    job,
+    logs = [],
+  }: {
+    page: Page;
+    job: Job;
+    logs?: JobLogEntry[];
+  }): Promise<void> {
     await page.route(`**${API_BASE_PATH}/v1/jobs/${job.id}`, (route) =>
       route.fulfill({ json: job }),
     );
+    await page.route(`**${API_BASE_PATH}/v1/jobs/${job.id}/logs**`, (route) => {
+      const after = new URL(route.request().url()).searchParams.get('after');
+      // The cursor is the index of an entry: only later entries are new.
+      const items = logs.filter((_, index) => after === null || index > Number(after));
+      return route.fulfill({
+        json: { items, nextCursor: logs.length === 0 ? after : String(logs.length - 1) },
+      });
+    });
     await page.route('**/tile.openstreetmap.org/**', (route) =>
       route.fulfill({ contentType: 'image/png', body: BLANK_TILE }),
     );
@@ -141,4 +160,24 @@ test('Route across the antimeridian: the Pacific route is drawn the short way, e
   expect(losAngeles.x).toBeGreaterThan(tokyo.x);
   expect(path!.width).toBeLessThan(mapBox!.width);
   expect(path!.x).toBeGreaterThanOrEqual(mapBox!.x);
+});
+
+test('Log on the transit report: the card shows the entries and keeps them after a follow-up poll', async ({
+  page,
+}) => {
+  const job = transitJobFixtures.completed();
+  const logs = [
+    jobLogEntryFixtures.build({ jobId: job.id, message: 'Attempt picked up' }),
+    jobLogEntryFixtures.build({ jobId: job.id, message: 'Handler finished' }),
+  ];
+  await backend.install({ page, job, logs });
+  const followUp = page.waitForResponse(
+    (response) => response.url().includes('/logs') && response.url().includes('after='),
+  );
+
+  await page.goto(`/jobs/${job.id}`);
+  await followUp;
+
+  const log = page.getByRole('region', { name: en.log.title });
+  await expect(log.getByRole('listitem')).toHaveCount(2);
 });

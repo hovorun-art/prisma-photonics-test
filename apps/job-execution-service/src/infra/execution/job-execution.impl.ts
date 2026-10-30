@@ -6,6 +6,7 @@ import {
   type UpdateJobRequest,
 } from '@job-queue/contracts';
 import {
+  type Clock,
   DomainError,
   JobNotFoundError,
   JobServiceUnavailableError,
@@ -25,11 +26,16 @@ import type {
 } from '../../domain/execution/job-execution.js';
 import { InvalidJobError } from '../../domain/jobs/errors/invalid-job.error.js';
 import type { JobRepository } from '../../domain/jobs/job-repository.js';
-import type { JobHandlers, RunJobHandlerResponse } from '../../domain/execution/job-handler.js';
+import type {
+  JobHandler,
+  JobHandlers,
+  RunJobHandlerResponse,
+} from '../../domain/execution/job-handler.js';
 
 export interface JobExecutionImplDeps {
   jobs: JobRepository;
   handlers: JobHandlers;
+  clock: Clock;
   logger: Pick<LoggerService, 'log' | 'warn' | 'error'>;
 }
 
@@ -76,6 +82,14 @@ interface ReportRequest {
  * stopped because the job was cancelled (`cancelled`).
  */
 type ReportResponse = 'delivered' | 'refused' | 'abandoned' | 'cancelled';
+
+interface RunHandlerRequest {
+  fields: EntryFields;
+  handler: JobHandler;
+  job: Job;
+  /** Aborted when the job is cancelled or the worker gives up at shutdown. */
+  signal: AbortSignal;
+}
 
 interface FailRequest {
   entry: RunningEntry;
@@ -144,6 +158,23 @@ export class JobExecutionImpl implements JobExecution {
     }
   }
 
+  /** Runs the handler and logs its start and end (with the time it took, also when it throws). */
+  private async runHandler({
+    fields,
+    handler,
+    job,
+    signal,
+  }: RunHandlerRequest): Promise<RunJobHandlerResponse> {
+    const startedAt = this.d.clock.now().now.getTime();
+    this.d.logger.log(fields, 'Handler started');
+    try {
+      return await handler.run({ job, attempt: fields.attempt, signal });
+    } finally {
+      const durationMs = this.d.clock.now().now.getTime() - startedAt;
+      this.d.logger.log({ ...fields, durationMs }, 'Handler finished');
+    }
+  }
+
   abort(): AbortJobExecutionResponse {
     this.running.abort(new Error('Running jobs were abandoned at shutdown'));
     return {};
@@ -158,6 +189,7 @@ export class JobExecutionImpl implements JobExecution {
 
   private async run({ entry }: EntryRequest): Promise<ExecuteJobExecutionResponse> {
     const { fields } = entry;
+    this.d.logger.log(fields, 'Attempt picked up');
     const read = await this.read({ entry });
     if ('outcome' in read) return read;
 
@@ -185,7 +217,7 @@ export class JobExecutionImpl implements JobExecution {
 
     let ran: RunJobHandlerResponse;
     try {
-      ran = await handler.run({ job, attempt: fields.attempt, signal: entry.signal });
+      ran = await this.runHandler({ fields, handler, job, signal: entry.signal });
     } catch (error) {
       if (entry.signal.aborted) return this.stopped({ entry });
       return await this.fail({ entry, error: this.toJobError(error) });

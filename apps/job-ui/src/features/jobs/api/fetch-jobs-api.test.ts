@@ -4,7 +4,7 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { jobFixtures, queueStatsFixtures } from '../testing/job-fixtures';
+import { jobFixtures, jobLogEntryFixtures, queueStatsFixtures } from '../testing/job-fixtures';
 import { ApiError } from './api-error';
 import { FetchJobsApi } from './fetch-jobs-api';
 
@@ -298,5 +298,56 @@ describe('FetchJobsApi', () => {
 
     expect(error).toBeInstanceOf(ApiError);
     expect(error).toMatchObject({ status: 200, code: null, message: 'API unreachable' });
+  });
+
+  describe('logs', () => {
+    const jobId = jobFixtures.build().id;
+    const entry = jobLogEntryFixtures.build({ jobId });
+
+    it('sends no parameters when none are given and returns the parsed page', async () => {
+      let search = '?unset';
+      const page = { items: [entry], nextCursor: 'MS0w' };
+      server.use(
+        http.get(`${BASE}/v1/jobs/${jobId}/logs`, ({ request }) => {
+          search = new URL(request.url).search;
+          return HttpResponse.json(page);
+        }),
+      );
+
+      await expect(api.logs({ id: jobId })).resolves.toEqual(page);
+      expect(search).toBe('');
+    });
+
+    it('sends after, limit and one level parameter per level when given', async () => {
+      let params = new URLSearchParams();
+      server.use(
+        http.get(`${BASE}/v1/jobs/${jobId}/logs`, ({ request }) => {
+          params = new URL(request.url).searchParams;
+          return HttpResponse.json({ items: [], nextCursor: null });
+        }),
+      );
+
+      await api.logs({ id: jobId, after: 'MS0w', limit: 50, level: ['warning', 'error'] });
+
+      expect(params.get('after')).toBe('MS0w');
+      expect(params.get('limit')).toBe('50');
+      expect(params.getAll('level')).toEqual(['warning', 'error']);
+    });
+
+    it('throws an ApiError with LOG_STORE_UNAVAILABLE on a 503', async () => {
+      server.use(
+        http.get(`${BASE}/v1/jobs/${jobId}/logs`, () =>
+          HttpResponse.json(
+            { code: 'LOG_STORE_UNAVAILABLE', message: 'Log store unavailable', details: {} },
+            { status: 503 },
+          ),
+        ),
+      );
+
+      const error = await api.logs({ id: jobId }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(ApiError);
+      expect(error).toMatchObject({ status: 503, code: 'LOG_STORE_UNAVAILABLE' });
+    });
   });
 });

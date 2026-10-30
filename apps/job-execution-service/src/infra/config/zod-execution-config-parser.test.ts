@@ -25,6 +25,7 @@ describe('ZodExecutionConfigParser', () => {
         port: 3001,
         jobServiceUrl: 'http://localhost:3000',
         internalServiceToken: 'a-long-random-token',
+        jobLogStreamMaxLength: 100000,
         concurrency: 5,
         emailSendMinMs: 1000,
         emailSendMaxMs: 3000,

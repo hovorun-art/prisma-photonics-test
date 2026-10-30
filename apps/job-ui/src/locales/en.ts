@@ -134,6 +134,28 @@ export const en = {
     deleteConfirm: 'Delete',
     deleteCancel: 'Keep job',
   },
+  log: {
+    title: 'Log',
+    loading: 'Loading log',
+    filterByLevel: 'Filter log by level',
+    levels: {
+      all: 'All',
+      info: 'Info',
+      warning: 'Warning',
+      error: 'Error',
+    },
+    empty: 'No log entries yet',
+    emptyLevel: {
+      info: 'No info entries',
+      warning: 'No warning entries',
+      error: 'No error entries',
+    },
+    unavailable: 'Log unavailable',
+    attempt: (attempt: number) => `Attempt ${attempt}`,
+    noAttempt: '—',
+    showMetadata: 'Show metadata',
+    hideMetadata: 'Hide metadata',
+  },
   groups: {
     title: 'Groups',
     subtitle: 'Jobs submitted together, followed as one group. Updates by polling.',

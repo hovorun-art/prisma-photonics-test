@@ -17,4 +17,6 @@ export interface BaseConfig extends CoreConfig {
   readonly redisUrl: string;
   /** The shared token of the internal API; every backend on the queue must hold the same one. */
   readonly internalServiceToken: string;
+  /** Most entries the job log stream keeps (trimmed approximately); older unread ones are lost. */
+  readonly jobLogStreamMaxLength: number;
 }

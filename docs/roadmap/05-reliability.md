@@ -15,7 +15,7 @@ logged. `DECISIONS.md` sections 1–4 are filled in along the way.
 | `concurrent-pickup` | Several workers never execute the same job twice | `email-job-execution` |
 | `crash-recovery` | A job held by a worker that dies is recovered and finishes | `concurrent-pickup` |
 | `idempotency` | Submitting with an idempotency key already used returns the existing job | `job-api` |
-| `job-log` | Each lifecycle step and attempt is logged and shown in the job details | `email-job-execution` |
+| `job-log-service` | Each lifecycle step and attempt is logged (ClickHouse, fed by the services' log lines through a Redis Stream) and shown in the job details | `email-job-execution` |
 
 ## Open questions
 

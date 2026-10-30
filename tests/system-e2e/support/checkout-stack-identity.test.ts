@@ -16,7 +16,7 @@ const MANY_CHECKOUTS = Array.from({ length: 5_000 }, (_, i) => `/work/checkout-$
 const FIRST_EPHEMERAL_PORT = 32_768;
 
 /** The host ports of a developer's own stack (`.env.example`). */
-const DEFAULT_PORTS = [3_000, 3_001, 3_002, 5_173, 5_432, 6_379, 8_080];
+const DEFAULT_PORTS = [3_000, 3_001, 3_002, 5_173, 5_432, 6_379, 8_080, 8_123];
 
 describe('CheckoutStackIdentity', () => {
   it('gives the same checkout the same project and ports every time', () => {

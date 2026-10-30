@@ -71,6 +71,32 @@ test('API proxy: /api/health through nginx reaches job-service with the prefix s
   expect(await response.json()).toEqual({ status: 'ok' });
 });
 
+test('Log of a completed job, Show only errors: the job page shows the steps of a run, filtered by level', async ({
+  page,
+}) => {
+  const subject = `System e2e log ${randomUUID()}`;
+
+  await page.goto('/jobs/new');
+  await page.getByLabel(en.submit.to, { exact: true }).fill('ops@acme.test');
+  await page.getByLabel(en.submit.subject, { exact: true }).fill(subject);
+  await page.getByLabel(en.submit.body, { exact: true }).fill('Logged by the system e2e');
+  await page.getByRole('button', { name: en.submit.submit }).click();
+  await expect(page).toHaveURL(/\/jobs\/[0-9a-f-]{36}$/);
+
+  // The card polls: the worker's entries arrive after the job runs and the batch is stored.
+  const log = page.getByRole('region', { name: en.log.title });
+  await expect(log).toContainText('Attempt picked up', { timeout: 30_000 });
+  await expect(log).toContainText('Job submitted');
+
+  const levels = log.getByRole('group', { name: en.log.filterByLevel });
+  await levels.getByRole('button', { name: en.log.levels.error }).click();
+  await expect(log).toContainText(en.log.emptyLevel.error);
+  await expect(log).not.toContainText('Job submitted');
+
+  await levels.getByRole('button', { name: en.log.levels.info }).click();
+  await expect(log).toContainText('Attempt picked up');
+});
+
 test('Cancel a job from the UI on the full system: the page shows it cancelled, also after a reload', async ({
   page,
   request,
