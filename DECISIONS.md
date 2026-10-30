@@ -151,10 +151,21 @@ queue statistics, the health pill, scheduling and idempotency fields are in plac
 a "Coming soon" tooltip; each later change enables its part. *Why:* reviewers see the target UI,
 and later changes only wire behaviour. *Trade-off:* visible controls that do nothing yet.
 
-**job-ui: the form validates with the API's own schema.** The submit form runs the shared
-`CreateEmailJobRequest` Zod schema before sending, and maps an API `VALIDATION_FAILED` answer to
+**job-ui: the form validates with the API's own schema.** The submit form uses `react-hook-form`
+with `zodResolver` on the shared `CreateEmailJobRequest` Zod schema before sending (chosen over
+`@tanstack/react-form` for its reach: ~62M against ~6M weekly downloads), and maps an API `VALIDATION_FAILED` answer to
 the same fields, so client and server rules cannot drift. Messages shown for client-side errors
-come from the locale file, not from Zod.
+come from the locale file, not from Zod. The `VALIDATION_FAILED` issues are read through a shared
+`ValidationFailedDetails` schema; an issue that matches no field is shown in the form's alert
+rather than dropped.
+
+**job-ui: errors are contained per page with `react-error-boundary`.** Each page sits in an error
+boundary inside the app frame, so an unexpected error, or a failed first load of the list or a job,
+replaces only that page with "Something went wrong" and a Reload button; the header keeps working.
+TanStack Query's `QueryErrorResetBoundary` makes Reload load the failed data again. *Alternatives:*
+react-router's `errorElement` (only in its data-router mode, which the app does not use) or a
+hand-written class component. *Why this library:* v6, ~20M weekly downloads, typed, React 19
+support, and the pattern TanStack Query documents. *Trade-off:* one more dependency.
 
 **Internal API protected by a shared service token.** Routes under `/internal` require
 `Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
