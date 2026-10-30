@@ -7,44 +7,29 @@ in its own spec (`email-job`, `webhook-job`).
 
 ## Requirements
 
-### Requirement: Clients can submit an email job
-`POST /v1/jobs` with type `email`, an email payload (`to`, `subject`, `body`) and optionally a
-priority and max attempts SHALL store a new job and answer HTTP 201 with the job. The new job has a
-generated UUID id, status `pending` and zero attempts; fields not used yet are `null`.
-
-#### Scenario: Valid email job is accepted
-- **WHEN** a client submits a job with type `email`, a valid payload, a priority and max attempts within their ranges
-- **THEN** the response has HTTP status 201 and the job with a UUID id, status `pending`, zero attempts, the given payload, priority and max attempts, a created timestamp, and `null` result, error, scheduled, started and completed fields
+### Requirement: Clients can submit a job
+`POST /v1/jobs` with a known job type, a payload valid for that type and optionally a priority and
+max attempts SHALL store a new job and answer HTTP 201 with the job. The new job has a generated
+UUID id, status `pending` and zero attempts; fields not used yet are `null`. Each type's payload is
+defined in its own spec.
 
 #### Scenario: Defaults are applied
-- **WHEN** a client submits an email job without priority and max attempts
+- **WHEN** a client submits a job without priority and max attempts
 - **THEN** the job has the default priority and the default max attempts defined by the shared job contract
 
 #### Scenario: Submitted job can be read back
-- **WHEN** a client submits an email job and then gets it by the returned id
+- **WHEN** a client submits a job and then gets it by the returned id
 - **THEN** the response is the same job
 
-### Requirement: Invalid submissions are rejected
+### Requirement: Invalid job submissions are rejected
 A submission whose type is not a known job type, whose payload does not match its type, or whose
-priority, max attempts or email fields fall outside the limits of the shared job contract SHALL be
-answered with HTTP 400 and `VALIDATION_FAILED`, listing each issue with its field, and SHALL store
-nothing.
+priority or max attempts fall outside the limits of the shared job contract SHALL be answered with
+HTTP 400 and `VALIDATION_FAILED`, listing each issue with its field, and SHALL store nothing. The
+payload rules of each type are in that type's spec.
 
 #### Scenario: Unknown job type
 - **WHEN** a client submits a job with a type that is not a known job type
 - **THEN** the response has HTTP status 400, the code `VALIDATION_FAILED` and an issue for the `type` field, and no job is stored
-
-#### Scenario: Invalid email address
-- **WHEN** a client submits an email job whose `to` is not an email address
-- **THEN** the response has HTTP status 400, the code `VALIDATION_FAILED` and an issue for the `payload.to` field
-
-#### Scenario: Empty subject
-- **WHEN** a client submits an email job with an empty `subject`
-- **THEN** the response has HTTP status 400, the code `VALIDATION_FAILED` and an issue for the `payload.subject` field
-
-#### Scenario: Email field too long
-- **WHEN** a client submits an email job whose `subject` or `body` is longer than the contract's limit
-- **THEN** the response has HTTP status 400, the code `VALIDATION_FAILED` and an issue for that field
 
 #### Scenario: Priority out of range
 - **WHEN** a client submits a job whose priority is not an integer within the contract's priority range
