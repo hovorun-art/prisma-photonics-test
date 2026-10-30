@@ -8,8 +8,11 @@ import { UNREACHABLE_HTTP_URL } from '@job-queue/test-support';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { InvalidJobError } from '../../domain/jobs/errors/invalid-job.error.js';
-import { JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
-import { JobServiceUnavailableError } from '../../domain/jobs/errors/job-service-unavailable.error.js';
+import {
+  JobNotFoundError,
+  JobServiceUnavailableError,
+  JobStatusConflictError,
+} from '@job-queue/kernel';
 import { HttpJobRepository } from './http-job-repository.js';
 
 const TOKEN = 'int-test-token';

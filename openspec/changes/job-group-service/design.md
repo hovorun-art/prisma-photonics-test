@@ -35,9 +35,10 @@ See proposal.md for why; requirements are in `specs/job-groups`, `specs/system-h
 ## Decisions
 
 ### Shared code moves before the new app (no logic written twice)
-- `ErrorResponseFilter`, `HTTP_STATUS_BY_ERROR_CODE` and `VALIDATION_FAILED_MESSAGE` move from
-  `apps/job-service/src/app/errors` and `domain/http` to service-kit (`app/errors/`,
-  `domain/http/`); job-service imports them. Their tests move with them. The table stays the one
+- `ErrorResponseFilter` and `HTTP_STATUS_BY_ERROR_CODE` move from `apps/job-service/src/app/errors`
+  to service-kit (`app/errors/`); `VALIDATION_FAILED_MESSAGE` and the page-limit error
+  (`QueryLimitExceededError`) are framework-free and imported by job-service's `domain/`, so they
+  move to the kernel (`domain/validation/`) instead; job-service imports them. Their tests move with them. The table stays the one
   place where a code gets its status, now shared by both HTTP services.
 - `SwaggerApiDocsSetupStep` moves to service-kit (`infra/docs/`); each app keeps its own params
   constant (`JOB_SERVICE_API_DOCS_PARAMS`, `JOB_GROUP_SERVICE_API_DOCS_PARAMS`).
@@ -89,7 +90,7 @@ prisma/schema.prisma, prisma/migrations/, prisma.config.ts
 test/e2e/{service,errors,groups}.e2e.test.ts, job-group-service-under-test.ts
 ```
 The page-limit error (`QueryLimitExceededError` in job-service) is needed here too: it moves to
-service-kit with the filter in group 1 and both apps use it, instead of a copy.
+the kernel in group 1 and both apps use it, instead of a copy.
 
 ### Config
 From the service-kit base (`NODE_ENV`, `LOG_LEVEL`, port) plus: `JOB_GROUP_SERVICE_PORT` (3002),
@@ -187,7 +188,7 @@ routes and validation failures as in job-service.
   job-service, wait until the group is `completed`; needs `job-bulk-create` merged.
 
 ### Module boundaries for the task groups
-1. Shared extraction (service-kit filter, docs step and page-limit error; kernel error and codes)
+1. Shared extraction (service-kit filter and docs step; kernel errors, validation message and codes)
    with job-service and job-execution-service switched over, all checks green.
 2. Contracts (`groups/job-group.ts`).
 3. App skeleton: workspace, config, bootstrap, Prisma schema and migration, database module,

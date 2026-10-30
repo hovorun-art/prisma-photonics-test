@@ -2,6 +2,7 @@ export {
   LOG_LEVELS,
   NODE_ENVS,
   type BaseConfig,
+  type CoreConfig,
   type LogLevel,
   type NodeEnv,
 } from './domain/config/base-config.js';
@@ -9,6 +10,12 @@ export type {
   BaseEnv,
   BaseEnvSchema,
   BaseEnvShape,
+  CoreEnv,
+  CoreEnvSchema,
+  CoreEnvShape,
+  CreateCoreEnvSchemaResponse,
+  ToConfigCoreEnvSchemaRequest,
+  ToConfigCoreEnvSchemaResponse,
   CreateBaseEnvSchemaResponse,
   ToConfigBaseEnvSchemaRequest,
   ToConfigBaseEnvSchemaResponse,
@@ -50,6 +57,10 @@ export {
   ZodBaseEnvSchema,
   type ZodBaseEnvSchemaParams,
 } from './infra/config/zod-base-env-schema.js';
+export {
+  ZodCoreEnvSchema,
+  type ZodCoreEnvSchemaParams,
+} from './infra/config/zod-core-env-schema.js';
 export { ZodConfigParser, type ZodConfigParserParams } from './infra/config/zod-config-parser.js';
 export {
   NestServiceBootstrap,
@@ -64,3 +75,11 @@ export {
   ServiceConfigModule,
   type ServiceConfigModuleParams,
 } from './app/config/service-config.module.js';
+export {
+  ErrorResponseFilter,
+  HTTP_STATUS_BY_ERROR_CODE,
+} from './app/errors/error-response.filter.js';
+export {
+  SwaggerApiDocsSetupStep,
+  type SwaggerApiDocsSetupStepParams,
+} from './infra/docs/swagger-api-docs-setup-step.js';

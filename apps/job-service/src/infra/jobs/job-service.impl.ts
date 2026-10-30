@@ -16,7 +16,7 @@ import type { LoggerService } from '@nestjs/common';
 
 import { InvalidJobPayloadError } from '../../domain/jobs/errors/invalid-job-payload.error.js';
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
-import { QueryLimitExceededError } from '../../domain/jobs/errors/query-limit-exceeded.error.js';
+import { QueryLimitExceededError } from '@job-queue/kernel';
 import type { JobQueue } from '../../domain/jobs/job-queue.js';
 import type { JobChanges, JobRepository } from '../../domain/jobs/job-repository.js';
 import type {

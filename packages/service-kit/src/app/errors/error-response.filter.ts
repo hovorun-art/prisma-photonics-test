@@ -1,5 +1,5 @@
 import type { ErrorBody } from '@job-queue/contracts';
-import { DomainError, type ErrorCode } from '@job-queue/kernel';
+import { DomainError, type ErrorCode, VALIDATION_FAILED_MESSAGE } from '@job-queue/kernel';
 import {
   type ArgumentsHost,
   Catch,
@@ -11,8 +11,6 @@ import {
 import { ZodValidationException } from 'nestjs-zod';
 import { ZodError } from 'zod';
 
-import { VALIDATION_FAILED_MESSAGE } from '../../domain/http/validation-failed.js';
-
 /** HTTP status per error code. A new code in `ERROR_CODES` does not compile until it has a row here. */
 export const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<ErrorCode, HttpStatus>> = {
   INTERNAL_UNAUTHORIZED: HttpStatus.UNAUTHORIZED,
@@ -23,8 +21,9 @@ export const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<ErrorCode, HttpStatus>> 
   JOB_NOT_FOUND: HttpStatus.NOT_FOUND,
   JOB_STATUS_CONFLICT: HttpStatus.CONFLICT,
   QUEUE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
-  // Thrown only inside job-execution-service; the row keeps the table complete.
   JOB_SERVICE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
+  JOB_GROUP_NOT_FOUND: HttpStatus.NOT_FOUND,
+  JOB_GROUP_NOT_EMPTY: HttpStatus.CONFLICT,
   INTERNAL_ERROR: HttpStatus.INTERNAL_SERVER_ERROR,
 };
 
@@ -34,12 +33,12 @@ interface JsonResponse {
 }
 
 /**
- * The one exception filter of job-service. A `DomainError` becomes the status of its code and the
+ * The one exception filter of every HTTP service. A `DomainError` becomes the status of its code and the
  * body `{code, message, details}`; anything unexpected is logged with its stack and answered with
  * a generic 500 `INTERNAL_ERROR`. Framework errors are mapped to codes: an unknown route is
  * `ROUTE_NOT_FOUND`, a Zod validation failure is `VALIDATION_FAILED` with the issues (and their
- * field paths) in `details`. Any other framework error (body parser errors are mapped to domain errors by
- * `RequestBodySetupStep`) is unexpected.
+ * field paths) in `details`. Any other framework error (a service that parses bodies maps the body parser's
+ * errors to domain errors itself) is unexpected.
  */
 @Catch()
 export class ErrorResponseFilter implements ExceptionFilter {

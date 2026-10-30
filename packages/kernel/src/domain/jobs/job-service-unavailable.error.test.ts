@@ -7,6 +7,7 @@ describe('JobServiceUnavailableError', () => {
     const error = new JobServiceUnavailableError({ reason: 'HTTP 503' });
 
     expect(error.code).toBe('JOB_SERVICE_UNAVAILABLE');
+    expect(error.message).toBe('job-service is unavailable');
     expect(error.details).toEqual({ reason: 'HTTP 503' });
   });
 });

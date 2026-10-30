@@ -1,9 +1,18 @@
 export { ERROR_CODES, type ErrorCode } from './domain/error-codes.js';
+export { VALIDATION_FAILED_MESSAGE } from './domain/validation/validation-failed.js';
+export {
+  QueryLimitExceededError,
+  type QueryLimitExceededErrorParams,
+} from './domain/validation/query-limit-exceeded.error.js';
 export { DomainError, type DomainErrorParams, type ErrorDetails } from './domain/domain-error.js';
 export {
   JobNotFoundError,
   type JobNotFoundErrorParams,
 } from './domain/jobs/job-not-found.error.js';
+export {
+  JobServiceUnavailableError,
+  type JobServiceUnavailableErrorParams,
+} from './domain/jobs/job-service-unavailable.error.js';
 export {
   JobStatusConflictError,
   type JobStatusConflictErrorParams,

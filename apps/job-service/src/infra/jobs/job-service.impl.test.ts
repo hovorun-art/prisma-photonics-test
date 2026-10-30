@@ -9,7 +9,7 @@ import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 import { InvalidJobPayloadError } from '../../domain/jobs/errors/invalid-job-payload.error.js';
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
 import { JobQueueUnavailableError } from '../../domain/jobs/errors/job-queue-unavailable.error.js';
-import { QueryLimitExceededError } from '../../domain/jobs/errors/query-limit-exceeded.error.js';
+import { QueryLimitExceededError } from '@job-queue/kernel';
 import type { JobQueue } from '../../domain/jobs/job-queue.js';
 import type { JobRepository } from '../../domain/jobs/job-repository.js';
 import { JobServiceImpl } from './job-service.impl.js';

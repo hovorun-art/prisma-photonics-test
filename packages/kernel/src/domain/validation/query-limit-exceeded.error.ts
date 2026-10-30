@@ -1,6 +1,6 @@
-import { DomainError } from '@job-queue/kernel';
+import { DomainError } from '../domain-error.js';
 
-import { VALIDATION_FAILED_MESSAGE } from '../../http/validation-failed.js';
+import { VALIDATION_FAILED_MESSAGE } from './validation-failed.js';
 
 export interface QueryLimitExceededErrorParams {
   /** The configured maximum page size. */
@@ -8,7 +8,7 @@ export interface QueryLimitExceededErrorParams {
 }
 
 /**
- * A job query asked for more items than the configured maximum page size. It is a validation
+ * A paged query asked for more items than the configured maximum page size. It is a validation
  * failure whose issue has the same shape as a schema issue, so clients handle both alike.
  */
 export class QueryLimitExceededError extends DomainError<'VALIDATION_FAILED'> {
