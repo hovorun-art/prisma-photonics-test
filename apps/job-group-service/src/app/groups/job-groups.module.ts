@@ -1,4 +1,4 @@
-import { CLOCK, type Clock, SystemClock } from '@job-queue/kernel';
+import { CLOCK, type Clock, FetchJobServiceHttp, SystemClock } from '@job-queue/kernel';
 import { Logger, Module } from '@nestjs/common';
 
 import {
@@ -37,8 +37,10 @@ import { JobGroupsController } from './job-groups.controller.js';
       provide: GROUP_CHILD_JOBS,
       useFactory: (config: JobGroupServiceConfig): GroupChildJobs =>
         new HttpGroupChildJobs({
-          baseUrl: config.jobServiceUrl,
-          timeoutMs: config.jobServiceTimeoutMs,
+          http: new FetchJobServiceHttp(
+            { fetch },
+            { baseUrl: config.jobServiceUrl, timeoutMs: config.jobServiceTimeoutMs },
+          ),
         }),
       inject: [JOB_GROUP_SERVICE_CONFIG],
     },

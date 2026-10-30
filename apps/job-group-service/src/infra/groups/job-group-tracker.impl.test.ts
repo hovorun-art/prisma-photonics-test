@@ -190,6 +190,25 @@ describe('JobGroupTrackerImpl', () => {
       );
     });
 
+    it('A child was cancelled: the finished group with one cancelled child is failed', async () => {
+      oneRunning(running(id, 2));
+      // GroupChildJobs counts cancelled children in `failed` (see the HttpGroupChildJobs test).
+      childJobs.count.mockResolvedValueOnce({ total: 2, completed: 1, failed: 1 });
+      repository.recordCheck.mockResolvedValueOnce({ recorded: true });
+
+      await tracker.checkRunning();
+
+      expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith({
+        id,
+        status: 'failed',
+        total: 2,
+        completed: 1,
+        failed: 1,
+        checkedAt: NOW,
+        finishedAt: NOW,
+      });
+    });
+
     it('A failed child does not stop the others: only count is called, never anything that changes jobs', async () => {
       oneRunning(running(id));
       childJobs.count.mockResolvedValueOnce({ total: 3, completed: 0, failed: 1 });

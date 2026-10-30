@@ -1,5 +1,5 @@
-import { JOBS_ROUTE, QueryJobsResponse } from '@job-queue/contracts';
-import { JobServiceUnavailableError } from '@job-queue/kernel';
+import { JOBS_ROUTE, type JobStatus, QueryJobsResponse } from '@job-queue/contracts';
+import type { JobServiceHttp } from '@job-queue/kernel';
 
 import type {
   CountGroupChildJobsRequest,
@@ -7,27 +7,25 @@ import type {
   GroupChildJobs,
 } from '../../../domain/groups/group-child-jobs.js';
 
-export interface HttpGroupChildJobsParams {
-  /** job-service's base URL, e.g. `http://job-service:3000`. */
-  baseUrl: string;
-  /** How long one call may take before job-service counts as unavailable. */
-  timeoutMs: number;
+export interface HttpGroupChildJobsDeps {
+  /** job-service's public API; it throws `JobServiceUnavailableError` for an outage. */
+  http: JobServiceHttp;
 }
 
 interface TotalRequest {
   groupId: string;
-  statuses: string[];
+  statuses: JobStatus[];
 }
 
 /**
  * Counts a group's children with three parallel `GET /v1/jobs?groupId=...&limit=1` calls that read
  * only `total`: all jobs, `completed`, and `failed` plus `cancelled`; `total` is never below the
- * finished ones. Network errors, timeouts and
- * 5xx become `JobServiceUnavailableError`; any other refusal or a body that does not parse as
- * `QueryJobsResponse` is thrown as a plain `Error` (unexpected).
+ * finished ones. An unavailable job-service surfaces as `JobServiceUnavailableError`; any other
+ * refusal or a body that does not parse as `QueryJobsResponse` is thrown as a plain `Error`
+ * (unexpected).
  */
 export class HttpGroupChildJobs implements GroupChildJobs {
-  constructor(private readonly p: HttpGroupChildJobsParams) {}
+  constructor(private readonly d: HttpGroupChildJobsDeps) {}
 
   async count(req: CountGroupChildJobsRequest): Promise<CountGroupChildJobsResponse> {
     const [total, completed, failed] = await Promise.all([
@@ -41,28 +39,19 @@ export class HttpGroupChildJobs implements GroupChildJobs {
   }
 
   private async total(req: TotalRequest): Promise<number> {
-    const url = new URL(JOBS_ROUTE, this.p.baseUrl);
-    url.searchParams.set('groupId', req.groupId);
-    url.searchParams.set('limit', '1');
-    for (const status of req.statuses) url.searchParams.append('status', status);
-
-    let response: Response;
-    try {
-      response = await fetch(url, { signal: AbortSignal.timeout(this.p.timeoutMs) });
-    } catch (error) {
-      throw new JobServiceUnavailableError({
-        reason: error instanceof Error ? error.message : String(error),
-      });
-    }
-
-    if (response.status >= 500) {
-      throw new JobServiceUnavailableError({ reason: `HTTP ${response.status}` });
-    }
-    if (!response.ok) {
+    const response = await this.d.http.send({
+      method: 'GET',
+      path: JOBS_ROUTE,
+      query: [
+        ['groupId', req.groupId],
+        ['limit', '1'],
+        ...req.statuses.map((status): [string, string] => ['status', status]),
+      ],
+    });
+    if (response.status !== 200) {
       throw new Error(`job-service refused the group count with HTTP ${response.status}`);
     }
-
-    const parsed = QueryJobsResponse.safeParse(await response.json().catch(() => undefined));
+    const parsed = QueryJobsResponse.safeParse(response.body);
     if (!parsed.success) {
       throw new Error('job-service answered the group count with an unexpected body', {
         cause: parsed.error,

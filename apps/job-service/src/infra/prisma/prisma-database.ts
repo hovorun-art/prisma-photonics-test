@@ -1,7 +1,6 @@
-import type { CloseClosableResponse } from '@job-queue/kernel';
+import type { CloseClosableResponse, Database, PingDatabaseResponse } from '@job-queue/kernel';
 import { PrismaPg } from '@prisma/adapter-pg';
 
-import type { Database, PingDatabaseResponse } from '../../domain/database/database.js';
 import { PrismaClient } from './generated/client.js';
 
 /** Name of job-service's connections in `pg_stat_activity`. */

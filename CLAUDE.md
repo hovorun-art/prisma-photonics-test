@@ -163,7 +163,8 @@ packages/kernel             framework-free: Clock, Random, Sleeper ports, Domain
                             SignalGracefulShutdown, ProcessFatalErrorHandler, the job errors shared by
                             the backends (JobNotFoundError, JobStatusConflictError,
                             JobServiceUnavailableError), QueryLimitExceededError and the validation
-                            message
+                            message, the Database port (DATABASE), the JobServiceHttp port with
+                            FetchJobServiceHttp (the one HTTP client of job-service)
 packages/contracts          Zod schemas and inferred types: health response, error body, internal
                             API prefix and token scheme, the Job entity (jobs/job.ts: statuses,
                             types, limits, payloads, results, requests), the queue message and the
@@ -171,7 +172,8 @@ packages/contracts          Zod schemas and inferred types: health response, err
 packages/service-kit        shared NestJS pieces for the backends: NestServiceBootstrap, core config
                             (NODE_ENV, LOG_LEVEL, port) and base config (+ REDIS_URL,
                             INTERNAL_SERVICE_TOKEN), logging with redaction, Redis module, health
-                            module, config module, the ErrorResponseFilter and the Swagger setup step
+                            module, config module, the ErrorResponseFilter, the Swagger setup step and
+                            DatabaseShutdown
 tests/support               test-only helpers for the integration and e2e tests (Redis and Postgres
                             connection counters, Prisma migrate deploy for test databases,
                             unreachable addresses); a dev dependency, never in a runtime image

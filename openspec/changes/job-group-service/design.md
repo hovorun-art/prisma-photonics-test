@@ -44,6 +44,13 @@ See proposal.md for why; requirements are in `specs/job-groups`, `specs/system-h
   constant (`JOB_SERVICE_API_DOCS_PARAMS`, `JOB_GROUP_SERVICE_API_DOCS_PARAMS`).
 - `JobServiceUnavailableError` moves from job-execution-service's domain to the kernel
   (`domain/jobs/`), next to `JobNotFoundError`; both clients of job-service throw it.
+- The `Database` port (ping, close) and its `DATABASE` token move to the kernel, and closing the pool
+  on shutdown is one service-kit provider (`DatabaseShutdown`); each app's `PrismaModule` keeps only
+  its own `PrismaDatabase` factory (after the change verifier).
+- The HTTP call to job-service (JSON, a timeout per call, network error/timeout/5xx →
+  `JobServiceUnavailableError`) is one kernel port and class, `JobServiceHttp` /
+  `FetchJobServiceHttp` (`fetch` injected); `HttpJobRepository` (job-execution-service) and
+  `HttpGroupChildJobs` build on it (after the change verifier).
 - `RequestBodySetupStep` stays in job-service: no group route takes a body, and `job-bulk-create`
   edits that file (moving it now would collide). job-group-service turns Nest's body parser off
   (through a `NestServiceBootstrap` option, added if it has none), so a body sent to a group route

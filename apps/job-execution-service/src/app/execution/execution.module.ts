@@ -1,4 +1,5 @@
 import {
+  FetchJobServiceHttp,
   RANDOM,
   type Random,
   SLEEPER,
@@ -41,11 +42,15 @@ import { WebhookJobHandler } from '../../infra/webhooks/webhook-job-handler.js';
     {
       provide: JOB_REPOSITORY,
       useFactory: (config: ExecutionConfig): JobRepository =>
-        new HttpJobRepository({
-          baseUrl: config.jobServiceUrl,
-          serviceToken: config.internalServiceToken,
-          timeoutMs: config.jobServiceTimeoutMs,
-        }),
+        new HttpJobRepository(
+          {
+            http: new FetchJobServiceHttp(
+              { fetch },
+              { baseUrl: config.jobServiceUrl, timeoutMs: config.jobServiceTimeoutMs },
+            ),
+          },
+          { serviceToken: config.internalServiceToken },
+        ),
       inject: [EXECUTION_CONFIG],
     },
     {

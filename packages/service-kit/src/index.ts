@@ -83,3 +83,4 @@ export {
   SwaggerApiDocsSetupStep,
   type SwaggerApiDocsSetupStepParams,
 } from './infra/docs/swagger-api-docs-setup-step.js';
+export { DatabaseShutdown } from './app/database/database-shutdown.js';

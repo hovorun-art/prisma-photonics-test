@@ -1,9 +1,9 @@
-import type { Closable } from '@job-queue/kernel';
+import type { Closable } from './closable.js';
 
-/** Token for job-service's database connection pool. */
+/** Token for a service's database connection pool. */
 export const DATABASE = Symbol('Database');
 
-/** job-service's Postgres database; no other service connects to it. */
+/** A service's own database connection pool; no other service connects to that data. */
 export interface Database extends Closable {
   /** Resolves when the database answers a trivial query. */
   ping(): Promise<PingDatabaseResponse>;

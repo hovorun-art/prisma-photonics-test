@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 
 import { JOBS_ROUTE, type Job } from '@job-queue/contracts';
-import { DomainError, JobServiceUnavailableError } from '@job-queue/kernel';
+import { DomainError, FetchJobServiceHttp, JobServiceUnavailableError } from '@job-queue/kernel';
 import { UNREACHABLE_HTTP_URL } from '@job-queue/test-support';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -48,7 +48,9 @@ describe('HttpGroupChildJobs against a stub job-service', () => {
     };
 
   const childJobs = (url = baseUrl, timeoutMs = TIMEOUT_MS): HttpGroupChildJobs =>
-    new HttpGroupChildJobs({ baseUrl: url, timeoutMs });
+    new HttpGroupChildJobs({
+      http: new FetchJobServiceHttp({ fetch }, { baseUrl: url, timeoutMs }),
+    });
 
   const failureOf = async (): Promise<unknown> =>
     childJobs()

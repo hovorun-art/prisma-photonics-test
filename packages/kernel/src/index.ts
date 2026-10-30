@@ -14,6 +14,17 @@ export {
   type JobServiceUnavailableErrorParams,
 } from './domain/jobs/job-service-unavailable.error.js';
 export {
+  JOB_SERVICE_HTTP,
+  type JobServiceHttp,
+  type SendJobServiceHttpRequest,
+  type SendJobServiceHttpResponse,
+} from './domain/jobs/job-service-http.js';
+export {
+  FetchJobServiceHttp,
+  type FetchJobServiceHttpDeps,
+  type FetchJobServiceHttpParams,
+} from './infra/fetch-job-service-http.js';
+export {
   JobStatusConflictError,
   type JobStatusConflictErrorParams,
 } from './domain/jobs/job-status-conflict.error.js';
@@ -46,6 +57,7 @@ export { SystemRandom } from './infra/system-random.js';
 export { AbortableSleeper } from './infra/abortable-sleeper.js';
 export { SystemSleeper } from './infra/system-sleeper.js';
 export type { Closable, CloseClosableResponse } from './domain/closable.js';
+export { DATABASE, type Database, type PingDatabaseResponse } from './domain/database.js';
 export {
   TERMINATION_SIGNALS,
   type ErrorShutdownLogRequest,
