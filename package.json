@@ -12,7 +12,8 @@
   "workspaces": [
     "packages/*",
     "apps/*",
-    "tests/*"
+    "tests/*",
+    "tools/*"
   ],
   "scripts": {
     "build:packages": "npm run build -w @job-queue/kernel -w @job-queue/contracts -w @job-queue/service-kit",

@@ -28,6 +28,7 @@ const COMPOSITION_ROOT = [
   'apps/*/src/main.ts',
   'apps/*/src/**/*.module.ts',
   'packages/service-kit/src/**/*.module.ts',
+  'tools/*/src/main.ts',
 ];
 
 /**
@@ -39,6 +40,7 @@ const FREE_FUNCTIONS_ALLOWED = [
   'apps/job-ui/src/**/use-*.ts',
   'apps/job-ui/src/lib/class-names.ts',
   'apps/*/src/main.ts',
+  'tools/*/src/main.ts',
   '**/*.config.ts',
   '**/*.config.mjs',
   'tooling/**',
@@ -103,28 +105,32 @@ const FRAMEWORK_IMPORTS = [
 ];
 
 const boundariesConfig = {
-  files: ['apps/*/src/**/*.{ts,tsx}', 'packages/*/src/**/*.ts'],
+  files: ['apps/*/src/**/*.{ts,tsx}', 'packages/*/src/**/*.ts', 'tools/*/src/**/*.ts'],
   plugins: { boundaries },
   settings: {
     'boundaries/root-path': repoRoot,
     'boundaries/legacy-templates': false,
-    'boundaries/include': ['apps/*/src/**/*', 'packages/*/src/**/*'],
+    'boundaries/include': ['apps/*/src/**/*', 'packages/*/src/**/*', 'tools/*/src/**/*'],
     'boundaries/ignore': COMPOSITION_ROOT,
     'import/resolver': {
       typescript: {
         alwaysTryTypes: true,
         noWarnOnMultipleProjects: true,
         conditionNames: ['@job-queue/source', 'types', 'import', 'require', 'node', 'default'],
-        project: [`${repoRoot}packages/*/tsconfig.json`, `${repoRoot}apps/*/tsconfig.json`],
+        project: [
+          `${repoRoot}packages/*/tsconfig.json`,
+          `${repoRoot}apps/*/tsconfig.json`,
+          `${repoRoot}tools/*/tsconfig.json`,
+        ],
       },
     },
     'boundaries/elements': [
       { type: 'kernel', pattern: 'packages/kernel', partialMatch: false },
       { type: 'contracts', pattern: 'packages/contracts', partialMatch: false },
-      // Layers of the apps and of packages/service-kit (it has the same domain/infra/app layout).
+      // Layers of the apps, of packages/service-kit and of the tools (same domain/infra/app layout).
       ...LAYERS.map((layer) => ({
         type: layer,
-        pattern: [`apps/*/src/${layer}`, `packages/*/src/${layer}`],
+        pattern: [`apps/*/src/${layer}`, `packages/*/src/${layer}`, `tools/*/src/${layer}`],
         capture: ['app'],
         partialMatch: false,
       })),
@@ -248,6 +254,7 @@ export default tseslint.config(
       'apps/*/src/domain/**/*.ts',
       'packages/kernel/src/domain/**/*.ts',
       'packages/service-kit/src/domain/**/*.ts',
+      'tools/*/src/domain/**/*.ts',
     ],
     rules: {
       'no-restricted-imports': [

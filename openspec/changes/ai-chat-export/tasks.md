@@ -21,18 +21,19 @@ Owns: `/package.json`, `/package-lock.json`, `/vitest.config.ts`, `/tooling/esli
 `package.json`, `tsconfig.json`, `tsconfig.build.json`, `vitest.config.ts`, `src/domain/**` ·
 Depends on: none · Parallel with: none
 
-- [ ] 1.1 Add the `tools/*` workspace group: `/package.json` `workspaces`, the `/vitest.config.ts`
+- [x] 1.1 Add the `tools/*` workspace group: `/package.json` `workspaces`, the `/vitest.config.ts`
   projects (`tools/*/vitest.config.ts`), and in `/tooling/eslint/config.mjs` the boundary includes,
   the domain framework-free rule and the `main.ts` free-function exemption for `tools/*/src`;
   verify `npm run lint` and `npm run typecheck` still pass.
-- [ ] 1.2 Create the workspace `@job-queue/ai-chat-export` (`package.json` with `build`,
+- [x] 1.2 Create the workspace `@job-queue/ai-chat-export` (`package.json` with `build`,
   `typecheck`, `lint`, `test` scripts; `tsconfig.json` / `tsconfig.build.json` on
   `tooling/tsconfig/library.json`; `vitest.config.ts` with `packageProjects('ai-chat-export')`) and
   add `@kontourai/ferry` at an exact version; verify `npm install` succeeds and
   `npm run build -w @job-queue/ai-chat-export` emits `dist/`.
-- [ ] 1.3 Write the domain: `ChatSession` and `ChatTurn` types and the ports `RepositoryInfo`,
+- [x] 1.3 Write the domain: `ChatSession` and `ChatTurn` types and the ports `RepositoryInfo`,
   `TranscriptFolders`, `SessionReader`, `TextMask`, `ChatRenderer`, `ExportFile` and the use case
-  `ChatExport`, each with its Request/Response types and DI-style token (see design.md); verify the
+  `ChatExport`, each with its Request/Response types (no DI tokens: no container wires this CLI;
+  `main.ts` builds the classes, see design.md); verify the
   workspace typechecks and lints.
 
 ## 2. Transcripts: project folders, ferry reader, repository info
