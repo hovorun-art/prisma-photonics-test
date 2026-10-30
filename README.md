@@ -23,6 +23,8 @@ docker compose up --build --wait
 |---|---|
 | job-service API | http://localhost:3000 |
 | API docs (Swagger) | http://localhost:3000/docs |
+| job-group-service API | http://localhost:3002 |
+| job-group-service docs | http://localhost:3002/docs |
 | job-ui | http://localhost:8080 |
 
 Scale the workers: `docker compose up --wait --scale job-execution-service=3`.
@@ -72,6 +74,18 @@ curl -s -X POST http://localhost:3000/v1/jobs/bulk \
 
 # The jobs of that group
 curl -s 'http://localhost:3000/v1/jobs?groupId=6f1c2a52-8d1e-4b7a-9c3f-2e5d8a7b1c40'
+
+# Follow jobs as one group (job-group-service, port 3002): create an empty group, submit its jobs
+# to job-service with the group's id as groupId, then read the group
+curl -s -X POST http://localhost:3002/v1/groups
+# {"id":"<group-id>","status":"running","total":0,"completed":0,"failed":0,"checkedAt":null,...}
+curl -s http://localhost:3002/v1/groups/<group-id>
+# Every 2 s it counts the group's jobs in job-service: running until all are finished, then
+# "completed" if all completed, "failed" if any failed or was cancelled
+# {"id":"<group-id>","status":"completed","total":2,"completed":2,"failed":0,"finishedAt":"...",...}
+curl -s 'http://localhost:3002/v1/groups?limit=10'
+# If the submit failed, delete the still-empty group (409 JOB_GROUP_NOT_EMPTY once it has jobs)
+curl -i -X DELETE http://localhost:3002/v1/groups/<group-id>
 # Queue statistics: jobs pending, processing and scheduled now, completed and failed in the last
 # day, and jobs completed per minute over the last 5 minutes (both windows are configurable)
 curl -s http://localhost:3000/v1/stats
@@ -93,7 +107,9 @@ Every error the API returns has the same body: `code` (from a closed list), `mes
 The codes today: `INTERNAL_UNAUTHORIZED` (401), `ROUTE_NOT_FOUND` (404), `VALIDATION_FAILED` (400,
 also for a body that is not valid JSON, an invalid bulk item and more jobs than
 `JOB_SERVICE_BULK_MAX_JOBS`), `PAYLOAD_TOO_LARGE` (413, the limit is in `details`; set with
-`JOB_SERVICE_BODY_LIMIT_BYTES`, default 1 MB) and `INTERNAL_ERROR` (500).
+`JOB_SERVICE_BODY_LIMIT_BYTES`, default 1 MB) and `INTERNAL_ERROR` (500); job-group-service adds
+`JOB_GROUP_NOT_FOUND` (404), `JOB_GROUP_NOT_EMPTY` (409) and `JOB_SERVICE_UNAVAILABLE` (503, when it
+cannot reach job-service to check a delete).
 
 ## Tests
 
@@ -108,7 +124,7 @@ Test levels: unit tests next to the code; integration tests (`*.int.test.ts`) ru
 against a real Postgres or Redis; per-app e2e tests (`apps/<app>/test/e2e/`) run each app as a black
 box; the system e2e (`tests/system-e2e/`) starts the whole stack with two workers. Request and
 response shapes are shared Zod schemas, so stubs and the real API cannot drift apart. The
-integration and e2e tests of both backends share one set of helpers in `tests/support/` (counts
+integration and e2e tests of the backends share one set of helpers in `tests/support/` (counts
 Redis and Postgres connections, migrates test databases); it is test-only and never part of an
 image.
 
@@ -125,9 +141,17 @@ image.
                                 │ job-execution-service │◄─────┘
                                 │  (N instances)        │
                                 └───────────────────────┘
+            ┌───────────────────┐  polls GET /v1/jobs?groupId=
+ clients ──►│ job-group-service │──────────────► job-service
+            │ (one instance)    │──────────────► Postgres, schema job_groups
+            └───────────────────┘
 ```
 
-- **job-service** (NestJS) owns job state; it is the only service with database access.
+- **job-service** (NestJS) owns job state; it is the only service with access to the jobs table.
+- **job-group-service** (NestJS) follows groups of jobs (the project's answer to the Batch job): a
+  group is created empty, the client submits its jobs to job-service with the group's id, and the
+  service polls job-service's public job query to count them and set the group's status. Its data
+  is in its own Postgres schema; it is API only and runs as one instance.
 - **job-execution-service** (NestJS) takes jobs from the queue (BullMQ on Redis), runs them (email
   for now) and reports each step through job-service's internal API; it has no database access.
   It scales horizontally and runs several jobs per instance (`JOB_EXECUTION_CONCURRENCY`).
@@ -136,7 +160,7 @@ image.
   list and job page refresh by polling.
 - **Shared packages:** `packages/contracts` (Zod schemas for every request, response and error),
   `packages/kernel` (framework-free ports and base classes), `packages/service-kit` (bootstrap,
-  config, logging, Redis and health shared by both backends).
+  config, logging, Redis, health, the error filter and the docs setup shared by the backends).
 - Each backend is split into `domain/` (interfaces), `infra/` (implementations) and `app/`
   (NestJS wiring), so any part can later move into its own service.
 

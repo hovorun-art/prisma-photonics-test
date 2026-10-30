@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
 
 import type { EmailJob, FlightTransitJob, WebhookJob } from '@job-queue/contracts';
-import { DomainError, JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
+import {
+  DomainError,
+  JobNotFoundError,
+  JobServiceUnavailableError,
+  JobStatusConflictError,
+} from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockDeep, type DeepMockProxy } from 'vitest-mock-extended';
 
 import { InvalidJobError } from '../../domain/jobs/errors/invalid-job.error.js';
-import { JobServiceUnavailableError } from '../../domain/jobs/errors/job-service-unavailable.error.js';
 import type { JobRepository } from '../../domain/jobs/job-repository.js';
 import type { JobHandler } from '../../domain/execution/job-handler.js';
 import { JobExecutionImpl } from './job-execution.impl.js';

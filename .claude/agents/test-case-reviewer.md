@@ -85,8 +85,11 @@ at this level that a lower level already covers.
      the body or the stored state, never checks a port call, uses a persistent stub instead of a
      `...Once` one, compares a value against itself, depends on test order or wall-clock time);
    - ❌ missing.
-5. Run the area's tests (e.g. `npx vitest run --project <app>:e2e <file>` from the app directory)
-   and quote the summary. Report flaky or slow tests.
+5. Run the area's unit and integration tests only (`npx vitest related --run --project
+   <app>:unit --project <app>:integration <files>...` from the workspace, which also runs the tests
+   that import those files), never a whole app, and quote the summary. Report flaky or slow tests. Never run e2e
+   tests (per-app `*.e2e.test.ts`, Playwright, `tests/system-e2e`): they run only in the main
+   agent. For an e2e area, review the test code and list the e2e files the main agent should run.
 6. Check the rules for tests in `CLAUDE.md`: scenario names in test names, one test file per
    area, test data from `node:crypto` and not from app code, no hardcoded UUIDs, `...Once` stubs, no
    test-only harness code at the per-app e2e level.

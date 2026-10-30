@@ -119,6 +119,41 @@ services:
       <<: *node-healthcheck
       test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:$${JOB_EXECUTION_SERVICE_PORT}/health']
 
+  # One-shot: job-group-service's migrations, into its own `job_groups` schema of the same database.
+  job-group-service-migrate:
+    build:
+      context: .
+      target: job-group-service-migrate
+    environment:
+      JOB_GROUP_SERVICE_DATABASE_URL: postgresql://${POSTGRES_USER:-jobqueue}:${POSTGRES_PASSWORD:-jobqueue}@postgres:5432/${POSTGRES_DB:-jobqueue}?schema=job_groups
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: 'no'
+
+  # One instance: the poll of running groups is not shared between instances. It reads job-service
+  # only through the public job API and needs neither Redis nor the internal service token.
+  job-group-service:
+    build:
+      context: .
+      target: job-group-service
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+      JOB_GROUP_SERVICE_PORT: ${JOB_GROUP_SERVICE_PORT:-3002}
+      JOB_GROUP_SERVICE_DATABASE_URL: postgresql://${POSTGRES_USER:-jobqueue}:${POSTGRES_PASSWORD:-jobqueue}@postgres:5432/${POSTGRES_DB:-jobqueue}?schema=job_groups
+      JOB_SERVICE_URL: http://job-service:${JOB_SERVICE_PORT:-3000}
+    ports:
+      - '${JOB_GROUP_SERVICE_PORT:-3002}:${JOB_GROUP_SERVICE_PORT:-3002}'
+    depends_on:
+      job-group-service-migrate:
+        condition: service_completed_successfully
+      job-service:
+        condition: service_healthy
+    healthcheck:
+      <<: *node-healthcheck
+      test: ['CMD-SHELL', 'wget -q -O- http://127.0.0.1:$${JOB_GROUP_SERVICE_PORT}/health']
+
   job-ui:
     build:
       context: .
