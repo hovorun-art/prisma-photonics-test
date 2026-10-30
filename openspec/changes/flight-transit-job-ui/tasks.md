@@ -33,13 +33,13 @@ Owns: `apps/job-ui/src/features/jobs/model/{transit-form-values.ts,zod-transit-j
 `apps/job-ui/src/features/jobs/submit/{airport-combobox.tsx,transit-payload-fields.tsx,job-type-picker.tsx,job-form.tsx,submit-job-page.tsx,request-preview.tsx,submit-job-page.test.tsx}` ·
 Depends on: 1 · Parallel with: 3
 
-- [ ] 2.1 Write failing unit tests for `ZodTransitJobDraft` (scenarios "Transit form at first" values with today's UTC date via `vi.setSystemTime`, "Missing airport", "Same airport twice", "Departure date in the past", "API validation error on a transit field" mapping, "Preview of a transit request"); see them fail
-- [ ] 2.2 Implement `TransitFormValues` and `ZodTransitJobDraft` (`d: { clock }`) and `useTransitJobDraft`; verify 2.1 passes
-- [ ] 2.3 Write failing unit tests for `AirportSearch` (scenarios "Search by city", "Search by code ignores case", "Nothing matches"); implement it; verify they pass
-- [ ] 2.4 Write failing component tests in `submit-job-page.test.tsx` for "Choose Aircraft transit", "Direct link to the transit form", "Switching to transit keeps the execution settings", "Disabled job types", "Transit form at first", "Submit a valid transit job", "Choosing an airport", "Search by city", "Nothing matches", "Missing airport", "Same airport twice", "Departure date in the past", "API validation error on a transit field", "Preview of a transit request", "Example response for a transit job"; see them fail
-- [ ] 2.5 Implement `AirportCombobox`, `TransitPayloadFields`, the enabled Aircraft transit card, the `?type=flight-transit` switch and the transit preview; verify 2.4 passes
-- [ ] 2.6 Run the `test-case-reviewer` subagent on job-ui unit and component tests of `features/jobs/model/{zod-transit-job-draft,airport-search}` and `features/jobs/submit/submit-job-page.test.tsx`; add the missing cases it reports or note why they belong elsewhere
-- [ ] 2.7 Show the stage's diff and commit message (`feat(job-ui): submit aircraft transit jobs`) and commit after the user's approval
+- [x] 2.1 Write failing unit tests for `ZodTransitJobDraft` (scenarios "Transit form at first" values with today's UTC date via `vi.setSystemTime`, "Missing airport", "Same airport twice", "Departure date in the past", "API validation error on a transit field" mapping, "Preview of a transit request"); see them fail
+- [x] 2.2 Implement `TransitFormValues` and `ZodTransitJobDraft` (`d: { clock }`) and `useTransitJobDraft`; verify 2.1 passes
+- [x] 2.3 Write failing unit tests for `AirportSearch` (scenarios "Search by city", "Search by code ignores case", "Nothing matches"); implement it; verify they pass
+- [x] 2.4 Write failing component tests in `submit-job-page.test.tsx` for "Choose Aircraft transit", "Direct link to the transit form", "Switching to transit keeps the execution settings", "Disabled job types", "Transit form at first", "Submit a valid transit job", "Choosing an airport", "Search by city", "Nothing matches", "Missing airport", "Same airport twice", "Departure date in the past", "API validation error on a transit field", "Preview of a transit request", "Example response for a transit job"; see them fail
+- [x] 2.5 Implement `AirportCombobox`, `TransitPayloadFields`, the enabled Aircraft transit card, the `?type=flight-transit` switch and the transit preview; verify 2.4 passes
+- [x] 2.6 Run the `test-case-reviewer` subagent on job-ui unit and component tests of `features/jobs/model/{zod-transit-job-draft,airport-search}` and `features/jobs/submit/submit-job-page.test.tsx`; add the missing cases it reports or note why they belong elsewhere
+- [x] 2.7 Show the stage's diff and commit message (`feat(job-ui): submit aircraft transit jobs`) and commit after the user's approval
 
 ## 3. Report model and list Details
 

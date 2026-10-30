@@ -20,6 +20,11 @@ class NoopResizeObserver implements ResizeObserver {
 }
 globalThis.ResizeObserver = NoopResizeObserver;
 
+/** jsdom does not scroll; `cmdk` scrolls the highlighted option into view. */
+Element.prototype.scrollIntoView = () => {
+  // Nothing to scroll in jsdom.
+};
+
 afterEach(() => {
   cleanup();
 });
