@@ -240,6 +240,25 @@ describe('JobPage', () => {
     expect(within(list).queryByText(en.job.fields.scheduledFor)).toBeNull();
   });
 
+  it('Job with a key: the Details list shows the Idempotency key row with the key', async () => {
+    const job = jobFixtures.build({ idempotencyKey: 'order-4821' });
+    answerJob(job.id, job);
+
+    renderJob(job.id);
+
+    await screen.findByRole('heading', { level: 1, name: job.id });
+    expect(detail(en.job.fields.idempotencyKey)).toHaveTextContent('order-4821');
+  });
+
+  it('Job without a key: the Details list has no Idempotency key row', async () => {
+    answerJob(pending.id, pending);
+
+    renderJob(pending.id);
+
+    const list = await screen.findByRole('region', { name: en.job.details });
+    expect(within(list).queryByText(en.job.fields.idempotencyKey)).toBeNull();
+  });
+
   it('Lifecycle of a scheduled job: scheduled reached at the creation time, then processing and completed not yet', async () => {
     const job = jobFixtures.build({ status: 'scheduled', scheduledAt: '2026-10-30T08:00:00.000Z' });
     answerJob(job.id, job);

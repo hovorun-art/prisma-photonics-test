@@ -61,8 +61,8 @@ Owns: `apps/job-execution-service/src/infra/queue/bullmq-job-queue-consumer.ts`,
 
 Owns: `apps/job-ui/src/features/jobs/testing/job-fixtures.ts`, `apps/job-ui/src/features/jobs/model/job-presenter.ts`, `apps/job-ui/src/features/jobs/model/job-presenter.test.ts`, `apps/job-ui/src/features/jobs/model/job-presentation.ts`, `apps/job-ui/src/features/jobs/details/job-page.test.tsx`, `apps/job-ui/src/features/jobs/submit/job-form.test.tsx`, `apps/job-ui/src/locales/en.ts` · Depends on: 1 · Parallel with: 2, 3, 4
 
-- [ ] 5.1 Write failing tests in `job-presenter.test.ts` and `job-page.test.tsx`, named after "Job with a key" (Details list shows "Idempotency key" with the value) and "Job without a key" (no such row); in `job-form.test.tsx` "Submit form unchanged" (the disabled key field with its "Coming soon" tooltip is still there, and the sent request has no key); add `idempotencyKey: null` to the fixtures. See the new ones fail
-- [ ] 5.2 Add the conditional Details row in `JobPresenter` and the label under the job details section of `en.ts` (design D7); verify 5.1 passes and `npm run typecheck -w apps/job-ui` passes
+- [x] 5.1 Write failing tests in `job-presenter.test.ts` and `job-page.test.tsx`, named after "Job with a key" (Details list shows "Idempotency key" with the value) and "Job without a key" (no such row); in `job-form.test.tsx` "Submit form unchanged" (the disabled key field with its "Coming soon" tooltip is still there, and the sent request has no key); add `idempotencyKey: null` to the fixtures. See the new ones fail
+- [x] 5.2 Add the conditional Details row in `JobPresenter` and the label under the job details section of `en.ts` (design D7); verify 5.1 passes and `npm run typecheck -w apps/job-ui` passes
 - [ ] 5.3 Run the `test-case-reviewer` subagent on job-ui unit and component tests (`src/features/jobs/model/job-presenter.test.ts`, `src/features/jobs/details/job-page.test.tsx`, `src/features/jobs/submit/job-form.test.tsx`); add the missing cases it reports or note why they belong elsewhere
 
 ## 6. Integration

@@ -12,6 +12,18 @@ describe('JobPresenter', () => {
     });
   });
 
+  it('Job with a key: the idempotency key text is the key', () => {
+    const job = jobFixtures.build({ idempotencyKey: 'order-4821' });
+
+    expect(presenter.idempotencyKey({ job })).toEqual({ text: 'order-4821' });
+  });
+
+  it('Job without a key: there is no idempotency key text', () => {
+    const job = jobFixtures.build({ idempotencyKey: null });
+
+    expect(presenter.idempotencyKey({ job })).toEqual({ text: null });
+  });
+
   it.each(['scheduled', 'pending', 'processing'] as const)(
     'Waiting or running email job: a %s job shows recipient and subject',
     (status) => {

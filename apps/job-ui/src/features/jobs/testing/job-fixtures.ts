@@ -54,6 +54,7 @@ const PENDING_JOB = {
   result: null,
   error: null,
   groupId: null,
+  idempotencyKey: null,
   scheduledAt: null,
   startedAt: null,
   completedAt: null,

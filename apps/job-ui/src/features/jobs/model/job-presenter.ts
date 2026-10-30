@@ -12,6 +12,8 @@ import type {
   ActionsJobPresentationRequest,
   ActionsJobPresentationResponse,
   DetailsJobPresentationRequest,
+  IdempotencyKeyJobPresentationRequest,
+  IdempotencyKeyJobPresentationResponse,
   JobPresentation,
   LifecycleJobPresentationRequest,
   LifecycleJobPresentationResponse,
@@ -85,6 +87,10 @@ export class JobPresenter implements JobPresentation {
               ),
             };
     }
+  }
+
+  idempotencyKey(req: IdempotencyKeyJobPresentationRequest): IdempotencyKeyJobPresentationResponse {
+    return { text: req.job.idempotencyKey };
   }
 
   listTime(req: TimeJobPresentationRequest): TextJobPresentationResponse {
