@@ -90,19 +90,37 @@ absolute test origin in unit tests (Node's fetch needs absolute URLs). It reache
 ### Configuration
 `UI_CONFIG` in `config/ui-config.ts`: `pollIntervalMs: 2000`, `copiedFeedbackMs: 1500`,
 `shortIdLength: 8`. Provided through `UiConfigProvider` so tests can shorten intervals instead of
-waiting. Page size is not configured in the UI: it sends no `limit`, steps `offset` by the number
-of items in the current page, and derives "first page" (`offset === 0`) and "last page"
-(`offset + items.length >= total`) from the response.
+waiting. Page size is not configured in the UI: it sends no `limit`. Next steps `offset` by the
+number of items in the current (full) page and pushes the old offset on a stack; Previous pops it,
+so it always returns to the page the user came from, even from a shorter last page. "First page" is
+`offset === 0`, "last page" is `offset + items.length >= total`.
 
 ### Submit form
-Plain React state, no form library. On submit the values go through `CreateEmailJobRequest.safeParse`
-(the same schema job-service uses); issues map to fields by path (`payload.to` → To, `priority` →
-Priority). An API `VALIDATION_FAILED` maps its `details.issues` the same way (job-service's issue
-format: `{ path, message }[]`); other errors show an `Alert` above the buttons. Priority and Max
-attempts start at `JOB_LIMITS.*.default`. The request preview renders the same object the form will
+`react-hook-form` (`useForm` in `SubmitJobPage`, shared with the form through `FormProvider`) with
+`zodResolver(CreateEmailJobRequest)`, the same schema job-service uses. The form values are the
+request itself (`EmailFormValues = z.input<typeof CreateEmailJobRequest>`), so field names are
+request paths (`payload.to`, `priority`) and API issue paths map onto them directly; Priority and
+Max attempts are registered with `valueAsNumber` and start at `JOB_LIMITS.*.default`.
+`ZodEmailJobDraft implements EmailJobDraft` (`features/jobs/model/`; named "draft" so it does not
+clash with the `EmailJobForm` component) keeps what the library does not: `fieldMessage` gives
+job-ui's own locale message for a field the schema rejected, and `apiErrors` reads an API
+`VALIDATION_FAILED` through the contract schema `ValidationFailedDetails` (`{ path, message }[]`)
+and returns the per-field messages, which the form sets with `setError` (type `api`, shown as the
+API wrote them), plus the issues that match no field, which go to a root error shown in the
+`Alert` above the buttons together with every other API error. The request preview renders the same object the form will
 send (`JSON.stringify`, two-space indent) and `CurlBuilder` turns it into
 `curl -X POST <origin>/api/v1/jobs -H 'Content-Type: application/json' -d '<json>'`. The example
 response is built from the form values with placeholder `id`/timestamps and is labelled "Example".
+
+### Errors: `react-error-boundary` + `QueryErrorResetBoundary`
+`AppFrame` wraps its page outlet in `PageErrorBoundary` (`features/app-frame/`), so every page has
+its own boundary and the header stays:
+TanStack Query's `QueryErrorResetBoundary` around `react-error-boundary`'s `ErrorBoundary`, keyed
+by the location (`resetKeys`) so navigating away clears it. Its fallback, `PageError`, shows
+"Something went wrong" and a Reload button whose `resetErrorBoundary` also resets the failed
+queries, so they load again. The list and job queries set `throwOnError` for a failed first load
+only (`query.state.data === undefined`) and never for `JOB_NOT_FOUND`, which keeps its own "Job not
+found"; a failed poll with data on screen keeps the "Connection lost, retrying" note.
 
 ### Formatting: `JobPresenter implements JobPresentation`
 Short id (first `shortIdLength` characters), Details text per status, list time `HH:mm:ss`, page
@@ -121,7 +139,10 @@ Tests use `userEvent.setup()`, which installs a clipboard stub, and fake timers 
 (`tabIndex=0`) so hover and keyboard focus both show "Coming soon"; the control itself has
 `disabled` and `aria-disabled`, muted styles. Statistics cards render "—"; the header pill reads
 "API status —". Cancel/Retry show in the Actions column where the design shows them (Cancel for
-`pending`/`scheduled`, Retry for `failed`), disabled; other rows show "—".
+`pending`/`scheduled`, Retry for `failed`), disabled; other rows show "—". Which actions a status
+offers (cancel, retry, delete) is decided once, in `JobPresenter.actions`, from the contract's
+`FINISHED_JOB_STATUSES`; the list row and the job header both read it. Status colours live once in
+`model/status-style.ts`; the statistics cards take their dot colour from it.
 
 ### Look and feel
 Tailwind theme tokens in `index.css` replace the neutral shadcn defaults with the design's values:
@@ -140,7 +161,7 @@ CLAUDE.md exempts React hooks from the no-free-functions rule, but the ESLint co
 else in `.ts` stays in classes.
 
 ### New dependencies (job-ui)
-`react-router`, `@fontsource/inter`, `@fontsource/jetbrains-mono`, `zod` (direct, for
+`react-router`, `react-error-boundary`, `react-hook-form`, `@hookform/resolvers`, `@fontsource/inter`, `@fontsource/jetbrains-mono`, `zod` (direct, for
 `safeParse` on contract schemas), and the shadcn stack: `radix-ui`, `class-variance-authority`,
 `clsx`, `tailwind-merge`, `lucide-react`, `tw-animate-css`. Components are generated into
 `components/ui` by the shadcn CLI (`npx shadcn add …`) and kept as generated; the design is applied

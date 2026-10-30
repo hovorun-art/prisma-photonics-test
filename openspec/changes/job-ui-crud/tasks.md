@@ -78,9 +78,29 @@ Owns: `src/app.tsx`, `src/app.test.tsx`, `src/main.tsx`, `src/features/index.ts`
 - [x] 6.1 Write failing `app.test.tsx` for "Start page is the jobs list", "Direct link to a job" and "Back returns to the list" (memory router, MSW)
 - [x] 6.2 Wire routes in `app.tsx` (`/` → `/jobs`, `/jobs`, `/jobs/new`, `/jobs/:id` inside `AppFrame`), providers in `main.tsx`, exports in `features/index.ts`; remove `features/app-shell`; verify 6.1 passes
 - [x] 6.3 Replace `test/e2e/app-shell.spec.ts` with Playwright specs against a mocked API (`page.route`): list → job page, Back, submit → job page, delete flow; verify `npm run test:e2e -w @job-queue/job-ui` passes
-- [ ] 6.4 Replace the started-page test in `tests/system-e2e/job-ui.spec.ts` with "submit an email job, see it in the list, open its page" on the compose stack; verify `npm run test:e2e` passes
+- [x] 6.4 Replace the started-page test in `tests/system-e2e/job-ui.spec.ts` with "submit an email job, see it in the list, open its page" on the compose stack, plus "see it completed" now that `email-job-execution` is merged; verify `npm run test:e2e` passes
 - [x] 6.5 Update `docs/roadmap/02-email-job-crud.md` (intent: lists, shows, submits and deletes jobs) and add `job-update` to `docs/roadmap/04-all-endpoints.md` after `job-list-filters`; add the job-ui entries to `DECISIONS.md` (polling, disabled future elements, client-side validation with the shared schemas) and mention the UI routes in `README.md`
-- [ ] 6.6 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`) and verify they pass
+- [x] 6.6 Run the full checks (`npm run typecheck`, `npm run lint`, `npm test`) and verify they pass
+
+## 7. Verification follow-up
+
+Owns: `src/features/jobs/**`, `src/features/app-frame/**`, `src/app.tsx`, `src/app.test.tsx`,
+`src/locales/en.ts`, `package.json`, `package-lock.json`, `tests/system-e2e/job-ui.spec.ts`,
+`DECISIONS.md`, `packages/contracts/src/errors.ts(+test)` · Depends on: 6 · Parallel with: none
+
+- [x] 7.1 Write a failing test "Previous from a shorter last page returns to the page before it" in `jobs-list-page.test.tsx`; replace offset arithmetic with an offset stack in `use-jobs-page.ts`; verify it passes
+- [x] 7.2 Write failing `zod-email-job-draft.test.ts` for building the request, client validation, API `VALIDATION_FAILED` mapping (issues read through a new contract schema `ValidationFailedDetails`, test first in `errors.test.ts`) and an issue with an unknown path (shown as an alert); add `EmailJobDraft` + `ZodEmailJobDraft` in `features/jobs/model/`; move `toEmailRequest`, `clientErrors`, `messageFor`, `apiErrors` there and use it from the form and page; verify the submit tests still pass
+- [x] 7.3 Write failing presenter tests for `actions` (cancel for pending/scheduled, retry for failed, delete for completed/failed/cancelled); add `JobPresenter.actions` on `FINISHED_JOB_STATUSES`, drop `FINAL_STATUSES`, use it in `jobs-table.tsx` and `job-header.tsx`; take the stats dot colours from `status-style.ts`
+- [x] 7.4 Add "Delete job" tests for failed and cancelled jobs in `job-page.test.tsx`
+- [x] 7.5 Remove the unused locale strings `list.loadFailed`, `job.deleteFailed`, `submit.submitFailed` (or reuse them for the error panel)
+- [x] 7.6 Add `react-error-boundary`; write failing tests "Jobs list fails to load", "Job page fails to load", "Reload after a failed load", "Unexpected error on a page" and "Reload after an unexpected error"; add `PageErrorBoundary` and `PageError` (locale strings) in `features/app-frame/`, wrap the frame's page outlet, set `throwOnError` for failed first loads; verify they pass
+- [x] 7.7 Find the row in `tests/system-e2e/job-ui.spec.ts` by the short-id link instead of the subject
+- [x] 7.8 Record `react-error-boundary` (and why) in `DECISIONS.md`
+- [x] 7.9 Run the full checks and `npm run test:e2e`; verify they pass
+- [x] 7.11 Use the token classes in `request-preview.tsx`, drop the dead error branch in `jobs-list-page.tsx`, add the submit-page test "API validation error on a field not in the form"
+- [x] 7.12 Move the submit form to `react-hook-form` + `zodResolver` (shared with the preview through `FormProvider`/`useWatch`); shrink `EmailJobDraft` to `fieldMessage` and `apiErrors` (tests rewritten first); all submit-page tests unchanged and passing
+- [x] 7.13 Make the polling tests deterministic (serve the next answer only after the first state is asserted); show the API message in the alert for a VALIDATION_FAILED without issues (test first); add both alert scenarios to the spec; one field list for EmailFormField; reuse EmailFormValues in the preview; drop the EMPTY_EMAIL_FORM constant test
+- [x] 7.10 Use `public/task.png` (added by the user) as the favicon in `index.html`
 
 ## Workflow follow-up
 

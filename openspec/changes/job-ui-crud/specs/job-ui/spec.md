@@ -125,6 +125,36 @@ go away after the next successful poll.
 - **WHEN** a poll succeeds after a failed one
 - **THEN** the "Connection lost, retrying" note is no longer shown
 
+### Requirement: A failed first load can be reloaded
+If the first load of the jobs list or of a job page fails with an error other than "job not found",
+the page SHALL show "Something went wrong" with a Reload button instead of the data; Reload SHALL
+load the data again, and the page SHALL show the data once a load succeeds.
+
+#### Scenario: Jobs list fails to load
+- **WHEN** a user opens the jobs list and the first request for jobs fails
+- **THEN** the page shows "Something went wrong" and a Reload button instead of the table
+
+#### Scenario: Job page fails to load
+- **WHEN** a user opens a job page and the first request for the job fails with an error other than "job not found"
+- **THEN** the page shows "Something went wrong" and a Reload button instead of the job
+
+#### Scenario: Reload after a failed load
+- **WHEN** a user presses Reload and the next request succeeds
+- **THEN** the page shows the data
+
+### Requirement: Unexpected errors are contained to the page
+An unexpected error while showing a page SHALL replace only that page's content with "Something
+went wrong" and a Reload button; the app frame SHALL stay usable, and Reload SHALL show the page
+again.
+
+#### Scenario: Unexpected error on a page
+- **WHEN** an unexpected error happens while a page is shown
+- **THEN** the page content is replaced by "Something went wrong" with a Reload button, and the header and its navigation still work
+
+#### Scenario: Reload after an unexpected error
+- **WHEN** a user presses Reload after an unexpected error and the page no longer fails
+- **THEN** the page is shown again
+
 ### Requirement: The job page shows a job
 The job page SHALL show a breadcrumb "Jobs / <id>", the full id as its title with status and type
 badges, a Payload card, a Result card for a completed job or an Error card for a failed job, and a
@@ -258,12 +288,22 @@ invalid.
 - **THEN** the Subject field shows an error under it and no request is sent
 
 ### Requirement: API errors on submit are shown
-If the API rejects a submit with `VALIDATION_FAILED`, each issue SHALL be shown under its field.
-Any other API error SHALL be shown as an alert above the buttons. The entered values SHALL stay.
+If the API rejects a submit with `VALIDATION_FAILED`, each issue for a field on the form SHALL be
+shown under that field; an issue for anything not on the form, or a rejection without issues,
+SHALL be shown as an alert above the buttons. Any other API error SHALL be shown as an alert above
+the buttons. The entered values SHALL stay.
 
 #### Scenario: API validation error
 - **WHEN** the API answers a submit with `VALIDATION_FAILED` and an issue for a payload field
 - **THEN** that field shows the issue's message and the entered values stay
+
+#### Scenario: API validation error on a field not in the form
+- **WHEN** the API answers a submit with `VALIDATION_FAILED` and an issue for something the form has no field for
+- **THEN** an alert above the buttons shows the issue's message
+
+#### Scenario: API validation error without issues
+- **WHEN** the API answers a submit with `VALIDATION_FAILED` and no issues
+- **THEN** an alert above the buttons shows the API's error message
 
 #### Scenario: Other API error
 - **WHEN** the API answers a submit with any other error

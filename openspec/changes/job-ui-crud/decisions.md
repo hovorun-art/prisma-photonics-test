@@ -38,6 +38,13 @@
 - A job page URL whose id is not a UUID shows the same "Job not found" message without calling the API; a job that disappears while its page is open also shows "Job not found" (user)
 - The Response box of the submit page shows an example `201 Created` body built from the form values (status pending, attempts 0), marked as an example, with placeholder id and times (user)
 - Copy buttons (Payload, Error/Result, Copy cURL, Copy as cURL) confirm by changing their label to "Copied" for a moment (user)
+- The submit form opens with Priority and Max attempts prefilled with the API defaults (user, confirmed after verification)
+- The form's Cancel button opens the jobs list without submitting (user, confirmed after verification)
+- Errors: an error boundary around each page (list, job, submit) catches unexpected errors; a failed first load of the list or of a job page (any error other than "not found") shows the same panel, "Something went wrong" with a Reload button that loads the data again; a failed poll while data is already on screen keeps the "Connection lost, retrying" note (user, after verification)
+- The error boundary comes from `react-error-boundary` (v6.1.6, ~20.3M weekly downloads, ESM, typed, React 19), combined with TanStack Query's `QueryErrorResetBoundary` so Reload resets the boundary and loads the data again; chosen over react-router's `errorElement` (needs data-router mode) and a hand-written class (user)
+- An API `VALIDATION_FAILED` issue whose field is not on the form (e.g. `type`) is shown with its message in the alert above the buttons, so it is not lost (user, after verification)
+- The validation-issue shape duplicated in job-service and job-execution-service (from `email-job-execution`) is unified on the new contract `ValidationIssue` / `ValidationFailedDetails` in a separate `fix/validation-issue-contract` branch after this change merges, not in job-ui-crud (user)
+- The submit form uses `react-hook-form` (`useForm`, v7.91.0, ~62.5M weekly downloads) with `zodResolver` from `@hookform/resolvers` (v6.0.2, ~49.5M weekly) on the shared `CreateEmailJobRequest` schema, instead of its own state and validation; chosen over `@tanstack/react-form` (v1.33.5, ~5.8M weekly); replaces the design's "plain React state, no form library" (user)
 
 ## Assumed
 
