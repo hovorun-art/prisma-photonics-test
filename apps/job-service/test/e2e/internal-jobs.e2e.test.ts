@@ -156,6 +156,18 @@ describe('job-service internal job routes', () => {
       expect((await service.stored(job.id)).attempts).toBe(1);
     });
 
+    it('Two workers start the same scheduled job', async () => {
+      const job = await service.seed({ status: 'scheduled' });
+
+      await race(job.id, START, 'processing');
+
+      expect(await service.stored(job.id)).toMatchObject({
+        status: 'processing',
+        attempts: 1,
+        scheduledAt: job.scheduledAt,
+      });
+    });
+
     it('Complete a processing job', async () => {
       const job = await service.seed({ status: 'processing' });
 
