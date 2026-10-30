@@ -16,7 +16,10 @@ export interface ZodBaseEnvSchemaParams<TPortVariable extends string> {
   defaultNodeEnv: NodeEnv;
 }
 
-/** `NODE_ENV`, `LOG_LEVEL`, `REDIS_URL` and the port variable as one Zod object. */
+/**
+ * `NODE_ENV`, `LOG_LEVEL`, `REDIS_URL`, `INTERNAL_SERVICE_TOKEN` and the port variable as one Zod
+ * object.
+ */
 export class ZodBaseEnvSchema<
   TPortVariable extends string,
 > implements BaseEnvSchema<TPortVariable> {
@@ -29,6 +32,7 @@ export class ZodBaseEnvSchema<
       NODE_ENV: z.enum(NODE_ENVS).default(this.p.defaultNodeEnv),
       LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
       REDIS_URL: z.url({ protocol: /^rediss?$/ }),
+      INTERNAL_SERVICE_TOKEN: z.string().min(1, 'must be a non-empty service token'),
       [this.p.portVariable]: port,
     } as BaseEnvShape<TPortVariable>;
     return { schema: z.object(shape) };
@@ -41,6 +45,7 @@ export class ZodBaseEnvSchema<
         logLevel: req.env.LOG_LEVEL,
         redisUrl: req.env.REDIS_URL,
         port: req.env[this.p.portVariable],
+        internalServiceToken: req.env.INTERNAL_SERVICE_TOKEN,
       },
     };
   }

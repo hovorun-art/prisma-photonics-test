@@ -8,13 +8,14 @@ import { DynamicModule, Module } from '@nestjs/common';
 
 import { EXECUTION_CONFIG, type ExecutionConfig } from '../domain/config/execution-config.js';
 import type { InstanceId } from '../domain/instance/instance-id.js';
+import { ExecutionModule } from './execution/execution.module.js';
 
 export interface AppOptions {
   readonly config: ExecutionConfig;
   readonly instanceId: InstanceId;
 }
 
-/** Composition root of job-execution-service (an HTTP server for its own `GET /health` only). */
+/** Composition root of job-execution-service: runs queued jobs; its HTTP server answers only `GET /health`. */
 @Module({})
 export class AppModule {
   static forRoot({ config, instanceId }: AppOptions): DynamicModule {
@@ -35,6 +36,7 @@ export class AppModule {
           awaitFirstAnswer: true,
         }),
         HealthModule,
+        ExecutionModule,
       ],
     };
   }

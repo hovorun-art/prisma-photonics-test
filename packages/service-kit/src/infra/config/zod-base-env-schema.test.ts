@@ -11,6 +11,7 @@ describe('ZodBaseEnvSchema', () => {
     LOG_LEVEL: 'warn',
     REDIS_URL: 'redis://localhost:6379',
     APP_PORT: '3000',
+    INTERNAL_SERVICE_TOKEN: 'a-long-random-token',
   };
 
   it('reads the shared variables into typed settings', () => {
@@ -21,6 +22,7 @@ describe('ZodBaseEnvSchema', () => {
       logLevel: 'warn',
       redisUrl: 'redis://localhost:6379',
       port: 3000,
+      internalServiceToken: 'a-long-random-token',
     });
   });
 
@@ -29,10 +31,21 @@ describe('ZodBaseEnvSchema', () => {
       defaultNodeEnv: 'production',
       portVariable: 'APP_PORT',
     }).create().schema;
-    const env = { REDIS_URL: ENV.REDIS_URL, APP_PORT: ENV.APP_PORT };
+    const env = {
+      REDIS_URL: ENV.REDIS_URL,
+      APP_PORT: ENV.APP_PORT,
+      INTERNAL_SERVICE_TOKEN: ENV.INTERNAL_SERVICE_TOKEN,
+    };
 
     expect(schema.parse(env)).toMatchObject({ NODE_ENV: 'development', LOG_LEVEL: 'info' });
     expect(production.parse(env)).toMatchObject({ NODE_ENV: 'production', LOG_LEVEL: 'info' });
+  });
+
+  it('requires a non-empty service token', () => {
+    const { INTERNAL_SERVICE_TOKEN: _token, ...withoutToken } = ENV;
+
+    expect(schema.safeParse(withoutToken).success).toBe(false);
+    expect(schema.safeParse({ ...ENV, INTERNAL_SERVICE_TOKEN: '' }).success).toBe(false);
   });
 
   it('accepts the silent log level', () => {
@@ -48,7 +61,11 @@ describe('ZodBaseEnvSchema', () => {
 
   it('reads the port from the variable named in its params and rejects an invalid one', () => {
     const other = new ZodBaseEnvSchema({ defaultNodeEnv: 'test', portVariable: 'OTHER_PORT' });
-    const env = { REDIS_URL: ENV.REDIS_URL, OTHER_PORT: '0' };
+    const env = {
+      REDIS_URL: ENV.REDIS_URL,
+      OTHER_PORT: '0',
+      INTERNAL_SERVICE_TOKEN: ENV.INTERNAL_SERVICE_TOKEN,
+    };
 
     expect(other.toConfig({ env: other.create().schema.parse(env) }).config.port).toBe(0);
     expect(schema.safeParse({ ...ENV, APP_PORT: 'many' }).success).toBe(false);

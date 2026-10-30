@@ -6,6 +6,7 @@ import {
   CONTAINER_IMAGES,
   NodeServiceLauncher,
   NpmServiceBuild,
+  UNREACHABLE_HTTP_URL,
   type RedisConnectionCounter,
   type SpawnedService,
 } from '@job-queue/test-support';
@@ -49,7 +50,14 @@ describe('job-execution-service', () => {
     await redisContainer.stop();
   });
   beforeEach(() => {
-    env = { NODE_ENV: 'test', LOG_LEVEL: 'info', REDIS_URL: redisContainer.getConnectionUrl() };
+    env = {
+      NODE_ENV: 'test',
+      LOG_LEVEL: 'info',
+      REDIS_URL: redisContainer.getConnectionUrl(),
+      // Nothing listens here; these tests queue no jobs, so job-service is never called.
+      JOB_SERVICE_URL: UNREACHABLE_HTTP_URL,
+      INTERNAL_SERVICE_TOKEN: 'e2e-service-token',
+    };
   });
   afterEach(() => {
     instance?.kill();
