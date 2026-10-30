@@ -8,7 +8,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { en } from '@/locales';
 
-import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, transitJobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../testing/test-providers';
 import { JobPage } from './job-page';
 
@@ -380,5 +380,79 @@ describe('JobPage', () => {
     expect(error).toHaveTextContent('"code": "WEBHOOK_HTTP_ERROR"');
     expect(error).toHaveTextContent(`"message": "${message}"`);
     expect(error).toHaveTextContent('"statusCode": 503');
+  });
+
+  describe('flight transit', () => {
+    it('Completed transit job opens the report: titled by the route, no Payload card or Lifecycle', async () => {
+      const job = transitJobFixtures.completed();
+      answerJob(job.id, job);
+
+      renderJob(job.id);
+
+      expect(await screen.findByRole('heading', { level: 1, name: 'LHR → JFK' })).toBeVisible();
+      expect(screen.getByRole('region', { name: en.report.summaryLabel })).toBeVisible();
+      expect(screen.getByRole('region', { name: en.report.mapLabel })).toBeVisible();
+      expect(screen.queryByRole('region', { name: en.job.payload })).toBeNull();
+      expect(screen.queryByRole('region', { name: en.job.lifecycle })).toBeNull();
+      expect(screen.getByRole('navigation', { name: en.job.breadcrumb })).toHaveTextContent(job.id);
+    });
+
+    it('Waiting transit job keeps the normal page: the transit payload is in the Payload card', async () => {
+      const job = transitJobFixtures.build();
+      answerJob(job.id, job);
+
+      renderJob(job.id);
+
+      expect(await screen.findByRole('heading', { level: 1, name: job.id })).toBeVisible();
+      const payload = screen.getByRole('region', { name: en.job.payload });
+      expect(payload).toHaveTextContent('"origin": "LHR"');
+      expect(payload).toHaveTextContent('"destination": "JFK"');
+      expect(payload).toHaveTextContent('"departureDate": "2026-10-28"');
+      expect(screen.queryByRole('region', { name: en.report.mapLabel })).toBeNull();
+    });
+
+    it('Failed transit job keeps the normal page: the alert and the Error card', async () => {
+      const job = transitJobFixtures.build({
+        status: 'failed',
+        attempts: 3,
+        error: { code: 'TRANSIT_GENERATION_FAILED', message: 'No route between the airports' },
+      });
+      answerJob(job.id, job);
+
+      renderJob(job.id);
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('No route between the airports');
+      expect(screen.getByRole('region', { name: en.job.error })).toHaveTextContent(
+        '"code": "TRANSIT_GENERATION_FAILED"',
+      );
+      expect(screen.queryByRole('region', { name: en.report.mapLabel })).toBeNull();
+    });
+
+    it('A failed poll keeps the last data: the report stays and "Connection lost, retrying" shows', async () => {
+      const job = transitJobFixtures.completed();
+      answerJob(job.id, job);
+      renderJob(job.id, 20);
+      await screen.findByRole('heading', { level: 1, name: 'LHR → JFK' });
+
+      server.use(http.get(jobUrl(job.id), () => HttpResponse.error()));
+
+      expect(await screen.findByText(en.list.connectionLost, {}, POLL_WAIT)).toBeVisible();
+      expect(screen.getByRole('heading', { level: 1, name: 'LHR → JFK' })).toBeVisible();
+    });
+
+    it('Job completes while its page is open: the next poll switches to the report', async () => {
+      const job = transitJobFixtures.build({ status: 'processing' });
+      answerJob(job.id, job);
+      renderJob(job.id, 20);
+      await screen.findByRole('heading', { level: 1, name: job.id });
+
+      // The next answer is served only now, so the first state cannot be skipped by a fast poll.
+      answerJob(job.id, transitJobFixtures.completed({ id: job.id }));
+
+      expect(
+        await screen.findByRole('heading', { level: 1, name: 'LHR → JFK' }, POLL_WAIT),
+      ).toBeVisible();
+      expect(screen.queryByRole('region', { name: en.job.payload })).toBeNull();
+    });
   });
 });

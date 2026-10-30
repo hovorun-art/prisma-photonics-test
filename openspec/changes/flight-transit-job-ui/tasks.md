@@ -62,13 +62,13 @@ Owns: `apps/job-ui/src/features/transit-map/*.tsx` (report, map, waypoint strip,
 `apps/job-ui/src/features/jobs/details/{job-page.tsx,job-page.test.tsx}`, `apps/job-ui/test/e2e/transit.spec.ts` ·
 Depends on: 1, 3 · Parallel with: none
 
-- [ ] 4.1 Write failing tests in `job-page.test.tsx` for "Completed transit job opens the report", "Waiting transit job keeps the normal page", "Failed transit job keeps the normal page", "Job completes while its page is open"; see them fail
-- [ ] 4.2 Write failing tests in `transit-report.test.tsx` for "Report header", "Download the report", "Delete from the report", "Run again is disabled", "Summary tiles", "Airport cards", "Aircraft card", "Copy the report", "Departure selected at first", "Hover a waypoint", "Select from the strip", and "Route on the map" (airport labels, one marker per waypoint, aircraft icon, legend); see them fail
-- [ ] 4.3 Implement `TransitReport` (header, tiles, cards, download), `TransitMap` (react-leaflet, divIcon markers, polylines, legend), `WaypointStrip`, `WaypointCard` and the switch in `JobPage`; verify 4.1 and 4.2 pass
-- [ ] 4.4 Write the job-ui Playwright test `transit.spec.ts` for "Route on the map", "Hover a waypoint" and "Route across the antimeridian" against a `page.route` job-service and blank tiles; verify `npm run test:e2e -w @job-queue/job-ui` passes
-- [ ] 4.5 Compare the running report with the design's TransitReport and SubmitTransit screens (screenshot of the app) and fix layout differences; verify by the screenshots
-- [ ] 4.6 Run the `test-case-reviewer` subagent on job-ui component tests of `features/transit-map` and `features/jobs/details/job-page.test.tsx`, and on the job-ui Playwright `test/e2e/transit.spec.ts`; add the missing cases it reports or note why they belong elsewhere
-- [ ] 4.7 Show the stage's diff and commit message (`feat(job-ui): show the transit report with its route map`) and commit after the user's approval
+- [x] 4.1 Write failing tests in `job-page.test.tsx` for "Completed transit job opens the report", "Waiting transit job keeps the normal page", "Failed transit job keeps the normal page", "Job completes while its page is open"; see them fail
+- [x] 4.2 Write failing tests in `transit-report.test.tsx` for "Report header", "Download the report", "Delete from the report", "Run again is disabled", "Summary tiles", "Airport cards", "Aircraft card", "Copy the report", "Departure selected at first", "Hover a waypoint", "Select from the strip", and "Route on the map" (airport labels, one marker per waypoint, aircraft icon, legend); see them fail
+- [x] 4.3 Implement `TransitReport` (header, tiles, cards, download), `TransitMap` (react-leaflet, divIcon markers, polylines, legend), `WaypointStrip`, `WaypointCard` and the switch in `JobPage`; verify 4.1 and 4.2 pass
+- [x] 4.4 Write the job-ui Playwright test `transit.spec.ts` for "Route on the map", "Hover a waypoint" and "Route across the antimeridian" against a `page.route` job-service and blank tiles; verify `npm run test:e2e -w @job-queue/job-ui` passes
+- [x] 4.5 Compare the running report with the design's TransitReport and SubmitTransit screens (screenshot of the app) and fix layout differences; verify by the screenshots
+- [x] 4.6 Run the `test-case-reviewer` subagent on job-ui component tests of `features/transit-map` and `features/jobs/details/job-page.test.tsx`, and on the job-ui Playwright `test/e2e/transit.spec.ts`; add the missing cases it reports or note why they belong elsewhere
+- [x] 4.7 Show the stage's diff and commit message (`feat(job-ui): show the transit report with its route map`) and commit after the user's approval
 
 ## 5. Integration
 

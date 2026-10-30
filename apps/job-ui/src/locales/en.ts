@@ -218,6 +218,8 @@ export const en = {
     },
     mapLabel: 'Route map',
     waypointsLabel: 'Waypoints',
+    selectedWaypoint: 'Selected waypoint',
+    aircraftIcon: 'Aircraft position',
     flown: 'Flown',
     remaining: 'Remaining',
     airportLabel: (iata: string, city: string) => `${iata} ${city}`,

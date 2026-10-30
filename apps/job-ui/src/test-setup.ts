@@ -25,6 +25,14 @@ Element.prototype.scrollIntoView = () => {
   // Nothing to scroll in jsdom.
 };
 
+/** jsdom has no blob URLs; tests that download something spy on these and answer once. */
+URL.createObjectURL = () => {
+  throw new Error('jsdom has no blob URLs; stub URL.createObjectURL in the test');
+};
+URL.revokeObjectURL = () => {
+  // Nothing to free in jsdom.
+};
+
 afterEach(() => {
   cleanup();
 });
