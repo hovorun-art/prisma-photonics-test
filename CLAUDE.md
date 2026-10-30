@@ -24,9 +24,10 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
   such git command. One approval covers one command, not later ones. Never route around the prompt
   (other tools, `--no-verify`, scripts).
 - New features are built on their own branch, never on the main branch (`MAIN_BRANCH` in
-  `.claude/flow.conf`): one branch per change, named after the change (`<change>`). Only planning
-  artifacts (`openspec/changes/<change>/`) go on the main branch; the change is archived on its own
-  branch, so the merge brings the code and the updated main specs together.
+  `.claude/flow.conf`): one branch per change, named after the change (`<change>`), created before
+  the first planning artifact. Planning (`openspec/changes/<change>/`), code and the archive all go on
+  that branch; the main branch only receives the merge, which brings the code and the updated main
+  specs together.
 
 ## Testing (TDD)
 
@@ -42,6 +43,9 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
   `mockRejectedValueOnce`, `mockReturnValueOnce`, `mockImplementationOnce`), never the persistent
   ones, so an unexpected extra call gets nothing and fails; ESLint enforces it in test files. No
   shared fake packages, and no tests for test doubles.
+- Test data never comes from our own app code (e.g. the kernel `Random`): ids and other generated
+  values come from Node directly (`randomUUID()` from `node:crypto`), held in a named constant when a
+  test compares the same value twice; no hardcoded UUID literals.
 - One test file per source file (`random.ts` → `random.test.ts`), next to it; no grab-bag test
   files. Test behaviour, not language facts: no tests that a token is a `symbol` or that a
   constant exists.
@@ -99,19 +103,22 @@ apps/job-service            Job bounded context (owns the Job aggregate and job 
                             (/v1/jobs: create, get, query, delete; /internal/v1/jobs: get, update)
                             over one JobService; jobs table via Prisma, BullMQ queue behind JobQueue.
                             src/{domain,infra,app}/ + main.ts; prisma/ (schema, migrations)
-apps/job-execution-service  Job Execution context (today: connects to Redis, logs its start, GET /health
-                            on a port that is not published). Scaled with
-                            `docker compose up --scale job-execution-service=N`. Later domain modules,
-                            each behind a handler interface so it can become its own microservice:
-                              notifications (email), webhooks, flight-transit, batch-processing
+apps/job-execution-service  Job Execution context: takes queued attempts (BullMQ behind JobQueueConsumer),
+                            reads and reports jobs through job-service's internal API (JobRepository),
+                            runs them with the JobHandler of their type (JobExecution); GET /health on
+                            a port that is not published. Scaled with
+                            `docker compose up --scale job-execution-service=N`. Domain modules, each
+                            behind JobHandler so it can become its own microservice:
+                              notifications (email, today), webhooks, flight-transit, batch-processing
 apps/job-ui                 React + Vite UI (today: the started page), src/features/<feature>/
 packages/kernel             framework-free: Clock, Random, Sleeper ports, DomainError + ERROR_CODES,
-                            SignalGracefulShutdown, ProcessFatalErrorHandler
+                            SignalGracefulShutdown, ProcessFatalErrorHandler, the job errors shared by
+                            both backends (JobNotFoundError, JobStatusConflictError)
 packages/contracts          Zod schemas and inferred types: health response, error body, internal
                             API prefix and token scheme, the Job entity (jobs/job.ts: statuses,
                             types, limits, payloads, results, requests) and the queue message
 packages/service-kit        shared NestJS pieces for the backends: NestServiceBootstrap, base config
-                            (NODE_ENV, LOG_LEVEL, REDIS_URL, port), logging with redaction, Redis module,
+                            (NODE_ENV, LOG_LEVEL, REDIS_URL, port, INTERNAL_SERVICE_TOKEN), logging with redaction, Redis module,
                             health module, config module
 tests/support               test-only helpers for the integration and e2e tests (spawned-service
                             harness, Redis and Postgres connection counters, Prisma migrate deploy
@@ -193,7 +200,7 @@ validated at the edge (HTTP and queue consumers); inner layers trust their types
 closed list `ERROR_CODES` in `packages/kernel` (a code outside it does not compile; contracts build
 the `ErrorCode` schema from the same list), plus structured `details`. A new failure adds its code to
 `ERROR_CODES` first (today: `INTERNAL_UNAUTHORIZED`, `ROUTE_NOT_FOUND`, `VALIDATION_FAILED`,
-`PAYLOAD_TOO_LARGE`, `JOB_NOT_FOUND`, `JOB_STATUS_CONFLICT`, `QUEUE_UNAVAILABLE`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table. Code handles errors by class or `code`, never by
+`PAYLOAD_TOO_LARGE`, `JOB_NOT_FOUND`, `JOB_STATUS_CONFLICT`, `QUEUE_UNAVAILABLE`, `JOB_SERVICE_UNAVAILABLE`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table. Code handles errors by class or `code`, never by
 message text. `domain/` interfaces declare these errors and `infra/` code throws them; one exception filter per app maps
 codes to HTTP status and a uniform response body (`code`, `message`, `details`). Never throw strings
 or bare `Error` for expected failures; unknown errors, including framework errors with no code of
@@ -219,6 +226,11 @@ types from `packages/contracts`.
 - Each question has prepared answer options (2-4, recommended one first) plus the built-in "Other";
   single choice by default, multiSelect when several answers can apply together.
 - Record the answers in the change's `decisions.md` after each call.
+- Libraries: when a library could do something (retries, parsing, scheduling...), do not hand-write
+  it and do not pick one yourself. Collect the candidates with their usage and fit (weekly npm
+  downloads, latest version and its date, TypeScript types, ESM/CJS, the features the task needs)
+  and let the user choose through AskUserQuestion. Record the choice in `decisions.md` and, with the
+  numbers and the reason, in `DECISIONS.md`.
 - Next steps: when a step ends and the next one is a command (`/apply <change>`,
   `/archive <change>`, a commit...), offer the likely next steps as options instead of
   telling the user to type them, and run the one they pick yourself (skills through the Skill tool).
@@ -242,8 +254,8 @@ types from `packages/contracts`.
      `ui-from-screenshots` skill.
    - No numbers in specs: tunable values (speeds, timings, limits, sizes) live in config and may be
      recorded in `decisions.md`, `design.md`, `tasks.md` and `ui.md`; specs say "the configured ...".
-2. Commit the planning artifacts on the main branch (with the user's approval), then implement on the
-   change's own branch with `/apply`, test first. Sequential by default; parallel groups
+2. Commit the planning artifacts on the change's own branch (with the user's approval), then implement
+   there with `/apply`, test first. Sequential by default; parallel groups
    only if the user chooses it (the apply skill describes how).
 3. Hooks enforce the loop (settings in `.claude/flow.conf`): lint on each edit, full checks at the
    end, then the `change-verifier` subagent must return PASS before the work is done. Run it

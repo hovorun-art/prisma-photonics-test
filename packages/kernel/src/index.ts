@@ -1,5 +1,13 @@
 export { ERROR_CODES, type ErrorCode } from './domain/error-codes.js';
 export { DomainError, type DomainErrorParams, type ErrorDetails } from './domain/domain-error.js';
+export {
+  JobNotFoundError,
+  type JobNotFoundErrorParams,
+} from './domain/jobs/job-not-found.error.js';
+export {
+  JobStatusConflictError,
+  type JobStatusConflictErrorParams,
+} from './domain/jobs/job-status-conflict.error.js';
 export { CLOCK, type Clock, type NowClockResponse } from './domain/clock.js';
 export {
   RANDOM,
@@ -7,6 +15,7 @@ export {
   type IntRandomResponse,
   type NextRandomResponse,
   type Random,
+  type UuidRandomResponse,
 } from './domain/random.js';
 export {
   SLEEPER,

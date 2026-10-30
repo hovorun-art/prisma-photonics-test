@@ -13,7 +13,7 @@ metadata:
 Implement tasks from an OpenSpec change.
 
 **spec-flow additions** (apply on top of the steps below):
-- **Branch**: implement on the change's own branch (`<change>`), never on the main branch (`MAIN_BRANCH` in `.claude/flow.conf`). The planning artifacts are committed on the main branch first, with the user's approval. Check the current branch before the first edit and create or switch to it.
+- **Branch**: implement on the change's own branch (`<change>`), never on the main branch (`MAIN_BRANCH` in `.claude/flow.conf`). The planning artifacts are committed on that branch first, with the user's approval. Check the current branch before the first edit and create or switch to it.
 - **Test first**: for each task, write the scenario's test, run it and see it fail for the expected reason, write the least code that passes, then refactor with the tests green (see "Testing" in CLAUDE.md).
 - **Unclear behaviour**: a question about behaviour goes into `decisions.md` under "Open questions" and to the user; never settle it in code.
 - **Parallel or sequential**: if the "Plan" in `tasks.md` shows groups that could run at the same time, ask with AskUserQuestion before implementing: sequential (recommended unless the groups are large and clearly independent) or parallel, and which groups. Without an explicit "parallel" answer, work sequentially. For parallel, follow "Parallel groups" at the end of this skill.

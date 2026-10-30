@@ -69,6 +69,22 @@ express this more precisely; a second method is simpler and enough here. Every s
 an HTTP hop from the execution service; timeouts and retries for it are designed with the first job
 flow.
 
+**Calls from the worker to job-service: a timeout, then retries with p-retry.** In
+job-execution-service the port to job-service is `JobRepository` (`HttpJobRepository` over the
+internal API): to the worker it is simply where jobs are read and saved. A call that cannot reach
+job-service (network error, timeout or 5xx) is retried a configured number of times (3). The wait
+starts at a configured delay (500 ms), doubles each time up to a configured maximum (5 s), and is
+randomized (1–2×) so workers that lost job-service together do not hammer it together when it
+comes back. A 404 or 409 is an answer, never retried. Shutdown aborts a wait through the library's
+`AbortSignal`. *Why a library:* a hand-written loop was replaced; retry timing is generic plumbing,
+and we choose such libraries from usage data. Candidates (npm weekly downloads, latest release):
+`retry` 158.5M (0.13.1, 2021), **p-retry 71.6M (8.0.1, 2026-09)**, exponential-backoff 55.0M
+(3.1.3, 2025-10), async-retry 48.3M (1.3.3, 2021), promise-retry 36.1M (2.0.1, 2020), cockatiel
+2.9M (4.0.0, 2026-05), backoff 1.4M (2.5.0, 2016). p-retry is the most used maintained one, ships
+its own types as ESM, and is the only widely used one that takes an `AbortSignal`, which the
+shutdown needs. *Trade-off:* its jitter is a 1–2× factor, not "full" jitter, which spreads load
+slightly less; cockatiel would add a circuit breaker, but nothing needs one yet.
+
 **Five operations per feature, lifecycle rules inside `update`.** The job API, `JobService` and
 `JobRepository` each have exactly create, get, query, update and delete. Starting, completing and
 failing a job are not methods of their own: job-execution-service sends one internal `PATCH` with
@@ -179,21 +195,50 @@ step by step; the reasoning behind each turn is kept instead in this file, in th
 
 ## 1. Job Pickup Strategy
 
-**Approach chosen:** TBD
+**Approach chosen:** two layers. BullMQ hands each queue entry (one per attempt, id
+`<jobId>_<attempt>`) to one worker at a time: its atomic move from waiting to active is what spreads
+work over instances and over the in-process concurrency slots (5 per instance by default). That
+alone is not trusted to prevent a double run, so the worker then asks job-service to start the job
+(`PATCH /internal/v1/jobs/:id` with `processing`; the worker sends nothing else). job-service reads
+the job, checks it is still `pending`, and writes the start in one conditional `UPDATE` that only
+matches while the job still has the status and attempts job-service itself just read
+(compare-and-set). The loser of any race gets 409 and drops the entry without running anything.
+Before starting, the worker reads the job and skips it when it is no longer pending (finished,
+cancelled, deleted, or already started), so stale and redelivered entries cost one read.
 
-**Why:** TBD
+**Why:** BullMQ's pickup is fast and battle-tested, but a queue entry is not the source of truth:
+entries can be redelivered (stalled detection after a crash), and the job's real state lives in
+Postgres. Putting the final "may I run this?" decision into one conditional write in Postgres makes
+duplicate-free execution independent of queue behaviour, timing or the number of instances. BullMQ's
+own retries are off (one try per entry); job-service owns the retry rule and queues a new entry for
+the next attempt.
 
-**Trade-offs:** TBD
+**Trade-offs:** every job costs two extra calls to job-service before it runs (read, start). A
+worker never touches the database, so a job-service outage stops all progress; calls are retried a
+configured number of times, then given up. Ordering across the queue is BullMQ's (FIFO for now;
+priority comes with its own change).
 
 ---
 
 ## 2. Worker Crash Recovery
 
-**Approach chosen:** TBD
+**Approach chosen (so far):** prevention and a clean shutdown; the recovery sweep is a later change.
+On SIGTERM a worker stops taking entries and lets running jobs finish and report, up to a configured
+grace period (10 s; compose waits 15 s before killing). After the grace period the remaining jobs
+are abandoned without a report. An attempt is counted when the job starts, so a job that kills its
+worker cannot loop forever.
 
-**Why:** TBD
+**Why:** state is changed only through job-service, so the worker holds nothing that needs saving;
+the only loss is the job it was running. Recovering that job safely needs a rule for when a
+`processing` job counts as dead (heartbeat or lease timeout), which is its own change
+(`crash-recovery`), together with the sweep that re-queues pending jobs whose entry never reached the
+queue.
 
-**What happens if worker crashes mid-job:** TBD
+**What happens if a worker crashes mid-job:** today the job stays `processing`. BullMQ's stalled
+detection may hand the entry to another worker, which reads the job, sees it is no longer pending and
+drops it, so the job is never run twice, but it is also not finished. The same happens when a report
+cannot reach job-service after its retries. The crash-recovery change will detect such jobs and send
+them back to pending (or fail them on their last attempt).
 
 ---
 

@@ -1,6 +1,7 @@
 import {
   FINISHED_JOB_STATUSES,
   JOB_QUEUE_NAME,
+  JobQueueEntryId,
   type Job,
   type JobStatus,
 } from '@job-queue/contracts';
@@ -82,9 +83,10 @@ export class ContainerJobFixtures implements JobFixtures {
   async queued(req: QueuedJobFixturesRequest): Promise<QueuedJobFixturesResponse> {
     const entries = await this.queue.getJobs(['waiting', 'prioritized', 'delayed']);
     const attempts = entries
-      .map((entry) => entry.id ?? '')
-      .filter((id) => id.startsWith(`${req.jobId}_`))
-      .map((id) => Number(id.slice(req.jobId.length + 1)))
+      .map((entry) => JobQueueEntryId.safeDecode(entry.id ?? ''))
+      .flatMap((decoded) => (decoded.success ? [decoded.data] : []))
+      .filter((attempt) => attempt.jobId === req.jobId)
+      .map((attempt) => attempt.attempt)
       .sort((a, b) => a - b);
     return { attempts };
   }

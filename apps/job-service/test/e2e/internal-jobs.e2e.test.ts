@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { ErrorBody, INTERNAL_JOBS_ROUTE, Job, SERVICE_TOKEN_SCHEME } from '@job-queue/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
@@ -7,7 +9,7 @@ import { InProcessJobService } from './support/in-process-job-service.js';
 import { ContainerJobFixtures } from './support/job-fixtures.js';
 import { JOB_SERVICE_TEST_ENV } from './support/running-job-service.js';
 
-const UNKNOWN_ID = '00000000-0000-4000-8000-000000000000';
+const UNKNOWN_ID = randomUUID();
 const AUTHORIZATION = `${SERVICE_TOKEN_SCHEME} ${JOB_SERVICE_TEST_ENV.INTERNAL_SERVICE_TOKEN}`;
 const ERROR = { code: 'SEND_FAILED', message: 'Mailbox unavailable' };
 

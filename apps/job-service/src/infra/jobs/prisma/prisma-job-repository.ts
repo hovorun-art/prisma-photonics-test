@@ -1,7 +1,6 @@
 import { Job } from '@job-queue/contracts';
 
-import { JobNotFoundError } from '../../../domain/jobs/errors/job-not-found.error.js';
-import { JobStatusConflictError } from '../../../domain/jobs/errors/job-status-conflict.error.js';
+import { JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
 import type {
   CreateJobRepositoryRequest,
   CreateJobRepositoryResponse,

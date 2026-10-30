@@ -21,4 +21,4 @@ export {
   QueryJobsResponse,
   UpdateJobRequest,
 } from './job.js';
-export { JOB_QUEUE_NAME, JobQueueMessage } from './job-queue.js';
+export { JOB_QUEUE_NAME, JobQueueAttempt, JobQueueEntryId, JobQueueMessage } from './job-queue.js';

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   EMAIL_LIMITS,
   ErrorBody,
@@ -16,7 +18,7 @@ import { JOB_SERVICE_TEST_ENV } from './support/running-job-service.js';
 
 const QUERY_DEFAULT_LIMIT = 3;
 const QUERY_MAX_LIMIT = 10;
-const UNKNOWN_ID = '00000000-0000-4000-8000-000000000000';
+const UNKNOWN_ID = randomUUID();
 
 const EMAIL_JOB = {
   type: 'email',

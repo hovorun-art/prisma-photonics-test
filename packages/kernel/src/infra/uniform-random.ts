@@ -3,11 +3,14 @@ import type {
   IntRandomResponse,
   NextRandomResponse,
   Random,
+  UuidRandomResponse,
 } from '../domain/random.js';
 
 /** A Random whose integers come from `next()`, split into equal buckets, one per integer. */
 export abstract class UniformRandom implements Random {
   abstract next(): NextRandomResponse;
+
+  abstract uuid(): UuidRandomResponse;
 
   int(req: IntRandomRequest): IntRandomResponse {
     if (!Number.isInteger(req.min) || !Number.isInteger(req.max) || req.min > req.max) {

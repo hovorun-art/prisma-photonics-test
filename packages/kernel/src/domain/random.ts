@@ -4,6 +4,12 @@ export interface Random {
   next(): NextRandomResponse;
   /** An integer in [min, max], both inclusive. */
   int(req: IntRandomRequest): IntRandomResponse;
+  /** A new random UUID (version 4). */
+  uuid(): UuidRandomResponse;
+}
+
+export interface UuidRandomResponse {
+  value: string;
 }
 
 export interface NextRandomResponse {
