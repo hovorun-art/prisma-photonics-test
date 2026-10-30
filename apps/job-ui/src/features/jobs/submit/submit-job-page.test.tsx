@@ -182,6 +182,19 @@ describe('SubmitJobPage', () => {
     expect(screen.getByRole('status', { name: 'current search' })).toHaveTextContent('');
   });
 
+  it('Switching keeps the execution settings: Back keeps Priority changed on the webhook form', async () => {
+    const user = userEvent.setup();
+    renderSubmit();
+    await user.click(screen.getByRole('button', { name: /^Webhook/ }));
+    await user.clear(screen.getByLabelText(en.submit.priority));
+    await user.type(screen.getByLabelText(en.submit.priority), '9');
+
+    await user.click(screen.getByRole('button', { name: 'Browser back' }));
+
+    expect(screen.getByRole('button', { name: /^Email/ })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByLabelText(en.submit.priority)).toHaveValue(9);
+  });
+
   it('Switching keeps the execution settings: Priority stays, the email fields start empty', async () => {
     const user = userEvent.setup();
     renderSubmit();
