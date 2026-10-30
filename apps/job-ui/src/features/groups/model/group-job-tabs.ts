@@ -44,6 +44,7 @@ export interface GroupJobTabs {
   readonly canRemove: boolean;
   /** Adds an Email job with initial values at the end and opens it. */
   add(): ChangeGroupJobTabsResponse;
+  /** Inserts a copy right after a tab and opens the copy. */
   duplicate(req: DuplicateGroupJobTabsRequest): ChangeGroupJobTabsResponse;
   /** Removes a tab; when it was open, the tab before it (or the new first) opens. */
   remove(req: RemoveGroupJobTabsRequest): ChangeGroupJobTabsResponse;

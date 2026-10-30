@@ -26,13 +26,13 @@ Owns: `apps/job-ui/src/features/groups/api/groups-api.ts`, `apps/job-ui/src/feat
 
 Owns: `apps/job-ui/src/features/groups/model/group-job-tabs.impl.ts`, `apps/job-ui/src/features/groups/model/group-job-tabs.impl.test.ts`, `apps/job-ui/src/features/groups/model/group-creation.impl.ts`, `apps/job-ui/src/features/groups/model/group-creation.impl.test.ts`, `apps/job-ui/src/features/groups/model/bulk-issue-splitter.ts`, `apps/job-ui/src/features/groups/model/bulk-issue-splitter.test.ts` · Depends on: 1 · Parallel with: 3
 
-- [ ] 2.1 Write failing `GroupJobTabsImpl` tests named after the scenarios "New group page at first" (one Email tab, open), "Add a job", "Duplicate a job" (copy right after, later tabs shift), "Remove a job", "Remove the first job", "Last job cannot be removed", "At the maximum" and "Below the maximum again"; see them fail
-- [ ] 2.2 Implement `GroupJobTabsImpl`; verify the tests from 2.1 pass
-- [ ] 2.3 Write failing `GroupCreationImpl` tests (mocked `GroupsApi`/`JobsApi`, `...Once` stubs) for "Create a group with two jobs" (bulk gets every job with the group's id in order), "Group cannot be created" (no bulk call), "Group deleted after a failed submit" (delete called once, bulk error rethrown), "Delete fails after a failed submit" (bulk error rethrown, not the delete error) and "Try again after a failed submit" (a second create uses the new group's id); see them fail
-- [ ] 2.4 Implement `GroupCreationImpl`; verify the tests from 2.3 pass
-- [ ] 2.5 Write failing `BulkIssueSplitter` tests: issues on `jobs.<n>.<field>` go to job n with path `<field>`; issues on `jobs`, on an index without a job, or details without issues go to the leftover messages ("API validation error not tied to a job's field"); see them fail
-- [ ] 2.6 Implement `BulkIssueSplitter`; verify the tests from 2.5 pass
-- [ ] 2.7 Run the `test-case-reviewer` subagent on `apps/job-ui` unit tests in `features/groups/model/`; add the missing cases it reports or note why they belong elsewhere
+- [x] 2.1 Write failing `GroupJobTabsImpl` tests named after the scenarios "New group page at first" (one Email tab, open), "Add a job", "Duplicate a job" (copy right after, later tabs shift), "Remove a job", "Remove the first job", "Last job cannot be removed", "At the maximum" and "Below the maximum again"; see them fail
+- [x] 2.2 Implement `GroupJobTabsImpl`; verify the tests from 2.1 pass
+- [x] 2.3 Write failing `GroupCreationImpl` tests (mocked `GroupsApi`/`JobsApi`, `...Once` stubs) for "Create a group with two jobs" (bulk gets every job with the group's id in order), "Group cannot be created" (no bulk call), "Group deleted after a failed submit" (delete called once, bulk error rethrown), "Delete fails after a failed submit" (bulk error rethrown, not the delete error) and "Try again after a failed submit" (a second create uses the new group's id); see them fail
+- [x] 2.4 Implement `GroupCreationImpl`; verify the tests from 2.3 pass
+- [x] 2.5 Write failing `BulkIssueSplitter` tests: issues on `jobs.<n>.<field>` go to job n with path `<field>`; issues on `jobs`, on an index without a job, or details without issues go to the leftover messages ("API validation error not tied to a job's field"); see them fail
+- [x] 2.6 Implement `BulkIssueSplitter`; verify the tests from 2.5 pass
+- [x] 2.7 Run the `test-case-reviewer` subagent on `apps/job-ui` unit tests in `features/groups/model/`; add the missing cases it reports or note why they belong elsewhere
 
 ## 3. Split the job form into sections and footer
 

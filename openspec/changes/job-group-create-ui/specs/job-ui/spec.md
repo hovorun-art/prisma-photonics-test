@@ -102,8 +102,8 @@ at their initial values, without changing the page URL. Each tab SHALL keep its 
 
 ### Requirement: Users can add, duplicate and remove jobs
 A "+" tab SHALL add an Email job at initial values at the end and open it. Each tab's form SHALL
-have a "Duplicate" button that inserts a copy of that job with the same values right after it.
-Each tab SHALL have a × that removes its job, hidden while only one tab is left;
+have a "Duplicate" button that inserts a copy of that job with the same values right after it
+and opens the copy. Each tab SHALL have a × that removes its job, hidden while only one tab is left;
 removing the open tab SHALL open the tab before it, or the new first tab.
 
 #### Scenario: Add a job

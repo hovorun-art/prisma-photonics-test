@@ -11,6 +11,7 @@
   (user)
 - Each tab's content has a "Duplicate" button that inserts an identical copy right after that job
   (user)
+- After "Duplicate" the new copy is the open tab (user; asked during apply)
 - A tab reads "Job N · <type>" and has a small × that removes the job, hidden while only one tab is
   left; numbers follow the tab order (user)
 - job-ui gets a config value for the most jobs in a group, default 100 (job-service's default bulk
@@ -67,3 +68,4 @@
 - [x] Bulk fails and deleting the empty group fails too? → submit error only; empty group stays
 - [x] How is a job removed, what does a tab show? → × on the tab, "Job N · <type>"
 - [x] Client-side validation over several tabs? → invalid tabs highlighted red, first one opens
+- [x] Which tab is open after "Duplicate"? → the new copy
