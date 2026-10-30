@@ -29,8 +29,34 @@ describe('ZodJobServiceConfigParser', () => {
         queryDefaultLimit: 20,
         queryMaxLimit: 100,
         enqueueTimeoutMs: 2000,
+        statsRecentWindowMinutes: 1440,
+        statsThroughputWindowMinutes: 5,
       },
     });
+  });
+
+  it('reads the configured statistics windows', () => {
+    const env = {
+      ...ENV,
+      JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES: '60',
+      JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES: '1',
+    };
+
+    expect(parser.parse({ env })).toMatchObject({
+      ok: true,
+      config: { statsRecentWindowMinutes: 60, statsThroughputWindowMinutes: 1 },
+    });
+  });
+
+  it.each(['0', '-5', '1.5', 'many'])('rejects a statistics window of %s', (value) => {
+    for (const name of [
+      'JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES',
+      'JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES',
+    ]) {
+      const result = parser.parse({ env: { ...ENV, [name]: value } });
+
+      expect(result.ok ? '' : result.problems).toContain(name);
+    }
   });
 
   it('reads the configured query page sizes and enqueue timeout', () => {
