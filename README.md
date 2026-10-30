@@ -81,9 +81,9 @@ Test levels: unit tests next to the code; integration tests (`*.int.test.ts`) ru
 against a real Postgres or Redis; per-app e2e tests (`apps/<app>/test/e2e/`) run each app as a black
 box; the system e2e (`tests/system-e2e/`) starts the whole stack with two workers. Request and
 response shapes are shared Zod schemas, so stubs and the real API cannot drift apart. The
-integration and e2e tests of both backends share one set of helpers in `tests/support/` (starts the
-built service as a process, counts Redis and Postgres connections); it is test-only and never part
-of an image.
+integration and e2e tests of both backends share one set of helpers in `tests/support/` (counts
+Redis and Postgres connections, migrates test databases); it is test-only and never part of an
+image.
 
 ## Architecture
 

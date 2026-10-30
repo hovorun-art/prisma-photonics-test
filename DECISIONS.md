@@ -226,12 +226,21 @@ middleware (token before body), body limits and a retry cycle through the routes
 they run the real `AppModule` with the bootstrap's own setup steps on a migrated Postgres
 Testcontainer, and mock the services around it at our ports (the job queue and the Redis
 connection) with `mockDeep`. A queue outage is a stub that rejects once, not a second app pointed at
-a dead address. The tests are split into files by spec area, sharing one small setup class instead
+a dead address. job-execution-service's e2e tests run its `AppModule` the same way, without a
+database: queue entries are handed in through the callback the app registers with the mocked queue
+consumer, and job-service's internal API, Redis, the sleeper and randomness are mocked, so handler
+times, failure draws and the shutdown grace period run without waiting. Their log lines (instance id
+on every line) are collected through a log destination that `LoggingModule` accepts for this. The
+tests are split into files by spec area, sharing one small setup class instead
 of a folder of launchers, fixtures and probe controllers. A separate reviewer agent
 (`test-case-reviewer`) checks each test area for missing corner cases and for duplicates of lower
 levels. *Trade-offs:* job-service's shutdown is tested in the test process (`app.close()` closes
 the database, the queue and Redis once); no test sends SIGTERM to a real job-service process or
-checks its exit code, so the signal wiring is covered only by service-kit's unit tests. Jobs in
+checks its exit code, so the signal wiring is covered only by service-kit's unit tests; the same
+holds for job-execution-service, whose "takes no new entries, waits for running ones" is the mocked
+consumer's behaviour here and is shown for real by the consumer's integration test and the system
+e2e. Nest's logger is process-wide, so all apps started in one e2e file write to one list of log
+lines, and the start log line is checked in the bootstrap's unit test, not by the e2e. Jobs in
 states no route can create are seeded through the app's own repository, so a mapping bug there would
 affect the seeded data and the read-back alike (the repository's integration test guards the
 mapping). Each e2e file starts its own Postgres container, which costs a few seconds per file and

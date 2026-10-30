@@ -5,7 +5,7 @@ import type {
   CountRedisConnectionCounterRequest,
   CountRedisConnectionCounterResponse,
   RedisConnectionCounter,
-} from '../domain/spawned-service.js';
+} from '../domain/redis-connection-counter.js';
 
 export interface ClientListRedisConnectionCounterParams {
   redisUrl: string;

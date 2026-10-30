@@ -24,6 +24,7 @@ export {
   type LogFormat,
   type LogPolicy,
 } from './domain/logging/log-policy.js';
+export type { LogDestination } from './domain/logging/log-destination.js';
 export {
   REDIS_CONNECTION,
   type PingRedisConnectionResponse,
