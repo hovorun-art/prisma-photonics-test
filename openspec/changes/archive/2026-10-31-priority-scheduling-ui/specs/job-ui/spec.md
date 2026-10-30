@@ -161,7 +161,7 @@ The "1. Job type" cards SHALL switch the form in place between Email, Webhook an
 Choosing Webhook SHALL show `/jobs/new?type=webhook`, choosing Aircraft transit
 `/jobs/new?type=flight-transit`, choosing Email `/jobs/new`; opening any of these URLs directly
 SHALL show that type selected, and Back SHALL return to the previous type. Switching SHALL keep
-Priority, Max attempts, the run choice and the scheduled time, and start the chosen type's payload
+Priority, Max attempts, the run choice and its time, and start the chosen type's payload
 fields at their initial values.
 
 #### Scenario: Choose Webhook
