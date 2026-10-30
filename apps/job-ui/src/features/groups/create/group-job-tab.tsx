@@ -6,15 +6,12 @@ import { type FieldValues, FormProvider, type Path } from 'react-hook-form';
 import { Button } from '@/components/ui/button';
 import { en } from '@/locales';
 
+import { type ApplyApiIssuesResponse, useApiIssues } from '../../jobs/hooks/use-api-issues';
 import { useTypedJobForm } from '../../jobs/hooks/use-typed-job-form';
 import { DEFAULT_JOB_FORM_EXECUTION } from '../../jobs/model/default-job-form-execution';
 import type { JobFormDraft, JobFormExecution } from '../../jobs/model/job-form-draft';
 import { FieldIdPrefixContext } from '../../jobs/submit/field-id-prefix-context';
-import {
-  API_ERROR,
-  type JobFormFields,
-  JobFormSections,
-} from '../../jobs/submit/job-form-sections';
+import { type JobFormFields, JobFormSections } from '../../jobs/submit/job-form-sections';
 import { JobTypeForms } from '../../jobs/submit/job-type-forms';
 import { JobTypePicker } from '../../jobs/submit/job-type-picker';
 import type { GroupJobSeed } from '../model/group-job-tabs';
@@ -27,12 +24,7 @@ export interface ShowApiIssuesGroupJobTabRequest {
   /** This job's part of a bulk `VALIDATION_FAILED` answer, paths relative to the job. */
   readonly details: Readonly<Record<string, unknown>>;
 }
-export interface ShowApiIssuesGroupJobTabResponse {
-  /** How many fields of the form now show an API issue. */
-  readonly fieldCount: number;
-  /** Messages of the issues that match no field of the form. */
-  readonly unmatched: readonly string[];
-}
+export type ShowApiIssuesGroupJobTabResponse = ApplyApiIssuesResponse;
 
 /** What the new group page asks of a tab's form when the group is created. */
 export interface GroupJobTabHandle {
@@ -139,6 +131,7 @@ function TabForm<Values extends FieldValues, Field extends Path<Values>>({
     // The form may be in a hidden tab; the page opens the first invalid tab instead.
     shouldFocusError: false,
   });
+  const applyIssues = useApiIssues({ form, draft });
   const hasErrors = Object.keys(form.formState.errors).length > 0;
 
   useEffect(() => {
@@ -157,18 +150,12 @@ function TabForm<Values extends FieldValues, Field extends Path<Values>>({
             },
           )();
         }),
-      showApiIssues: ({ details }) => {
-        const mapped = draft.apiErrors({ details });
-        for (const [name, message] of Object.entries(mapped.errors)) {
-          form.setError(name as Field, { type: API_ERROR, message: message as string });
-        }
-        return { fieldCount: Object.keys(mapped.errors).length, unmatched: mapped.unmatched };
-      },
+      showApiIssues: applyIssues,
     });
     return () => {
       onHandle(tabKey, null);
     };
-  }, [tabKey, form, draft, onHandle]);
+  }, [tabKey, form, applyIssues, onHandle]);
 
   return (
     <FormProvider {...form}>

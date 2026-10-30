@@ -9,6 +9,7 @@ import { cn } from '@/lib/class-names';
 import { en } from '@/locales';
 
 import { ApiError } from '../../jobs/api/api-error';
+import { ApiRejectionAlert } from '../../jobs/model/api-rejection-alert';
 import { useUiConfig } from '../../jobs/hooks/use-ui-config';
 import { useCreateGroup } from '../hooks/use-create-group';
 import { BulkIssueSplitter } from '../model/bulk-issue-splitter';
@@ -26,6 +27,7 @@ export function NewGroupPage() {
   const navigate = useNavigate();
   const create = useCreateGroup();
   const [splitter] = useState(() => new BulkIssueSplitter());
+  const [rejection] = useState(() => new ApiRejectionAlert());
   const [tabs, setTabs] = useState<GroupJobTabs>(
     () => new GroupJobTabsImpl({ maxJobs: config.maxGroupJobs }),
   );
@@ -63,24 +65,24 @@ export function NewGroupPage() {
 
   /** Shows a rejected submit: API issues on their jobs' fields, everything else in the alert. */
   const showError = (error: Error, keys: readonly number[]) => {
-    if (!(error instanceof ApiError) || error.code !== 'VALIDATION_FAILED') {
-      setAlert(error.message);
-      return;
+    const unmatched: string[] = [];
+    let fieldCount = 0;
+    if (error instanceof ApiError && error.code === 'VALIDATION_FAILED') {
+      const split = splitter.split({ details: error.details, jobCount: keys.length });
+      unmatched.push(...split.unmatched);
+      let firstShown = -1;
+      keys.forEach((key, index) => {
+        const details = split.jobs[index];
+        const handle = handles.current.get(key);
+        if (!details || details.issues.length === 0 || !handle) return;
+        const shown = handle.showApiIssues({ details });
+        unmatched.push(...shown.unmatched);
+        fieldCount += shown.fieldCount;
+        if (shown.fieldCount > 0 && firstShown < 0) firstShown = index;
+      });
+      if (firstShown >= 0) setTabs((current) => current.open({ index: firstShown }).next);
     }
-    const split = splitter.split({ details: error.details, jobCount: keys.length });
-    const unmatched = [...split.unmatched];
-    let firstShown = -1;
-    keys.forEach((key, index) => {
-      const details = split.jobs[index];
-      const handle = handles.current.get(key);
-      if (!details || details.issues.length === 0 || !handle) return;
-      const shown = handle.showApiIssues({ details });
-      unmatched.push(...shown.unmatched);
-      if (shown.fieldCount > 0 && firstShown < 0) firstShown = index;
-    });
-    if (firstShown >= 0) setTabs((current) => current.open({ index: firstShown }).next);
-    // A rejection whose issues fit no field, or that has none: the user still learns why.
-    setAlert(unmatched.length > 0 ? unmatched.join(' ') : firstShown < 0 ? error.message : null);
+    setAlert(rejection.message({ error, fieldCount, unmatched }).message);
   };
 
   const onCreate = async () => {

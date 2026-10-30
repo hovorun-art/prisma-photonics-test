@@ -511,6 +511,26 @@ describe('NewGroupPage', () => {
       expect(within(panel()).getByLabelText(en.submit.to)).toHaveValue('ops@acme.test');
     });
 
+    it("editing a field the API rejected clears its error and the tab's highlight", async () => {
+      const user = userEvent.setup();
+      answerGroups(() => HttpResponse.json(groupFixtures.build(), { status: 201 }));
+      answerBulk(() =>
+        errorBody(400, 'VALIDATION_FAILED', 'Validation failed', {
+          issues: [{ path: ['jobs', 0, 'payload', 'to'], message: 'Mailbox does not exist' }],
+        }),
+      );
+      renderPage();
+      await fillEmail(user);
+      await user.click(createButton(1));
+      expect(await within(panel()).findByText('Mailbox does not exist')).toBeInTheDocument();
+      expect(tab(1)).toHaveAttribute('aria-invalid', 'true');
+
+      await user.type(within(panel()).getByLabelText(en.submit.to), 'x');
+
+      expect(within(panel()).queryByText('Mailbox does not exist')).not.toBeInTheDocument();
+      expect(tab(1)).not.toHaveAttribute('aria-invalid');
+    });
+
     it("API validation error not tied to a job's field: the alert shows the issue's message", async () => {
       const user = userEvent.setup();
       answerGroups(() => HttpResponse.json(groupFixtures.build(), { status: 201 }));
