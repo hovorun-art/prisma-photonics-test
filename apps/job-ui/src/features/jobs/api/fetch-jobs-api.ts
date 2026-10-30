@@ -10,6 +10,8 @@ import type { z } from 'zod';
 
 import { ApiError } from './api-error';
 import type {
+  ChangeStatusJobsApiRequest,
+  ChangeStatusJobsApiResponse,
   CreateJobsApiRequest,
   CreateJobsApiResponse,
   DeleteJobsApiRequest,
@@ -55,6 +57,18 @@ export class FetchJobsApi implements JobsApi {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req.request),
+      },
+    });
+    return { job: await this.parse({ schema: Job, response }) };
+  }
+
+  async changeStatus(req: ChangeStatusJobsApiRequest): Promise<ChangeStatusJobsApiResponse> {
+    const response = await this.send({
+      path: this.jobPath(req.id),
+      init: {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: req.status }),
       },
     });
     return { job: await this.parse({ schema: Job, response }) };

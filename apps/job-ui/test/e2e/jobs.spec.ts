@@ -1,22 +1,32 @@
 import { randomUUID } from 'node:crypto';
 
-import type { CreateJobRequest, Job } from '@job-queue/contracts';
+import type { ChangeJobStatusRequest, CreateJobRequest, Job } from '@job-queue/contracts';
 import { expect, type Page, test } from '@playwright/test';
 
 import { API_BASE_PATH } from '../../src/config/api-base-path';
 import { en } from '../../src/locales/en';
 
+/** What the mock job-service was asked to change: the ids deleted and the status changes. */
+interface MockJobServiceCalls {
+  deleted: string[];
+  statusChanges: { id: string; status: ChangeJobStatusRequest['status'] }[];
+}
+
 interface MockJobService {
-  /** Answers job-ui's API calls from `jobs`; returns the ids it was asked to delete. */
-  install(req: { page: Page; jobs: Job[] }): Promise<{ deleted: string[] }>;
+  /** Answers job-ui's API calls from `jobs`; returns what it was asked to change. */
+  install(req: { page: Page; jobs: Job[] }): Promise<MockJobServiceCalls>;
   job(req: Partial<Job>): Job;
 }
 
-/** An in-memory job-service behind `page.route`: list (with the status and type filters), get, create and delete. */
+/**
+ * An in-memory job-service behind `page.route`: list (with the status and type filters), get,
+ * create, status change (cancel, retry) and delete.
+ */
 class RoutedJobService implements MockJobService {
-  async install(req: { page: Page; jobs: Job[] }): Promise<{ deleted: string[] }> {
+  async install(req: { page: Page; jobs: Job[] }): Promise<MockJobServiceCalls> {
     const { jobs } = req;
     const deleted: string[] = [];
+    const statusChanges: MockJobServiceCalls['statusChanges'] = [];
     // Statistics are not part of these scenarios: refuse them, so no call reaches the preview server.
     await req.page.route(`**${API_BASE_PATH}/v1/stats**`, (route) => route.abort());
     await req.page.route(`**${API_BASE_PATH}/v1/jobs**`, async (route) => {
@@ -24,9 +34,28 @@ class RoutedJobService implements MockJobService {
       const id = new URL(request.url()).pathname.split('/v1/jobs/')[1];
       if (request.method() === 'POST') {
         const body = request.postDataJSON() as CreateJobRequest;
-        const job = this.job({ id: '99999999-9999-4999-8999-999999999999', ...body });
+        const job = this.job({ id: CREATED_ID, ...body });
         jobs.unshift(job);
         return route.fulfill({ status: 201, json: job });
+      }
+      if (request.method() === 'PATCH' && id) {
+        const { status } = request.postDataJSON() as ChangeJobStatusRequest;
+        statusChanges.push({ id, status });
+        const index = jobs.findIndex((j) => j.id === id);
+        const changed =
+          status === 'cancelled'
+            ? { ...jobs[index]!, status }
+            : {
+                ...jobs[index]!,
+                status,
+                attempts: 0,
+                result: null,
+                error: null,
+                startedAt: null,
+                completedAt: null,
+              };
+        jobs[index] = changed;
+        return route.fulfill({ json: changed });
       }
       if (request.method() === 'DELETE' && id) {
         deleted.push(id);
@@ -53,13 +82,13 @@ class RoutedJobService implements MockJobService {
       );
       return route.fulfill({ json: { items: matching, total: matching.length } });
     });
-    return { deleted };
+    return { deleted, statusChanges };
   }
 
   job(req: Partial<Job>): Job {
     // A partial of either job type over an email job: the caller keeps type and payload in step.
     return {
-      id: '7f3a9c21-4b5d-4e6f-8a7b-9c0d1e2f3a4b',
+      id: randomUUID(),
       type: 'email',
       status: 'pending',
       priority: 5,
@@ -78,6 +107,9 @@ class RoutedJobService implements MockJobService {
     } as Job;
   }
 }
+
+/** The id the mock job-service gives the next job it creates. */
+const CREATED_ID = randomUUID();
 
 const api: MockJobService = new RoutedJobService();
 
@@ -115,10 +147,8 @@ test('Submit a valid email job: the new job page opens', async ({ page }) => {
   await page.getByLabel(en.submit.body, { exact: true }).fill('Hi team');
   await page.getByRole('button', { name: en.submit.submit }).click();
 
-  await expect(page).toHaveURL(/\/jobs\/99999999-9999-4999-8999-999999999999$/);
-  await expect(
-    page.getByRole('heading', { level: 1, name: '99999999-9999-4999-8999-999999999999' }),
-  ).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(`/jobs/${CREATED_ID}$`));
+  await expect(page.getByRole('heading', { level: 1, name: CREATED_ID })).toBeVisible();
 });
 
 test('Delete a finished job: confirming deletes it and opens the jobs list', async ({ page }) => {
@@ -140,6 +170,39 @@ test('Delete a finished job: confirming deletes it and opens the jobs list', asy
   expect(service.deleted).toEqual([job.id]);
 });
 
+test('Cancel a pending job: confirming in the dialog shows the job cancelled', async ({ page }) => {
+  const job = api.job({});
+  const service = await api.install({ page, jobs: [job] });
+
+  await page.goto(`/jobs/${job.id}`);
+  await page.getByRole('button', { name: en.job.cancelJob }).click();
+  const dialog = page.getByRole('dialog', { name: en.job.cancelTitle });
+  await dialog.getByRole('button', { name: en.job.cancelConfirm }).click();
+
+  await expect(dialog).toBeHidden();
+  await expect(page.getByText(en.statuses.cancelled).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: en.job.cancelJob })).toBeHidden();
+  expect(service.statusChanges).toEqual([{ id: job.id, status: 'cancelled' }]);
+});
+
+test('Retry a failed job: one click shows the job pending again', async ({ page }) => {
+  const job = api.job({
+    status: 'failed',
+    attempts: 3,
+    startedAt: '2026-10-29T21:02:10.000Z',
+    completedAt: '2026-10-29T21:02:12.000Z',
+    error: { code: 'EMAIL_SEND_FAILED', message: 'SMTP timeout' },
+  });
+  const service = await api.install({ page, jobs: [job] });
+
+  await page.goto(`/jobs/${job.id}`);
+  await page.getByRole('button', { name: en.job.retryJob }).click();
+
+  await expect(page.getByText(en.statuses.pending).first()).toBeVisible();
+  await expect(page.getByRole('button', { name: en.job.retryJob })).toBeHidden();
+  expect(service.statusChanges).toEqual([{ id: job.id, status: 'pending' }]);
+});
+
 test('Submit a valid webhook job: the new job page shows the webhook payload', async ({ page }) => {
   await api.install({ page, jobs: [] });
 
@@ -151,7 +214,7 @@ test('Submit a valid webhook job: the new job page shows the webhook payload', a
   await page.getByLabel(en.submit.jsonBody, { exact: true }).fill('{"orderId": "o-1"}');
   await page.getByRole('button', { name: en.submit.submit }).click();
 
-  await expect(page).toHaveURL(/\/jobs\/99999999-9999-4999-8999-999999999999$/);
+  await expect(page).toHaveURL(new RegExp(`/jobs/${CREATED_ID}$`));
   const payload = page.getByRole('region', { name: en.job.payload });
   await expect(payload).toContainText('"method": "PUT"');
   await expect(payload).toContainText('"url": "https://hooks.example.com/orders"');

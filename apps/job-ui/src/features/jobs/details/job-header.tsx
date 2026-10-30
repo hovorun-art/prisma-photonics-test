@@ -1,17 +1,16 @@
 import type { Job } from '@job-queue/contracts';
-import { RotateCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import { Button } from '@/components/ui/button';
 import { en } from '@/locales';
 
-import { ComingSoon } from '../../app-frame/coming-soon';
 import { useCurl } from '../hooks/use-curl';
 import { useJobPresenter } from '../hooks/use-job-presenter';
 import { LiveIndicator } from '../list/live-indicator';
 import { StatusBadge } from '../list/status-badge';
+import { CancelJobDialog } from './cancel-job-dialog';
 import { CopyButton } from './copy-button';
 import { DeleteJobDialog } from './delete-job-dialog';
+import { RetryJobButton } from './retry-job-button';
 
 /** The full id with status and type badges, and the job's actions (design "JobDetail"). */
 export function JobHeader({ job, connectionLost }: { job: Job; connectionLost: boolean }) {
@@ -62,21 +61,8 @@ export function JobActions({
         label={en.copy.copyAsCurl}
         className="h-10"
       />
-      {actions.cancel && (
-        <ComingSoon>
-          <Button variant="outline" className="h-10">
-            {en.job.cancelJob}
-          </Button>
-        </ComingSoon>
-      )}
-      {actions.retry && (
-        <ComingSoon>
-          <Button className="h-10">
-            <RotateCw aria-hidden="true" />
-            {en.job.retryJob}
-          </Button>
-        </ComingSoon>
-      )}
+      {actions.cancel && <CancelJobDialog id={job.id} />}
+      {actions.retry && <RetryJobButton id={job.id} />}
       {actions.delete && <DeleteJobDialog id={job.id} />}
     </div>
   );

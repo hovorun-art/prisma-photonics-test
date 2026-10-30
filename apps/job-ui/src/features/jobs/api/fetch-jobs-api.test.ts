@@ -99,6 +99,55 @@ describe('FetchJobsApi', () => {
     expect(body).toEqual(request);
   });
 
+  // The status is passed through as it is, so one of the two values is enough.
+  it.each(['cancelled'] as const)(
+    'changeStatus patches the job with status %s and returns the updated job',
+    async (status) => {
+      const job = jobFixtures.build({ status });
+      let body: unknown = null;
+      let contentType: string | null = null;
+      server.use(
+        http.patch(`${BASE}/v1/jobs/${job.id}`, async ({ request }) => {
+          body = await request.json();
+          contentType = request.headers.get('content-type');
+          return HttpResponse.json(job);
+        }),
+      );
+
+      await expect(api.changeStatus({ id: job.id, status })).resolves.toEqual({ job });
+      expect(body).toEqual({ status });
+      expect(contentType).toBe('application/json');
+    },
+  );
+
+  it('changeStatus turns a status conflict into an ApiError with its code and details', async () => {
+    const id = jobFixtures.build().id;
+    server.use(
+      http.patch(`${BASE}/v1/jobs/${id}`, () =>
+        HttpResponse.json(
+          {
+            code: 'JOB_STATUS_CONFLICT',
+            message: 'Job is completed',
+            details: { id, status: 'completed' },
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+
+    const error: unknown = await api
+      .changeStatus({ id, status: 'cancelled' })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      status: 409,
+      code: 'JOB_STATUS_CONFLICT',
+      message: 'Job is completed',
+      details: { id, status: 'completed' },
+    });
+  });
+
   it('delete calls the job route and returns the id', async () => {
     const job = jobFixtures.build();
     server.use(

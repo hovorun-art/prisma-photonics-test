@@ -51,15 +51,15 @@ Owns: `apps/job-execution-service/package.json`, `apps/job-execution-service/src
 
 ## 4. job-ui: Cancel and Retry on the job page
 
-Owns: `apps/job-ui/src/features/jobs/api/fetch-jobs-api.ts`, `apps/job-ui/src/features/jobs/api/fetch-jobs-api.test.ts`, `apps/job-ui/src/features/jobs/hooks/use-change-job-status.ts`, `apps/job-ui/src/features/jobs/model/job-presenter.ts`, `apps/job-ui/src/features/jobs/model/job-presenter.test.ts`, `apps/job-ui/src/features/jobs/model/job-presentation.ts`, `apps/job-ui/src/features/jobs/details/job-header.tsx`, `apps/job-ui/src/features/jobs/details/cancel-job-dialog.tsx`, `apps/job-ui/src/features/jobs/details/retry-job-button.tsx`, `apps/job-ui/src/features/jobs/details/job-page.test.tsx`, `apps/job-ui/test/e2e/jobs.spec.ts` · Depends on: 1 · Parallel with: 2, 3
+Owns: `apps/job-ui/src/features/jobs/testing/job-fixtures.ts`, `apps/job-ui/src/features/jobs/api/fetch-jobs-api.ts`, `apps/job-ui/src/features/jobs/api/fetch-jobs-api.test.ts`, `apps/job-ui/src/features/jobs/hooks/use-change-job-status.ts`, `apps/job-ui/src/features/jobs/model/job-presenter.ts`, `apps/job-ui/src/features/jobs/model/job-presenter.test.ts`, `apps/job-ui/src/features/jobs/model/job-presentation.ts`, `apps/job-ui/src/features/jobs/details/job-header.tsx`, `apps/job-ui/src/features/jobs/details/cancel-job-dialog.tsx`, `apps/job-ui/src/features/jobs/details/retry-job-button.tsx`, `apps/job-ui/src/features/jobs/details/job-page.test.tsx`, `apps/job-ui/test/e2e/jobs.spec.ts` · Depends on: 1 · Parallel with: 2, 3
 
-- [ ] 4.1 Write failing tests in `fetch-jobs-api.test.ts` (MSW): `changeStatus` sends `PATCH /v1/jobs/:id` with `{ status }` and parses the job; an error body becomes `ApiError` with its code. See them fail
-- [ ] 4.2 Implement `changeStatus` in `FetchJobsApi`; verify 4.1 passes
-- [ ] 4.3 Update `job-presenter.test.ts` so `processing` allows cancel (spec "Cancel a processing job"); see it fail, switch `JobPresenter.actions` to `CANCELLABLE_JOB_STATUSES`, verify it passes
-- [ ] 4.4 Write failing tests in `job-page.test.tsx`, named after "Cancel a pending job", "Cancel a processing job", "Keep the job", "No cancel for a finished job", "Retry a failed job", "No retry for a job that has not failed", "Retry in flight", "Cancel in flight", "Cancel rejected", "Retry rejected" and "Cancel and Retry are not disabled"; the updated job shows before the next poll. See them fail
-- [ ] 4.5 Implement `useChangeJobStatus`, `CancelJobDialog`, `RetryJobButton` and use them in `JobActions` without `ComingSoon` (design D6); verify 4.4 passes
-- [ ] 4.6 Add job-ui Playwright tests in `test/e2e/jobs.spec.ts` (mocked API): cancel from the job page through the dialog, and retry a failed job; verify `npx playwright test -c apps/job-ui` passes
-- [ ] 4.7 Run the `test-case-reviewer` subagent on job-ui unit and component tests (`src/features/jobs/api/fetch-jobs-api.test.ts`, `src/features/jobs/model/job-presenter.test.ts`, `src/features/jobs/details/job-page.test.tsx`) and the job-ui Playwright tests (`test/e2e/jobs.spec.ts`); add the missing cases it reports or note why they belong elsewhere
+- [x] 4.1 Write failing tests in `fetch-jobs-api.test.ts` (MSW): `changeStatus` sends `PATCH /v1/jobs/:id` with `{ status }` and parses the job; an error body becomes `ApiError` with its code. See them fail
+- [x] 4.2 Implement `changeStatus` in `FetchJobsApi`; verify 4.1 passes
+- [x] 4.3 Update `job-presenter.test.ts` so `processing` allows cancel (spec "Cancel a processing job"); see it fail, switch `JobPresenter.actions` to `CANCELLABLE_JOB_STATUSES`, verify it passes
+- [x] 4.4 Write failing tests in `job-page.test.tsx`, named after "Cancel a pending job", "Cancel a processing job", "Keep the job", "No cancel for a finished job", "Retry a failed job", "No retry for a job that has not failed", "Retry in flight", "Cancel in flight", "Cancel rejected", "Retry rejected" and "Cancel and Retry are not disabled"; the updated job shows before the next poll. See them fail
+- [x] 4.5 Implement `useChangeJobStatus`, `CancelJobDialog`, `RetryJobButton` and use them in `JobActions` without `ComingSoon` (design D6); verify 4.4 passes
+- [x] 4.6 Add job-ui Playwright tests in `test/e2e/jobs.spec.ts` (mocked API): cancel from the job page through the dialog, and retry a failed job; verify `npx playwright test -c apps/job-ui` passes
+- [x] 4.7 Run the `test-case-reviewer` subagent on job-ui unit and component tests (`src/features/jobs/api/fetch-jobs-api.test.ts`, `src/features/jobs/model/job-presenter.test.ts`, `src/features/jobs/details/job-page.test.tsx`) and the job-ui Playwright tests (`test/e2e/jobs.spec.ts`); add the missing cases it reports or note why they belong elsewhere
 
 ## 5. Integration
 
