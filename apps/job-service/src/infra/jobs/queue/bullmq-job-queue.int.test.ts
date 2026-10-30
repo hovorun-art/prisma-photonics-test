@@ -17,6 +17,14 @@ describe('BullMqJobQueue against Redis', () => {
   let observer: Queue;
   let queue: BullMqJobQueue;
 
+  /** Stalls every client's writes (reads go on), so an enqueue waits on Redis until unpaused. */
+  const pauseWrites = async (): Promise<void> => {
+    await container.exec(['redis-cli', 'CLIENT', 'PAUSE', String(ENQUEUE_TIMEOUT_MS * 10), 'WRITE']);
+  };
+  const unpauseWrites = async (): Promise<void> => {
+    await container.exec(['redis-cli', 'CLIENT', 'UNPAUSE']);
+  };
+
   beforeAll(async () => {
     container = await new RedisContainer(CONTAINER_IMAGES.redis).start();
     observer = new Queue(JOB_QUEUE_NAME, { connection: { url: container.getConnectionUrl() } });
@@ -72,5 +80,119 @@ describe('BullMqJobQueue against Redis', () => {
     expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
 
     await unreachable.close();
+  });
+
+  it('gives up after the configured timeout while Redis stalls, and the entry may still land later', async () => {
+    await pauseWrites();
+    const startedAt = performance.now();
+    try {
+      await expect(queue.enqueue({ jobId: JOB_ID, attempt: 1 })).rejects.toBeInstanceOf(
+        JobQueueUnavailableError,
+      );
+      expect(performance.now() - startedAt).toBeGreaterThanOrEqual(ENQUEUE_TIMEOUT_MS - 1);
+      expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
+    } finally {
+      await unpauseWrites();
+    }
+
+    await vi.waitFor(async () => {
+      expect(await observer.getJobCountByTypes('waiting')).toBe(1);
+    });
+  });
+
+  describe('enqueueMany', () => {
+    const OTHER_JOB_ID = randomUUID();
+
+    it('Every bulk job is queued', async () => {
+      await expect(
+        queue.enqueueMany({
+          entries: [
+            { jobId: JOB_ID, attempt: 1 },
+            { jobId: OTHER_JOB_ID, attempt: 1 },
+          ],
+        }),
+      ).resolves.toEqual({});
+
+      expect(await observer.getJobCountByTypes('waiting')).toBe(2);
+      for (const jobId of [JOB_ID, OTHER_JOB_ID]) {
+        const entry = await observer.getJob(JobQueueEntryId.encode({ jobId, attempt: 1 }));
+        expect(entry?.data).toEqual({ jobId });
+      }
+    });
+
+    it('does not add an entry that is already on the queue a second time', async () => {
+      await queue.enqueue({ jobId: JOB_ID, attempt: 1 });
+
+      await queue.enqueueMany({
+        entries: [
+          { jobId: JOB_ID, attempt: 1 },
+          { jobId: OTHER_JOB_ID, attempt: 1 },
+        ],
+      });
+
+      expect(await observer.getJobCountByTypes('waiting')).toBe(2);
+    });
+
+    it('adds one entry when the same attempt appears twice in one call', async () => {
+      await queue.enqueueMany({
+        entries: [
+          { jobId: JOB_ID, attempt: 1 },
+          { jobId: JOB_ID, attempt: 1 },
+        ],
+      });
+
+      expect(await observer.getJobCountByTypes('waiting')).toBe(1);
+    });
+
+    it('rejects at once, names every entry and logs the job ids while Redis cannot be reached', async () => {
+      const warn = vi.fn();
+      const unreachable = new BullMqJobQueue(
+        { logger: { warn } },
+        { redisUrl: UNREACHABLE_REDIS_URL, enqueueTimeoutMs: ENQUEUE_TIMEOUT_MS },
+      );
+      const entries = [
+        { jobId: JOB_ID, attempt: 1 },
+        { jobId: OTHER_JOB_ID, attempt: 1 },
+      ];
+      const startedAt = performance.now();
+      try {
+        const error: unknown = await unreachable
+          .enqueueMany({ entries })
+          .catch((err: unknown) => err);
+
+        expect(error).toBeInstanceOf(JobQueueUnavailableError);
+        expect((error as JobQueueUnavailableError).details).toEqual({ entries });
+        expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
+        expect(warn).toHaveBeenCalledWith(
+          expect.objectContaining({ jobIds: [JOB_ID, OTHER_JOB_ID] }),
+          'Bulk enqueue failed',
+        );
+      } finally {
+        await unreachable.close();
+      }
+    });
+
+    it('gives up after the configured timeout while Redis stalls, and the entries may still land later', async () => {
+      const entries = [
+        { jobId: JOB_ID, attempt: 1 },
+        { jobId: OTHER_JOB_ID, attempt: 1 },
+      ];
+      await pauseWrites();
+      const startedAt = performance.now();
+      try {
+        const error: unknown = await queue.enqueueMany({ entries }).catch((err: unknown) => err);
+
+        expect(error).toBeInstanceOf(JobQueueUnavailableError);
+        expect((error as JobQueueUnavailableError).details).toEqual({ entries });
+        expect(performance.now() - startedAt).toBeGreaterThanOrEqual(ENQUEUE_TIMEOUT_MS - 1);
+        expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
+      } finally {
+        await unpauseWrites();
+      }
+
+      await vi.waitFor(async () => {
+        expect(await observer.getJobCountByTypes('waiting')).toBe(2);
+      });
+    });
   });
 });

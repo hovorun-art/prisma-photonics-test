@@ -18,9 +18,9 @@ Owns: `apps/job-service/src/domain/jobs/job-queue.ts`,
 `apps/job-service/src/infra/jobs/queue/bullmq-job-queue.int.test.ts`
 · Depends on: none · Parallel with: none
 
-- [ ] 1.1 Write failing int tests for `enqueueMany`: one entry per job's first attempt, carrying only the job id; an entry already on the queue is not added twice; with Redis unreachable it rejects with `JobQueueUnavailableError` within the configured timeout and adds nothing
-- [ ] 1.2 Add `enqueueMany` to `JobQueue` and implement it with `addBulk` under the enqueue timeout (error details list the job ids); verify the int tests pass
-- [ ] 1.3 Run the `test-case-reviewer` subagent on `apps/job-service/src/infra/jobs/queue/bullmq-job-queue.int.test.ts`; add the missing cases it reports or note why they belong elsewhere
+- [x] 1.1 Write failing int tests for `enqueueMany`: one entry per job's first attempt, carrying only the job id; an entry already on the queue is not added twice; with Redis unreachable it rejects with `JobQueueUnavailableError` naming every entry; with Redis stalled it rejects after the configured timeout, and the entries may still land once Redis answers (as with single enqueue; recorded in `DECISIONS.md` in 3.4)
+- [x] 1.2 Add `enqueueMany` to `JobQueue` and implement it with `addBulk` under the enqueue timeout (error details list the job ids); verify the int tests pass
+- [x] 1.3 Run the `test-case-reviewer` subagent on `apps/job-service/src/infra/jobs/queue/bullmq-job-queue.int.test.ts`; add the missing cases it reports or note why they belong elsewhere
 
 ## 2. Contracts, `group_id`, repository and service
 

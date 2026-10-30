@@ -16,4 +16,16 @@ describe('JobQueueUnavailableError', () => {
     expect(error.code).toBe('QUEUE_UNAVAILABLE');
     expect(error.details).toEqual({ jobId: JOB_ID, attempt: 2 });
   });
+
+  it('names every entry of a bulk that was not queued', () => {
+    const entries = [
+      { jobId: JOB_ID, attempt: 1 },
+      { jobId: randomUUID(), attempt: 1 },
+    ];
+
+    const error = new JobQueueUnavailableError({ entries });
+
+    expect(error.code).toBe('QUEUE_UNAVAILABLE');
+    expect(error.details).toEqual({ entries });
+  });
 });
