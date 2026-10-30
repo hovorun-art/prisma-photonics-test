@@ -19,20 +19,24 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
 
 ## Git
 
-- Never commit, amend, push, merge, rebase or reset without the user's explicit approval. When work
-  is ready to commit, show what will go in and the message; a hook makes Claude Code ask before each
-  such git command. One approval covers one command, not later ones. Never route around the prompt
-  (other tools, `--no-verify`, scripts).
+- Commits on a change or fix branch need no approval: the main agent and subagents commit their
+  own work there (the hook allows `git commit` and `git cherry-pick` off the main branch) and report
+  the commit (files and message) afterwards. Never commit on the main branch (`MAIN_BRANCH` in
+  `.claude/flow.conf`): the hook denies it, the main branch only receives merges.
+- Never push, merge, rebase, reset, amend or revert without the user's explicit approval; the hook
+  makes Claude Code ask before each such git command. One approval covers one command, not later
+  ones. Never route around the prompt (other tools, `--no-verify`, scripts).
 - New features are built on their own branch, never on the main branch (`MAIN_BRANCH` in
   `.claude/flow.conf`): one branch per change, named after the change (`<change>`), created before
   the first planning artifact. Planning (`openspec/changes/<change>/`), code and the archive all go on
   that branch; the main branch only receives the merge, which brings the code and the updated main
   specs together.
 - One commit per task group: when a group of `tasks.md` is done (its boxes checked, its test review
-  acted on, the checks green), propose its commit (the files, including the checked boxes, and a
-  Conventional Commits message for that group) before starting the next group. Groups are never
-  folded into one commit, and a group is not split across commits. With parallel groups, each
-  group's worktree changes are brought in and committed on their own.
+  acted on, the checks green), commit it (the files, including the checked boxes, with a
+  Conventional Commits message for that group) and report the commit before starting the next
+  group. Groups are never folded into one commit, and a group is not split across commits. With
+  parallel groups, each subagent commits its group in its worktree and the main agent cherry-picks
+  that commit onto the change branch.
 
 ## Testing (TDD)
 
