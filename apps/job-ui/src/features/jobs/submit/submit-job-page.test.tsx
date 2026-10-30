@@ -4,11 +4,11 @@ import { userEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { Route, Routes, useLocation, useNavigate } from 'react-router';
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { en } from '@/locales';
 
-import { jobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
+import { jobFixtures, transitJobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../testing/test-providers';
 import { SubmitJobPage } from './submit-job-page';
 
@@ -86,6 +86,17 @@ async function fillWebhook(
   }
 }
 
+/** Opens an airport field's list, types the search and chooses the option of the given code. */
+async function pickAirport(
+  user: ReturnType<typeof userEvent.setup>,
+  label: string,
+  { search, iata }: { search: string; iata: string },
+) {
+  await user.click(screen.getByLabelText(label));
+  await user.type(screen.getByPlaceholderText(en.submit.searchAirport), search);
+  await user.click(screen.getByRole('option', { name: new RegExp(`^${iata} ·`) }));
+}
+
 describe('SubmitJobPage', () => {
   it('Submit a valid email job: creates it with the entered values and opens its page', async () => {
     const user = userEvent.setup();
@@ -130,7 +141,7 @@ describe('SubmitJobPage', () => {
     expect(posted).toEqual([]);
   });
 
-  it('Disabled job types: Aircraft transit is disabled, Webhook can be chosen, Email is selected', () => {
+  it('Disabled job types: Webhook and Aircraft transit can be chosen, Email is selected', () => {
     renderSubmit();
 
     const types = screen.getByRole('group', { name: en.submit.typeSection });
@@ -139,7 +150,7 @@ describe('SubmitJobPage', () => {
       'true',
     );
     expect(within(types).getByRole('button', { name: /^Webhook/ })).toBeEnabled();
-    expect(within(types).getByRole('button', { name: /^Aircraft transit/ })).toBeDisabled();
+    expect(within(types).getByRole('button', { name: /^Aircraft transit/ })).toBeEnabled();
   });
 
   it('Choose Webhook: the card is selected, the webhook fields show and the URL has the type', async () => {
@@ -522,5 +533,259 @@ describe('SubmitJobPage', () => {
     expect(response).toHaveTextContent(en.submit.example);
     expect(response).toHaveTextContent('"type": "webhook"');
     expect(response).toHaveTextContent('"status": "pending"');
+  });
+
+  describe('aircraft transit', () => {
+    /** Late evening in UTC, so "today" is the UTC date the API checks against. */
+    const NOW = new Date('2026-10-30T23:30:00.000Z');
+    const TODAY = '2026-10-30';
+    const TRANSIT_PATH = '/jobs/new?type=flight-transit';
+
+    beforeEach(() => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      vi.setSystemTime(NOW);
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it('Choose Aircraft transit: the card is selected, the transit fields show and the URL has the type', async () => {
+      const user = userEvent.setup();
+      renderSubmit();
+
+      await user.click(screen.getByRole('button', { name: /^Aircraft transit/ }));
+
+      expect(screen.getByRole('button', { name: /^Aircraft transit/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByLabelText(en.submit.origin)).toBeVisible();
+      expect(screen.getByLabelText(en.submit.destination)).toBeVisible();
+      expect(screen.getByLabelText(en.submit.departureDate)).toBeVisible();
+      expect(screen.queryByLabelText(en.submit.to)).not.toBeInTheDocument();
+      expect(screen.getByRole('status', { name: 'current search' })).toHaveTextContent(
+        '?type=flight-transit',
+      );
+    });
+
+    it('Direct link to the transit form: Aircraft transit is selected and its fields are shown', () => {
+      renderSubmit(TRANSIT_PATH);
+
+      expect(screen.getByRole('button', { name: /^Aircraft transit/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByLabelText(en.submit.origin)).toBeVisible();
+    });
+
+    it('Back to the previous type: Back after choosing Aircraft transit shows the webhook form', async () => {
+      const user = userEvent.setup();
+      renderSubmit('/jobs/new?type=webhook');
+      await user.click(screen.getByRole('button', { name: /^Aircraft transit/ }));
+
+      await user.click(screen.getByRole('button', { name: 'Browser back' }));
+
+      expect(screen.getByRole('button', { name: /^Webhook/ })).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      );
+      expect(screen.getByLabelText(en.submit.url)).toBeVisible();
+    });
+
+    it('Switching to transit keeps the execution settings: Max attempts stays, the origin starts empty', async () => {
+      const user = userEvent.setup();
+      renderSubmit(TRANSIT_PATH);
+      await user.clear(screen.getByLabelText(en.submit.maxAttempts));
+      await user.type(screen.getByLabelText(en.submit.maxAttempts), '5');
+      await pickAirport(user, en.submit.origin, { search: 'LHR', iata: 'LHR' });
+
+      await user.click(screen.getByRole('button', { name: /^Email/ }));
+      await user.click(screen.getByRole('button', { name: /^Aircraft transit/ }));
+
+      expect(screen.getByLabelText(en.submit.maxAttempts)).toHaveValue(5);
+      expect(screen.getByLabelText(en.submit.origin)).toHaveTextContent(en.submit.chooseAirport);
+    });
+
+    it("Transit form at first: no airports, today's UTC date, the API defaults and the note", () => {
+      renderSubmit(TRANSIT_PATH);
+
+      expect(screen.getByLabelText(en.submit.origin)).toHaveTextContent(en.submit.chooseAirport);
+      expect(screen.getByLabelText(en.submit.destination)).toHaveTextContent(
+        en.submit.chooseAirport,
+      );
+      expect(screen.getByLabelText(en.submit.departureDate)).toHaveValue(TODAY);
+      expect(screen.getByLabelText(en.submit.priority)).toHaveValue(JOB_LIMITS.priority.default);
+      expect(screen.getByLabelText(en.submit.maxAttempts)).toHaveValue(
+        JOB_LIMITS.maxAttempts.default,
+      );
+      expect(screen.getByText(en.submit.transitHint)).toBeVisible();
+    });
+
+    it('Submit a valid transit job: creates it with the chosen airports and date and opens its page', async () => {
+      const user = userEvent.setup();
+      const created = transitJobFixtures.build();
+      answerCreate(() => HttpResponse.json(created, { status: 201 }));
+      renderSubmit(TRANSIT_PATH);
+
+      await pickAirport(user, en.submit.origin, { search: 'london', iata: 'LHR' });
+      await pickAirport(user, en.submit.destination, { search: 'jfk', iata: 'JFK' });
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      expect(await screen.findByRole('status', { name: 'current path' })).toHaveTextContent(
+        `/jobs/${created.id}`,
+      );
+      expect(posted).toEqual([
+        {
+          type: 'flight-transit',
+          payload: { origin: 'LHR', destination: 'JFK', departureDate: TODAY },
+          priority: JOB_LIMITS.priority.default,
+          maxAttempts: JOB_LIMITS.maxAttempts.default,
+        },
+      ]);
+    });
+
+    it('Choosing an airport: the field shows the code and name and the list closes', async () => {
+      const user = userEvent.setup();
+      renderSubmit(TRANSIT_PATH);
+
+      await pickAirport(user, en.submit.origin, { search: 'LHR', iata: 'LHR' });
+
+      expect(screen.getByLabelText(en.submit.origin)).toHaveTextContent(
+        en.submit.airportChosen('LHR', 'Heathrow Airport'),
+      );
+      expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+    });
+
+    it('Search by city: `london` lists only the London airport, as "<IATA> · <name>, <city>"', async () => {
+      const user = userEvent.setup();
+      renderSubmit(TRANSIT_PATH);
+
+      await user.click(screen.getByLabelText(en.submit.origin));
+      await user.type(screen.getByPlaceholderText(en.submit.searchAirport), 'london');
+
+      expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+        en.submit.airportOption('LHR', 'Heathrow Airport', 'London'),
+      ]);
+    });
+
+    it('Search by code ignores case: `jfk` lists the JFK option', async () => {
+      const user = userEvent.setup();
+      renderSubmit(TRANSIT_PATH);
+
+      await user.click(screen.getByLabelText(en.submit.destination));
+      await user.type(screen.getByPlaceholderText(en.submit.searchAirport), 'jfk');
+
+      expect(screen.getAllByRole('option').map((option) => option.textContent)).toEqual([
+        en.submit.airportOption('JFK', 'John F. Kennedy International Airport', 'New York'),
+      ]);
+    });
+
+    it('Nothing matches: the list shows "No airport found" and offers nothing', async () => {
+      const user = userEvent.setup();
+      renderSubmit(TRANSIT_PATH);
+
+      await user.click(screen.getByLabelText(en.submit.origin));
+      await user.type(screen.getByPlaceholderText(en.submit.searchAirport), 'zzqx');
+
+      expect(screen.getByText(en.submit.noAirport)).toBeVisible();
+      expect(screen.queryAllByRole('option')).toEqual([]);
+    });
+
+    it('Missing airport: the Origin airport field shows an error and nothing is sent', async () => {
+      const user = userEvent.setup();
+      renderSubmit(TRANSIT_PATH);
+
+      await pickAirport(user, en.submit.destination, { search: 'JFK', iata: 'JFK' });
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      const origin = screen.getByLabelText(en.submit.origin);
+      expect(origin).toHaveAttribute('aria-invalid', 'true');
+      expect(origin).toHaveAccessibleDescription(en.submit.errors.originRequired);
+      expect(posted).toEqual([]);
+    });
+
+    it('Same airport twice: the Destination airport field shows an error and nothing is sent', async () => {
+      const user = userEvent.setup();
+      renderSubmit(TRANSIT_PATH);
+
+      await pickAirport(user, en.submit.origin, { search: 'LHR', iata: 'LHR' });
+      await pickAirport(user, en.submit.destination, { search: 'LHR', iata: 'LHR' });
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      const destination = screen.getByLabelText(en.submit.destination);
+      expect(destination).toHaveAttribute('aria-invalid', 'true');
+      expect(destination).toHaveAccessibleDescription(en.submit.errors.sameAirport);
+      expect(posted).toEqual([]);
+    });
+
+    it("Departure date in the past: yesterday's UTC date shows an error and nothing is sent", async () => {
+      const user = userEvent.setup();
+      renderSubmit(TRANSIT_PATH);
+
+      await pickAirport(user, en.submit.origin, { search: 'LHR', iata: 'LHR' });
+      await pickAirport(user, en.submit.destination, { search: 'JFK', iata: 'JFK' });
+      await user.clear(screen.getByLabelText(en.submit.departureDate));
+      await user.type(screen.getByLabelText(en.submit.departureDate), '2026-10-29');
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      const date = screen.getByLabelText(en.submit.departureDate);
+      expect(date).toHaveAttribute('aria-invalid', 'true');
+      expect(date).toHaveAccessibleDescription(en.submit.errors.departureDatePast(TODAY));
+      expect(posted).toEqual([]);
+    });
+
+    it('API validation error on a transit field: the Departure date shows the issue and the values stay', async () => {
+      const user = userEvent.setup();
+      answerCreate(() =>
+        HttpResponse.json(
+          {
+            code: 'VALIDATION_FAILED',
+            message: 'Request validation failed',
+            details: {
+              issues: [{ path: ['payload', 'departureDate'], message: 'Departure day is over' }],
+            },
+          },
+          { status: 400 },
+        ),
+      );
+      renderSubmit(TRANSIT_PATH);
+
+      await pickAirport(user, en.submit.origin, { search: 'LHR', iata: 'LHR' });
+      await pickAirport(user, en.submit.destination, { search: 'JFK', iata: 'JFK' });
+      await user.click(screen.getByRole('button', { name: en.submit.submit }));
+
+      await screen.findByText('Departure day is over');
+      const date = screen.getByLabelText(en.submit.departureDate);
+      expect(date).toHaveAccessibleDescription('Departure day is over');
+      expect(date).toHaveValue(TODAY);
+      expect(posted).toHaveLength(1);
+      expect(screen.getByLabelText(en.submit.origin)).toHaveTextContent('LHR');
+      expect(screen.getByLabelText(en.submit.destination)).toHaveTextContent('JFK');
+    });
+
+    it('Preview of a transit request: shows type flight-transit, the chosen origin and the date', async () => {
+      const user = userEvent.setup();
+      renderSubmit(TRANSIT_PATH);
+
+      await pickAirport(user, en.submit.origin, { search: 'LHR', iata: 'LHR' });
+
+      const preview = screen.getByRole('region', { name: en.submit.request });
+      expect(preview).toHaveTextContent('"type": "flight-transit"');
+      expect(preview).toHaveTextContent('"origin": "LHR"');
+      expect(preview).toHaveTextContent(`"departureDate": "${TODAY}"`);
+    });
+
+    it('Example response for a transit job: a 201 Created example with type flight-transit, pending', async () => {
+      const user = userEvent.setup();
+      renderSubmit();
+
+      await user.click(screen.getByRole('button', { name: /^Aircraft transit/ }));
+
+      const response = screen.getByRole('region', { name: en.submit.response });
+      expect(response).toHaveTextContent(en.submit.created);
+      expect(response).toHaveTextContent(en.submit.example);
+      expect(response).toHaveTextContent('"type": "flight-transit"');
+      expect(response).toHaveTextContent('"status": "pending"');
+    });
   });
 });

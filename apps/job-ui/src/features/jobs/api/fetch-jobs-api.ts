@@ -1,4 +1,11 @@
-import { ErrorBody, Job, JOBS_ROUTE, QueryJobsResponse } from '@job-queue/contracts';
+import {
+  ErrorBody,
+  Job,
+  JOBS_ROUTE,
+  QueryJobsResponse,
+  QueueStats,
+  STATS_ROUTE,
+} from '@job-queue/contracts';
 import type { z } from 'zod';
 
 import { ApiError } from './api-error';
@@ -12,6 +19,7 @@ import type {
   JobsApi,
   QueryJobsApiRequest,
   QueryJobsApiResponse,
+  StatsJobsApiResponse,
 } from './jobs-api';
 
 export interface FetchJobsApiParams {
@@ -53,6 +61,11 @@ export class FetchJobsApi implements JobsApi {
   async delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse> {
     await this.send({ path: this.jobPath(req.id), init: { method: 'DELETE' } });
     return { id: req.id };
+  }
+
+  async stats(): Promise<StatsJobsApiResponse> {
+    const response = await this.send({ path: STATS_ROUTE, init: { method: 'GET' } });
+    return { stats: await this.parse({ schema: QueueStats, response }) };
   }
 
   private jobPath(id: string): string {

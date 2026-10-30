@@ -60,5 +60,7 @@ model Job {
   @@index([type, createdAt(sort: Desc)], map: "jobs_type_created_at_idx")
   /// Group filters (a group's jobs, polled by job-group-service).
   @@index([groupId, createdAt(sort: Desc)], map: "jobs_group_id_created_at_idx")
+  /// The statistics' counts of jobs finished within a window.
+  @@index([status, completedAt], map: "jobs_status_completed_at_idx")
   @@map("jobs")
 }

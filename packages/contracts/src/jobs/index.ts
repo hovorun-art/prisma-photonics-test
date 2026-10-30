@@ -48,3 +48,4 @@ export {
   WebhookJobResult,
 } from './job.js';
 export { JOB_QUEUE_NAME, JobQueueAttempt, JobQueueEntryId, JobQueueMessage } from './job-queue.js';
+export { QueueStats, STATS_ROUTE } from './queue-stats.js';

@@ -72,6 +72,11 @@ curl -s -X POST http://localhost:3000/v1/jobs/bulk \
 
 # The jobs of that group
 curl -s 'http://localhost:3000/v1/jobs?groupId=6f1c2a52-8d1e-4b7a-9c3f-2e5d8a7b1c40'
+# Queue statistics: jobs pending, processing and scheduled now, completed and failed in the last
+# day, and jobs completed per minute over the last 5 minutes (both windows are configurable)
+curl -s http://localhost:3000/v1/stats
+# {"pending":0,"processing":0,"scheduled":0,"recent":{"windowMinutes":1440,"completed":1,"failed":0},
+#  "throughput":{"windowMinutes":5,"perMinute":0.2}}
 
 curl -i http://localhost:3000/no-such-route
 # HTTP/1.1 404 Not Found

@@ -5,6 +5,7 @@ import {
   JOBS_ROUTE,
   JobStatus,
   JobType,
+  STATS_ROUTE,
 } from '@job-queue/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -120,6 +121,34 @@ describe('job-service health, docs and shutdown', () => {
         (match) => match[1] ?? '',
       );
       expect(refs.filter((name) => !Object.hasOwn(components?.schemas ?? {}, name))).toEqual([]);
+    });
+
+    it('Docs list the statistics route', async () => {
+      const { paths, components } = await docs();
+      const stats = paths[STATS_ROUTE]?.get;
+      const schema = stats?.responses['200']?.content?.['application/json']?.schema as
+        { $ref?: string } | undefined;
+      const name = schema?.$ref?.replace('#/components/schemas/', '') ?? '';
+      const resolved = components?.schemas?.[name] as
+        { properties: Record<string, { properties?: Record<string, unknown> }> } | undefined;
+
+      expect(stats?.parameters ?? []).toEqual([]);
+      expect(Object.keys(resolved?.properties ?? {}).sort()).toEqual([
+        'pending',
+        'processing',
+        'recent',
+        'scheduled',
+        'throughput',
+      ]);
+      expect(Object.keys(resolved?.properties.recent?.properties ?? {}).sort()).toEqual([
+        'completed',
+        'failed',
+        'windowMinutes',
+      ]);
+      expect(Object.keys(resolved?.properties.throughput?.properties ?? {}).sort()).toEqual([
+        'perMinute',
+        'windowMinutes',
+      ]);
     });
 
     it('Docs exclude internal routes', async () => {

@@ -15,4 +15,8 @@ export interface JobServiceConfig extends BaseConfig {
   readonly enqueueTimeoutMs: number;
   /** Most jobs one bulk submission may hold. */
   readonly bulkMaxJobs: number;
+  /** Length of the window in which `GET /v1/stats` counts completed and failed jobs. */
+  readonly statsRecentWindowMinutes: number;
+  /** Length of the window over which `GET /v1/stats` measures throughput. */
+  readonly statsThroughputWindowMinutes: number;
 }

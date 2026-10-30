@@ -5,10 +5,14 @@ import {
   JOB_SERVICE_CONFIG,
   type JobServiceConfig,
 } from '../../domain/config/job-service-config.js';
+import { JOB_COUNTS, type JobCounts } from '../../domain/jobs/job-counts.js';
 import { JOB_QUEUE, type JobQueue } from '../../domain/jobs/job-queue.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../domain/jobs/job-repository.js';
 import { JOB_SERVICE } from '../../domain/jobs/job-service.js';
+import { JOB_STATISTICS } from '../../domain/jobs/job-statistics.js';
 import { JobServiceImpl } from '../../infra/jobs/job-service.impl.js';
+import { JobStatisticsImpl } from '../../infra/jobs/job-statistics.impl.js';
+import { PrismaJobCounts } from '../../infra/jobs/prisma/prisma-job-counts.js';
 import { PrismaJobRepository } from '../../infra/jobs/prisma/prisma-job-repository.js';
 import { BullMqJobQueue } from '../../infra/jobs/queue/bullmq-job-queue.js';
 import { PrismaDatabase } from '../../infra/prisma/prisma-database.js';
@@ -16,11 +20,15 @@ import { InternalAccessModule } from '../internal-access/internal-access.module.
 import { PrismaModule } from '../prisma/prisma.module.js';
 import { InternalJobsController } from './internal-jobs.controller.js';
 import { JobsController } from './jobs.controller.js';
+import { StatsController } from './stats.controller.js';
 
-/** The job feature: public and internal routes over one `JobService`; closes the queue on shutdown. */
+/**
+ * The job feature: public and internal routes over one `JobService`, and the queue statistics;
+ * closes the queue on shutdown.
+ */
 @Module({
   imports: [PrismaModule, InternalAccessModule],
-  controllers: [JobsController, InternalJobsController],
+  controllers: [JobsController, InternalJobsController, StatsController],
   providers: [
     { provide: CLOCK, useClass: SystemClock },
     {
@@ -54,6 +62,23 @@ import { JobsController } from './jobs.controller.js';
           },
         ),
       inject: [JOB_REPOSITORY, JOB_QUEUE, CLOCK, JOB_SERVICE_CONFIG],
+    },
+    {
+      provide: JOB_COUNTS,
+      useFactory: (prisma: PrismaDatabase): JobCounts => new PrismaJobCounts({ prisma }),
+      inject: [PrismaDatabase],
+    },
+    {
+      provide: JOB_STATISTICS,
+      useFactory: (counts: JobCounts, clock: Clock, config: JobServiceConfig) =>
+        new JobStatisticsImpl(
+          { counts, clock },
+          {
+            recentWindowMinutes: config.statsRecentWindowMinutes,
+            throughputWindowMinutes: config.statsThroughputWindowMinutes,
+          },
+        ),
+      inject: [JOB_COUNTS, CLOCK, JOB_SERVICE_CONFIG],
     },
   ],
 })

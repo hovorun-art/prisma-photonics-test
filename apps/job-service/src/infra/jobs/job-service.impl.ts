@@ -6,7 +6,12 @@ import {
   type JobError,
   type JobStatus,
 } from '@job-queue/contracts';
-import { type Clock, JobStatusConflictError } from '@job-queue/kernel';
+import {
+  type Clock,
+  type DepartureDay,
+  JobStatusConflictError,
+  UtcDepartureDay,
+} from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 
 import { BulkLimitExceededError } from '../../domain/jobs/errors/bulk-limit-exceeded.error.js';
@@ -34,9 +39,6 @@ import type {
   UpdateJobServiceRequest,
   UpdateJobServiceResponse,
 } from '../../domain/jobs/job-service.js';
-
-/** Length of the date part (`YYYY-MM-DD`) of an ISO timestamp. */
-const ISO_DATE_LENGTH = 10;
 
 export interface JobServiceImplDeps {
   repository: JobRepository;
@@ -83,8 +85,8 @@ interface NewPendingJobRequest {
 
 interface DepartureDayIssuesRequest {
   job: CreateJobRequest;
-  /** The current day in UTC (`YYYY-MM-DD`). */
-  today: string;
+  /** The rule at the instant the request is judged by. */
+  departureDay: DepartureDay;
 }
 
 /**
@@ -94,13 +96,18 @@ interface DepartureDayIssuesRequest {
  * job for good. Queueing problems never fail a request: the job stays pending and is logged.
  */
 export class JobServiceImpl implements JobService {
+  /** The UTC day rule job-ui's form applies too, shared through the kernel. */
+  private readonly departureDay: DepartureDay;
+
   constructor(
     private readonly d: JobServiceImplDeps,
     private readonly p: JobServiceImplParams,
-  ) {}
+  ) {
+    this.departureDay = new UtcDepartureDay({ clock: d.clock });
+  }
 
   async create(req: CreateJobServiceRequest): Promise<CreateJobServiceResponse> {
-    const issues = this.departureDayIssues({ job: req.job, today: this.today() });
+    const issues = this.departureDayIssues({ job: req.job, departureDay: this.departureDay });
     if (issues.length > 0) throw new InvalidJobPayloadError({ issues });
     const { job } = await this.d.repository.create({ job: this.newPendingJob({ job: req.job }) });
     await this.enqueue({ jobId: job.id, attempt: 1 });
@@ -108,17 +115,19 @@ export class JobServiceImpl implements JobService {
   }
 
   /**
-   * Every item is checked before anything is stored, so a bad item stores nothing. The jobs are
-   * stamped one millisecond apart from now, so the newest-first query keeps the request order.
+   * Every item is checked before anything is stored, so a bad item stores nothing. All items are
+   * judged at one instant, the one the jobs are stamped from, so a bulk sent at midnight (UTC) is not
+   * split across two days. The jobs are stamped one millisecond apart, so the newest-first query
+   * keeps the request order.
    */
   async createMany(req: CreateManyJobServiceRequest): Promise<CreateManyJobServiceResponse> {
     if (req.jobs.length > this.p.bulkMaxJobs) {
       throw new BulkLimitExceededError({ maxJobs: this.p.bulkMaxJobs });
     }
     const now = this.d.clock.now().now;
-    const today = now.toISOString().slice(0, ISO_DATE_LENGTH);
+    const departureDay = new UtcDepartureDay({ clock: { now: () => ({ now }) } });
     const issues = req.jobs.flatMap((job, index) =>
-      this.departureDayIssues({ job, today }).map((issue) => ({
+      this.departureDayIssues({ job, departureDay }).map((issue) => ({
         ...issue,
         path: [index, 'payload', ...issue.path],
       })),
@@ -223,9 +232,10 @@ export class JobServiceImpl implements JobService {
    * A flight transit may be submitted until its departure day (in UTC) is over at job-service's
    * time. The issue paths are relative to the payload.
    */
-  private departureDayIssues({ job, today }: DepartureDayIssuesRequest): JobFieldIssue[] {
-    // ISO dates (YYYY-MM-DD) order the same as strings.
-    if (job.type !== 'flight-transit' || job.payload.departureDate >= today) return [];
+  private departureDayIssues({ job, departureDay }: DepartureDayIssuesRequest): JobFieldIssue[] {
+    if (job.type !== 'flight-transit') return [];
+    const { today, over } = departureDay.check({ departureDate: job.payload.departureDate });
+    if (!over) return [];
     return [
       {
         code: 'custom',
@@ -271,9 +281,5 @@ export class JobServiceImpl implements JobService {
 
   private now(): string {
     return this.d.clock.now().now.toISOString();
-  }
-
-  private today(): string {
-    return this.now().slice(0, ISO_DATE_LENGTH);
   }
 }
