@@ -26,6 +26,21 @@ export {
 } from './domain/logging/log-policy.js';
 export type { LogDestination } from './domain/logging/log-destination.js';
 export {
+  type AppendJobLogStreamRedisRequest,
+  type AppendJobLogStreamRedisResponse,
+  type JobLogStreamRedis,
+  type OpenJobLogStreamRedisResponse,
+} from './domain/job-log/job-log-stream-redis.js';
+export {
+  JobLogStreamDestination,
+  type JobLogStreamDestinationDeps,
+  type JobLogStreamDestinationParams,
+} from './infra/job-log/job-log-stream-destination.js';
+export {
+  IoRedisJobLogStreamRedis,
+  type IoRedisJobLogStreamRedisParams,
+} from './infra/job-log/ioredis-job-log-stream-redis.js';
+export {
   REDIS_CONNECTION,
   type PingRedisConnectionResponse,
   type RedisConnection,
