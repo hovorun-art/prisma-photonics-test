@@ -17,7 +17,7 @@
   "scripts": {
     "build:packages": "npm run build -w @job-queue/kernel -w @job-queue/contracts -w @job-queue/service-kit",
     "build": "npm run build:packages && npm run build -w @job-queue/job-service -w @job-queue/job-execution-service -w @job-queue/job-group-service -w @job-queue/job-ui",
-    "dev": "docker compose up -d postgres redis && npm run build:packages && node --env-file=.env.example --env-file-if-exists=.env node_modules/concurrently/dist/bin/index.js --names job-service,job-execution-service,job-group-service,job-ui --prefix-colors blue,magenta,yellow,green \"npm run dev -w @job-queue/job-service\" \"npm run dev -w @job-queue/job-execution-service\" \"npm run dev -w @job-queue/job-group-service\" \"npm run dev -w @job-queue/job-ui\"",
+    "dev": "docker compose up -d --wait postgres redis clickhouse && npm run build:packages && node --env-file=.env.example --env-file-if-exists=.env node_modules/concurrently/dist/bin/index.js --names job-service,job-execution-service,job-group-service,job-ui --prefix-colors blue,magenta,yellow,green \"npm run dev -w @job-queue/job-service\" \"npm run dev -w @job-queue/job-execution-service\" \"npm run dev -w @job-queue/job-group-service\" \"npm run dev -w @job-queue/job-ui\"",
     "typecheck": "tsc --noEmit -p tooling/tsconfig.json && npm run typecheck --workspaces --if-present",
     "lint": "eslint . --max-warnings 0",
     "test": "vitest run --passWithNoTests",

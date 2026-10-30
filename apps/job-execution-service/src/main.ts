@@ -12,7 +12,10 @@ async function main(): Promise<void> {
   });
   await new JobExecutionServiceBootstrap(
     { process },
-    { env: process.env, createModule: ({ config }) => AppModule.forRoot({ config, instanceId }) },
+    {
+      env: process.env,
+      createModule: ({ config, jobLog }) => AppModule.forRoot({ config, instanceId, jobLog }),
+    },
   ).start();
 }
 

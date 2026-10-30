@@ -21,12 +21,14 @@ export type CoreEnv<TPortVariable extends string = string> = {
 export type BaseEnvShape<TPortVariable extends string = string> = CoreEnvShape<TPortVariable> & {
   REDIS_URL: z.ZodURL;
   INTERNAL_SERVICE_TOKEN: z.ZodString;
+  JOB_LOG_STREAM_MAX_LENGTH: z.ZodDefault<z.ZodCoercedNumber>;
 };
 
 /** A parsed environment: what `BaseEnvShape` yields. */
 export type BaseEnv<TPortVariable extends string = string> = CoreEnv<TPortVariable> & {
   REDIS_URL: string;
   INTERNAL_SERVICE_TOKEN: string;
+  JOB_LOG_STREAM_MAX_LENGTH: number;
 };
 
 export interface CoreEnvSchema<TPortVariable extends string = string> {

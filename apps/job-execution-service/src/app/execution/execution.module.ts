@@ -1,9 +1,12 @@
 import {
+  CLOCK,
+  type Clock,
   FetchJobServiceHttp,
   RANDOM,
   type Random,
   SLEEPER,
   type Sleeper,
+  SystemClock,
   SystemRandom,
   SystemSleeper,
 } from '@job-queue/kernel';
@@ -40,6 +43,7 @@ import { WebhookJobHandler } from '../../infra/webhooks/webhook-job-handler.js';
  */
 @Module({
   providers: [
+    { provide: CLOCK, useClass: SystemClock },
     { provide: RANDOM, useClass: SystemRandom },
     { provide: SLEEPER, useClass: SystemSleeper },
     {
@@ -97,17 +101,18 @@ import { WebhookJobHandler } from '../../infra/webhooks/webhook-job-handler.js';
       useFactory: (
         jobs: JobRepository,
         handlers: JobHandlers,
+        clock: Clock,
         config: ExecutionConfig,
       ): JobExecution =>
         new JobExecutionImpl(
-          { jobs, handlers, logger: new Logger('JobExecution') },
+          { jobs, handlers, clock, logger: new Logger('JobExecution') },
           {
             reportRetries: config.reportRetries,
             reportRetryDelayMs: config.reportRetryDelayMs,
             reportRetryMaxDelayMs: config.reportRetryMaxDelayMs,
           },
         ),
-      inject: [JOB_REPOSITORY, JOB_HANDLERS, EXECUTION_CONFIG],
+      inject: [JOB_REPOSITORY, JOB_HANDLERS, CLOCK, EXECUTION_CONFIG],
     },
     {
       provide: JOB_QUEUE_CONSUMER,

@@ -26,6 +26,12 @@ export const ERROR_CODES = [
   'JOB_GROUP_NOT_FOUND',
   /** The job group cannot be deleted because job-service has jobs with its id; `details.total` holds their number. */
   'JOB_GROUP_NOT_EMPTY',
+  /** The job log store could not be reached; the job itself and its other routes are unaffected. */
+  'LOG_STORE_UNAVAILABLE',
+  /** The job log stream's Redis connection was not ready in time; internal, never sent to a client. */
+  'JOB_LOG_STREAM_UNAVAILABLE',
+  /** The job log stream's consumer group is missing; the writer creates it again. Never returned to a client. */
+  'JOB_LOG_STREAM_GROUP_MISSING',
   /** An unexpected failure; details are logged, not returned. */
   'INTERNAL_ERROR',
 ] as const;

@@ -4,6 +4,7 @@ import {
   type EmailJob,
   FlightTransitJob,
   type FlightTransitJobResult,
+  type JobLogEntry,
   type QueueStats,
   type WebhookJob,
 } from '@job-queue/contracts';
@@ -16,6 +17,8 @@ export type BuildQueueStatsFixturesRequest = Partial<QueueStats>;
 export type BuildQueueStatsFixturesResponse = QueueStats;
 export type BuildTransitJobFixturesRequest = Partial<FlightTransitJob>;
 export type BuildTransitJobFixturesResponse = FlightTransitJob;
+export type BuildJobLogEntryFixturesRequest = Partial<JobLogEntry>;
+export type BuildJobLogEntryFixturesResponse = JobLogEntry;
 
 /** Builds valid jobs for tests; each test overrides only the fields its scenario is about. */
 export interface JobFixtures {
@@ -312,3 +315,28 @@ export class LhrJfkTransitJobFixtures implements TransitJobFixtures {
 }
 
 export const transitJobFixtures: TransitJobFixtures = new LhrJfkTransitJobFixtures();
+
+/** Builds valid job log entries for tests; each test overrides only the fields its scenario is about. */
+export interface JobLogEntryFixtures {
+  build(req?: BuildJobLogEntryFixturesRequest): BuildJobLogEntryFixturesResponse;
+}
+
+/** Test-only: an info entry of job-service's first attempt with a fresh id. */
+export class InfoJobLogEntryFixtures implements JobLogEntryFixtures {
+  build(req: BuildJobLogEntryFixturesRequest = {}): BuildJobLogEntryFixturesResponse {
+    return {
+      id: randomUUID(),
+      jobId: randomUUID(),
+      attempt: 1,
+      level: 'info',
+      message: 'Job submitted',
+      metadata: {},
+      timestamp: '2026-10-29T21:02:10.000Z',
+      source: 'job-service',
+      instanceId: null,
+      ...req,
+    };
+  }
+}
+
+export const jobLogEntryFixtures: JobLogEntryFixtures = new InfoJobLogEntryFixtures();

@@ -4,11 +4,16 @@ import { userEvent } from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { Route, Routes } from 'react-router';
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { en } from '@/locales';
 
-import { jobFixtures, transitJobFixtures, webhookJobFixtures } from '../testing/job-fixtures';
+import {
+  jobFixtures,
+  jobLogEntryFixtures,
+  transitJobFixtures,
+  webhookJobFixtures,
+} from '../testing/job-fixtures';
 import { CurrentPath, TEST_API_BASE, TestProviders } from '../testing/test-providers';
 import { JobPage } from './job-page';
 
@@ -22,6 +27,13 @@ beforeAll(() => {
   server.events.on('request:start', ({ request }) => {
     requests.push(`${request.method} ${new URL(request.url).pathname}`);
   });
+});
+beforeEach(() => {
+  server.use(
+    http.get(`${TEST_API_BASE}/v1/jobs/:id/logs`, () =>
+      HttpResponse.json({ items: [], nextCursor: null }),
+    ),
+  );
 });
 afterEach(() => {
   server.resetHandlers();
@@ -84,6 +96,48 @@ function detail(name: string) {
 }
 
 describe('JobPage', () => {
+  it('Log of a completed job: the Log card below the Lifecycle shows the job entries', async () => {
+    answerJob(completed.id, completed);
+    server.use(
+      http.get(`${TEST_API_BASE}/v1/jobs/${completed.id}/logs`, ({ request }) => {
+        const after = new URL(request.url).searchParams.get('after');
+        return HttpResponse.json({
+          items:
+            after === null
+              ? [jobLogEntryFixtures.build({ jobId: completed.id, message: 'Job submitted' })]
+              : [],
+          nextCursor: 'c1',
+        });
+      }),
+    );
+
+    renderJob(completed.id);
+
+    const log = await screen.findByRole('region', { name: en.log.title }, POLL_WAIT);
+    expect(await within(log).findByText('Job submitted', {}, POLL_WAIT)).toBeVisible();
+    const lifecycle = screen.getByRole('region', { name: en.job.lifecycle });
+    expect(lifecycle.compareDocumentPosition(log) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it('Log unavailable: the card says so while payload, details and Lifecycle stay shown', async () => {
+    answerJob(completed.id, completed);
+    server.use(
+      http.get(`${TEST_API_BASE}/v1/jobs/${completed.id}/logs`, () =>
+        HttpResponse.json(
+          { code: 'LOG_STORE_UNAVAILABLE', message: 'down', details: {} },
+          { status: 503 },
+        ),
+      ),
+    );
+
+    renderJob(completed.id);
+
+    expect(await screen.findByText(en.log.unavailable, {}, POLL_WAIT)).toBeVisible();
+    expect(screen.getByRole('region', { name: en.job.payload })).toBeVisible();
+    expect(screen.getByRole('region', { name: en.job.details })).toBeVisible();
+    expect(screen.getByRole('region', { name: en.job.lifecycle })).toBeVisible();
+  });
+
   it('Completed job: id, badges, payload, result and details', async () => {
     answerJob(completed.id, completed);
 

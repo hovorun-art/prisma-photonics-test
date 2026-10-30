@@ -5,4 +5,5 @@
 export const CONTAINER_IMAGES = {
   postgres: 'postgres:18-alpine',
   redis: 'redis:8-alpine',
+  clickhouse: 'clickhouse/clickhouse-server:26.8-alpine',
 } as const;
