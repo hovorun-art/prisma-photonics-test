@@ -95,6 +95,17 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
   and `/apply` runs the review even when that task is missing.
 - With `TDD_STRICT=1` in `.claude/flow.conf`, a hook blocks edits to source files until a test file
   has changed on the branch.
+- Run only the tests related to what changed: every test that imports a changed file, directly or
+  through other modules (`npx vitest related --run <changed files>...` from the workspace; add
+  `--project <app>:unit --project <app>:integration` to leave out e2e), plus changed test files,
+  not a whole app or `npm test`. Run a whole
+  app or level only with a reason (a change to shared wiring, config or a package many files use,
+  or the final check before a commit), and say what the reason is.
+- E2e tests (per-app `*.e2e.test.ts`, job-ui Playwright, `tests/system-e2e`, `npm run test:e2e`)
+  run only in the main agent. Subagents (`work-on`, `test-case-reviewer`, `change-verifier` and
+  any other) never run them: several Testcontainers or compose stacks at once overload the
+  machine. A subagent runs unit and integration tests of its area only, and lists the e2e files
+  the main agent should run; the main agent runs them and acts on the result.
 
 ## Commands
 
@@ -104,10 +115,11 @@ Keep in sync with `CHECK_CMDS` in `.claude/flow.conf`. Root scripts run across a
 - `npm run dev`: Postgres and Redis in Docker, the three apps on the host in watch mode (reads
   `.env.example`, then `.env` overrides)
 - `npm run build` (shared packages first: `npm run build:packages`)
-- `npm run typecheck`, `npm run lint`, `npm test` (all three run by the Stop hook); `npm test` runs
+- `npm run typecheck`, `npm run lint`, `npm test` (all three run by the Stop hook, only when a file matching `CHECK_TRIGGER` changed since the last
+  green run); `npm test` runs
   unit, integration and backend per-app e2e (Testcontainers, needs Docker); `npm run test:unit`,
   `npm run test:integration` for one level
-- `npm run test:e2e`: job-ui Playwright and the system e2e on a compose stack (CI and the verifier)
+- `npm run test:e2e`: job-ui Playwright and the system e2e on a compose stack (CI and the main agent; never from a subagent)
 - `npm run format` / `npm run format:check`
 
 ## Purpose and decisions

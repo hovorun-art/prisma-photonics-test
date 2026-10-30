@@ -12,11 +12,12 @@ source .claude/flow.conf 2>/dev/null || exit 0
 ok=.claude/.tests-passed
 attempts=.claude/.test-attempts
 if [ -f "$ok" ]; then
+  # Only files matching CHECK_TRIGGER count (empty = any file); IGNORED_DIRS are skipped at any depth.
   prune="-path ./.claude -o -path ./.git -o -path ./openspec"
-  for d in $IGNORED_DIRS; do prune="$prune -o -path ./$d"; done
+  for d in ${IGNORED_DIRS:-}; do prune="$prune -o -name $d"; done
   # shellcheck disable=SC2086
-  changed=$(find . \( $prune \) -prune -o -type f -newer "$ok" -print -quit)
-  [ -z "$changed" ] && exit 0                       # nothing changed since last green run
+  changed=$(find . \( $prune \) -prune -o -type f -newer "$ok" -print | grep -E -m1 "${CHECK_TRIGGER:-.}")
+  [ -z "$changed" ] && exit 0                       # no relevant change since last green run
 fi
 
 check() {
