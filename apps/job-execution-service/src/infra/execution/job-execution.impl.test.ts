@@ -192,6 +192,124 @@ describe('JobExecutionImpl', () => {
     expect(jobs.update).toHaveBeenCalledOnce();
   });
 
+  it('gives up on an entry whose job cannot be read for an unexpected reason', async () => {
+    jobs.get.mockRejectedValueOnce(new Error('unexpected response'));
+
+    await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'abandoned' });
+
+    expect(jobs.get).toHaveBeenCalledOnce();
+    expect(jobs.update).not.toHaveBeenCalled();
+    expect(email.run).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
+      expect.any(String),
+    );
+  });
+
+  it('abandons the entry when the grace period runs out while the job is read', async () => {
+    jobs.get.mockImplementationOnce(
+      ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            reject(signal.reason as Error);
+          });
+        }),
+    );
+
+    const running = execution.execute(ENTRY);
+    await expect.poll(() => jobs.get.mock.calls.length).toBe(1);
+    execution.abort();
+
+    await expect(running).resolves.toEqual({ outcome: 'abandoned' });
+    expect(jobs.update).not.toHaveBeenCalled();
+    expect(email.run).not.toHaveBeenCalled();
+    expect(logger.error).not.toHaveBeenCalled();
+  });
+
+  it('abandons a job whose handler resolves after the grace period ran out', async () => {
+    readAndStart();
+    email.run.mockImplementationOnce(
+      ({ signal }) =>
+        new Promise((resolve) => {
+          signal.addEventListener('abort', () => {
+            resolve({ outcome: 'completed', result: RESULT });
+          });
+        }),
+    );
+
+    const running = execution.execute(ENTRY);
+    await expect.poll(() => email.run.mock.calls.length).toBe(1);
+    execution.abort();
+
+    // The late result is not reported: the job stays processing.
+    await expect(running).resolves.toEqual({ outcome: 'abandoned' });
+    expect(jobs.update).toHaveBeenCalledOnce();
+  });
+
+  describe.each([
+    ['a status conflict', (): Error => new JobStatusConflictError({ id: JOB_ID })],
+    ['not found', (): Error => new JobNotFoundError({ id: JOB_ID })],
+  ])('when job-service answers a report with %s', (_answer, refusal) => {
+    // Another party changed the job (a cancel, a delete): a lost race, so the entry is skipped.
+    it('skips the entry after its completion is refused', async () => {
+      readAndStart();
+      email.run.mockResolvedValueOnce({ outcome: 'completed', result: RESULT });
+      jobs.update.mockRejectedValueOnce(refusal());
+
+      await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'skipped' });
+
+      expect(jobs.update.mock.calls.map(([request]) => request.update.status)).toEqual([
+        'processing',
+        'completed',
+      ]);
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+
+    it('skips the entry after its failure is refused', async () => {
+      readAndStart();
+      email.run.mockRejectedValueOnce(new SendRefusedError());
+      jobs.update.mockRejectedValueOnce(refusal());
+
+      await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'skipped' });
+
+      expect(jobs.update.mock.calls.map(([request]) => request.update.status)).toEqual([
+        'processing',
+        'failed',
+      ]);
+      expect(logger.error).not.toHaveBeenCalled();
+    });
+  });
+
+  it('gives up on an entry whose start fails for an unexpected reason', async () => {
+    jobs.get.mockResolvedValueOnce({ job: job() });
+    jobs.update.mockRejectedValueOnce(new Error('unexpected response'));
+
+    await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'abandoned' });
+
+    expect(jobs.update).toHaveBeenCalledOnce();
+    expect(email.run).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ jobId: JOB_ID, attempt: 1, status: 'processing' }),
+      expect.any(String),
+    );
+  });
+
+  it('abandons the entry instead of rejecting when a step throws unexpectedly', async () => {
+    readAndStart();
+    const bug = new Error('log line failed');
+    logger.log.mockImplementationOnce(() => {
+      throw bug;
+    });
+
+    await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'abandoned' });
+
+    expect(email.run).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+      { jobId: JOB_ID, attempt: 1, err: bug },
+      expect.any(String),
+    );
+  });
+
   it('No handler for the type', async () => {
     const withoutHandlers = new JobExecutionImpl({ jobs, handlers: {}, logger }, PARAMS);
     readAndStart();
@@ -231,11 +349,25 @@ describe('JobExecutionImpl', () => {
     email.run.mockRejectedValueOnce(new Error('socket hang up'));
     jobs.update.mockResolvedValueOnce({ job: job({ status: 'pending' }) });
 
-    await execution.execute(ENTRY);
+    await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'failed' });
 
     expect(jobs.update).toHaveBeenLastCalledWith({
       id: JOB_ID,
       update: { status: 'failed', error: { code: 'HANDLER_ERROR', message: 'socket hang up' } },
+      signal: expect.any(AbortSignal) as AbortSignal,
+    });
+  });
+
+  it('reports a handler rejection that is not an Error by its text', async () => {
+    readAndStart();
+    email.run.mockRejectedValueOnce('connection reset');
+    jobs.update.mockResolvedValueOnce({ job: job({ status: 'pending' }) });
+
+    await expect(execution.execute(ENTRY)).resolves.toEqual({ outcome: 'failed' });
+
+    expect(jobs.update).toHaveBeenLastCalledWith({
+      id: JOB_ID,
+      update: { status: 'failed', error: { code: 'HANDLER_ERROR', message: 'connection reset' } },
       signal: expect.any(AbortSignal) as AbortSignal,
     });
   });
@@ -280,7 +412,7 @@ describe('JobExecutionImpl', () => {
       await withWebhook.execute(ENTRY);
 
       // The instance id is added to every line by the logger itself.
-      expect(logger.warn).toHaveBeenCalledWith(
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({
           jobId: JOB_ID,
           attempt: 1,
@@ -607,10 +739,13 @@ describe('JobExecutionImpl', () => {
     jobs.update.mockResolvedValueOnce({ job: job({ status: 'completed' }) });
 
     await execution.execute(ENTRY);
+    execution.abort();
 
-    for (const [request] of [...jobs.get.mock.calls, ...jobs.update.mock.calls]) {
-      expect(request.signal).toBeInstanceOf(AbortSignal);
-    }
+    const signals = [...jobs.get.mock.calls, ...jobs.update.mock.calls].map(
+      ([request]) => request.signal,
+    );
+    expect(signals).toHaveLength(3);
+    expect(signals.every((signal) => signal?.aborted === true)).toBe(true);
   });
 
   describe('while job-service is unavailable', () => {
@@ -642,6 +777,10 @@ describe('JobExecutionImpl', () => {
 
       await expect(executeWithWaits()).resolves.toEqual({ outcome: 'completed' });
       expect(jobs.update).toHaveBeenCalledTimes(3);
+      expect(logger.warn).toHaveBeenCalledExactlyOnceWith(
+        { jobId: JOB_ID, attempt: 1, retry: 1 },
+        expect.any(String),
+      );
     });
 
     it('Report keeps failing', async () => {
@@ -654,8 +793,9 @@ describe('JobExecutionImpl', () => {
       await expect(executeWithWaits()).resolves.toEqual({ outcome: 'abandoned' });
 
       expect(jobs.update).toHaveBeenCalledTimes(1 + 1 + PARAMS.reportRetries);
-      expect(logger.error).toHaveBeenCalledWith(
-        expect.objectContaining({ jobId: JOB_ID }),
+      expect(jobs.update.mock.lastCall?.[0].update.status).toBe('completed');
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ jobId: JOB_ID, attempt: 1, status: 'completed' }),
         expect.any(String),
       );
     });
@@ -679,6 +819,25 @@ describe('JobExecutionImpl', () => {
       expect(await triesAfter(PARAMS.reportRetryMaxDelayMs - 1)).toBe(2);
       expect(await triesAfter(1)).toBe(3);
       await expect(running).resolves.toEqual({ outcome: 'abandoned' });
+    });
+
+    it('gives up starting the job when job-service stays unavailable', async () => {
+      jobs.get.mockResolvedValueOnce({ job: job() });
+      for (let i = 0; i <= PARAMS.reportRetries; i += 1) {
+        jobs.update.mockRejectedValueOnce(unavailable());
+      }
+
+      await expect(executeWithWaits()).resolves.toEqual({ outcome: 'abandoned' });
+
+      expect(jobs.update).toHaveBeenCalledTimes(1 + PARAMS.reportRetries);
+      expect(jobs.update.mock.calls.map(([request]) => request.update.status)).toEqual(
+        Array.from({ length: 1 + PARAMS.reportRetries }, () => 'processing'),
+      );
+      expect(email.run).not.toHaveBeenCalled();
+      expect(logger.error).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({ jobId: JOB_ID, status: 'processing' }),
+        expect.any(String),
+      );
     });
 
     it('reads the job again, then runs it', async () => {

@@ -5,6 +5,7 @@ import { expect, type Page, test } from '@playwright/test';
 
 import { API_BASE_PATH } from '../../src/config/api-base-path';
 import { en } from '../../src/locales/en';
+import { type E2eJobs, PendingEmailE2eJobs } from './e2e-jobs';
 
 /** What the mock job-service was asked to change: the ids deleted and the status changes. */
 interface MockJobServiceCalls {
@@ -23,6 +24,8 @@ interface MockJobService {
  * create, status change (cancel, retry) and delete.
  */
 class RoutedJobService implements MockJobService {
+  private readonly jobs: E2eJobs = new PendingEmailE2eJobs();
+
   async install(req: { page: Page; jobs: Job[] }): Promise<MockJobServiceCalls> {
     const { jobs } = req;
     const deleted: string[] = [];
@@ -86,25 +89,7 @@ class RoutedJobService implements MockJobService {
   }
 
   job(req: Partial<Job>): Job {
-    // A partial of either job type over an email job: the caller keeps type and payload in step.
-    return {
-      id: randomUUID(),
-      type: 'email',
-      status: 'pending',
-      priority: 5,
-      attempts: 0,
-      maxAttempts: 3,
-      payload: { to: 'ops@acme.test', subject: 'Weekly digest', body: 'Hi team' },
-      result: null,
-      error: null,
-      groupId: null,
-      scheduledAt: null,
-      startedAt: null,
-      completedAt: null,
-      createdAt: '2026-10-29T21:02:09.000Z',
-      updatedAt: '2026-10-29T21:02:09.000Z',
-      ...req,
-    } as Job;
+    return this.jobs.build(req);
   }
 }
 
