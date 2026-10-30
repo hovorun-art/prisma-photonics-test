@@ -1,47 +1,101 @@
 @import 'tailwindcss';
+@import 'tw-animate-css';
+@import '@fontsource/inter/400.css';
+@import '@fontsource/inter/500.css';
+@import '@fontsource/inter/600.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/500.css';
 
-/* shadcn/ui theme tokens (neutral base colour); components in src/components/ui use them. */
-@custom-variant dark (&:is(.dark *));
-
+/* Design tokens from the Claude Design project (screen "Components"); light theme only.
+   shadcn components in src/components/ui read the same names. */
 :root {
-  --radius: 0.625rem;
-  --background: oklch(1 0 0);
-  --foreground: oklch(0.145 0 0);
-  --muted: oklch(0.97 0 0);
-  --muted-foreground: oklch(0.556 0 0);
-  --primary: oklch(0.205 0 0);
-  --primary-foreground: oklch(0.985 0 0);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.922 0 0);
-  --input: oklch(0.922 0 0);
-  --ring: oklch(0.708 0 0);
-}
-
-.dark {
-  --background: oklch(0.145 0 0);
-  --foreground: oklch(0.985 0 0);
-  --muted: oklch(0.269 0 0);
-  --muted-foreground: oklch(0.708 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
-  --destructive: oklch(0.704 0.191 22.216);
-  --border: oklch(1 0 0 / 10%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.556 0 0);
+  --radius: 0.5rem;
+  --background: #f7f7f5;
+  --foreground: #17171a;
+  --surface: #ffffff;
+  --surface-muted: #fafaf9;
+  --muted: #f0f0ee;
+  --muted-foreground: #5c5c63;
+  --subtle-foreground: #3f3f46;
+  --disabled-foreground: #8a8a90;
+  --primary: #17171a;
+  --primary-foreground: #ffffff;
+  --card: #ffffff;
+  --card-foreground: #17171a;
+  --popover: #17171a;
+  --popover-foreground: #ffffff;
+  --secondary: #f0f0ee;
+  --secondary-foreground: #17171a;
+  /* shadcn's accent is the hover background of outline and ghost controls. */
+  --accent: #f0f0ee;
+  --accent-foreground: #17171a;
+  /* The design's accent colour: links, the live dot, the processing badge. */
+  --link: #1f3fc4;
+  --destructive: #b42121;
+  --destructive-muted: #fcebeb;
+  --destructive-border: #f3c7c7;
+  --border: #e6e6e3;
+  --border-soft: #eeeeeb;
+  --input: #d4d4d0;
+  --ring: #1f3fc4;
+  /* Job status colours (design "Components"): text and dot, then the badge background. */
+  --status-scheduled: #5b3fb8;
+  --status-scheduled-bg: #f1edfc;
+  --status-pending: #8a4b00;
+  --status-pending-bg: #fdf3e2;
+  --status-processing: #1f3fc4;
+  --status-processing-bg: #ebeffd;
+  --status-completed: #13703a;
+  --status-completed-bg: #e8f5ec;
+  --status-failed: #b42121;
+  --status-failed-bg: #fcebeb;
+  --status-cancelled: #5c5c63;
+  --status-cancelled-bg: #f0f0ee;
 }
 
 @theme inline {
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --radius-sm: calc(var(--radius) - 2px);
+  --radius-md: var(--radius);
+  --radius-lg: calc(var(--radius) + 2px);
+  --radius-xl: calc(var(--radius) + 4px);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-muted: var(--surface-muted);
   --color-muted: var(--muted);
   --color-muted-foreground: var(--muted-foreground);
+  --color-subtle-foreground: var(--subtle-foreground);
+  --color-disabled-foreground: var(--disabled-foreground);
   --color-primary: var(--primary);
   --color-primary-foreground: var(--primary-foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-link: var(--link);
+  --color-status-scheduled: var(--status-scheduled);
+  --color-status-scheduled-bg: var(--status-scheduled-bg);
+  --color-status-pending: var(--status-pending);
+  --color-status-pending-bg: var(--status-pending-bg);
+  --color-status-processing: var(--status-processing);
+  --color-status-processing-bg: var(--status-processing-bg);
+  --color-status-completed: var(--status-completed);
+  --color-status-completed-bg: var(--status-completed-bg);
+  --color-status-failed: var(--status-failed);
+  --color-status-failed-bg: var(--status-failed-bg);
+  --color-status-cancelled: var(--status-cancelled);
+  --color-status-cancelled-bg: var(--status-cancelled-bg);
   --color-destructive: var(--destructive);
+  --color-destructive-muted: var(--destructive-muted);
+  --color-destructive-border: var(--destructive-border);
   --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
   --color-input: var(--input);
   --color-ring: var(--ring);
 }
@@ -51,6 +105,9 @@
     @apply border-border outline-ring/50;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply bg-background font-sans text-sm leading-[1.45] text-foreground;
+  }
+  a {
+    @apply text-link;
   }
 }

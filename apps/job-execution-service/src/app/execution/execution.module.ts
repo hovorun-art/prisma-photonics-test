@@ -17,7 +17,7 @@ import {
 import { EXECUTION_CONFIG, type ExecutionConfig } from '../../domain/config/execution-config.js';
 import { JOB_EXECUTION, type JobExecution } from '../../domain/execution/job-execution.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../domain/jobs/job-repository.js';
-import { JOB_HANDLERS, type JobHandlers } from '../../domain/notifications/job-handler.js';
+import { JOB_HANDLERS, type JobHandlers } from '../../domain/execution/job-handler.js';
 import {
   JOB_QUEUE_CONSUMER,
   type JobQueueConsumer,
@@ -26,6 +26,7 @@ import { JobExecutionImpl } from '../../infra/execution/job-execution.impl.js';
 import { HttpJobRepository } from '../../infra/jobs/http-job-repository.js';
 import { EmailJobHandler } from '../../infra/notifications/email-job-handler.js';
 import { BullMqJobQueueConsumer } from '../../infra/queue/bullmq-job-queue-consumer.js';
+import { WebhookJobHandler } from '../../infra/webhooks/webhook-job-handler.js';
 
 /**
  * Runs queued jobs: starts taking entries once the app has started, and on shutdown stops taking
@@ -51,6 +52,10 @@ import { BullMqJobQueueConsumer } from '../../infra/queue/bullmq-job-queue-consu
         email: new EmailJobHandler(
           { random, sleeper },
           { sendMinMs: config.emailSendMinMs, sendMaxMs: config.emailSendMaxMs },
+        ),
+        webhook: new WebhookJobHandler(
+          { random, sleeper },
+          { callMs: config.webhookCallMs, failureRate: config.webhookFailureRate },
         ),
       }),
       inject: [RANDOM, SLEEPER, EXECUTION_CONFIG],

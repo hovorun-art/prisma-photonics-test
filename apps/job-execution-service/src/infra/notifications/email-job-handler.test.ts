@@ -51,8 +51,8 @@ describe('EmailJobHandler', () => {
     const first = await handler.run({ job: JOB, signal });
     const second = await handler.run({ job: JOB, signal });
 
-    expect(first.result).toEqual({ messageId: MESSAGE_ID });
-    expect(second.result).toEqual({ messageId: OTHER_MESSAGE_ID });
+    expect(first).toEqual({ outcome: 'completed', result: { messageId: MESSAGE_ID } });
+    expect(second).toEqual({ outcome: 'completed', result: { messageId: OTHER_MESSAGE_ID } });
   });
 
   it('Email job takes a configured time', async () => {

@@ -139,6 +139,34 @@ defaults and the email field lengths are constants in the shared Zod schemas, so
 UI form validate with the same rules. Values that operators tune (page sizes, enqueue timeout) are
 environment config of job-service.
 
+**job-ui: polling, not push.** The jobs list and the job page fetch again every 2 s (TanStack
+Query `refetchInterval`); a failed poll keeps the last data on screen with a "Connection lost,
+retrying" note, and polling itself is the retry. *Alternatives:* Server-Sent Events or WebSockets
+push changes at once and cost less per idle tab, but need a change feed from job-service (Postgres
+`LISTEN/NOTIFY` or queue events) and reconnect handling. *Trade-off:* up to one interval of delay
+and one request per open page per interval; SSE is the planned upgrade if time allows.
+
+**job-ui: the whole design laid out now, unbuilt parts disabled.** Filters, search, Cancel/Retry,
+queue statistics, the health pill, scheduling and idempotency fields are in place but disabled with
+a "Coming soon" tooltip; each later change enables its part. *Why:* reviewers see the target UI,
+and later changes only wire behaviour. *Trade-off:* visible controls that do nothing yet.
+
+**job-ui: the form validates with the API's own schema.** The submit form uses `react-hook-form`
+with `zodResolver` on the shared `CreateEmailJobRequest` Zod schema before sending (chosen over
+`@tanstack/react-form` for its reach: ~62M against ~6M weekly downloads), and maps an API `VALIDATION_FAILED` answer to
+the same fields, so client and server rules cannot drift. Messages shown for client-side errors
+come from the locale file, not from Zod. The `VALIDATION_FAILED` issues are read through a shared
+`ValidationFailedDetails` schema; an issue that matches no field is shown in the form's alert
+rather than dropped.
+
+**job-ui: errors are contained per page with `react-error-boundary`.** Each page sits in an error
+boundary inside the app frame, so an unexpected error, or a failed first load of the list or a job,
+replaces only that page with "Something went wrong" and a Reload button; the header keeps working.
+TanStack Query's `QueryErrorResetBoundary` makes Reload load the failed data again. *Alternatives:*
+react-router's `errorElement` (only in its data-router mode, which the app does not use) or a
+hand-written class component. *Why this library:* v6, ~20M weekly downloads, typed, React 19
+support, and the pattern TanStack Query documents. *Trade-off:* one more dependency.
+
 **Internal API protected by a shared service token.** Routes under `/internal` require
 `Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
 docs. *Trade-off:* a shared secret in environment variables is weaker than service identity (mTLS,
@@ -213,8 +241,27 @@ error as `{ code, message, status, attempt, retryable }`. We keep the shared
 `attempts < maxAttempts`, so the UI derives both from fields every job already has. *Why:* one
 error schema for all job types, and no second copy of state the job already holds. *Trade-off:*
 `details` is untyped per job type, so the UI must read `details.statusCode` defensively. The webhook
-type was added to job-service before its handler in job-execution-service. Until the handler
-exists, a queued webhook job is reported as `UNSUPPORTED_JOB_TYPE` and fails after its attempts.
+type was added to job-service one change before its handler in job-execution-service
+(`webhook-job-execution`), so for one commit a queued webhook job failed as `UNSUPPORTED_JOB_TYPE`.
+
+**Simulated webhook calls.** A webhook job never calls its URL. The handler waits a fixed
+configured time (`WEBHOOK_CALL_MS`, 1500 ms), then fails the attempt at the configured rate
+(`WEBHOOK_FAILURE_RATE`, 0.2) with a random 500, 502, 503 or 504, or answers 200 with
+`{ received: true, requestId }`. The failure is drawn after the wait, so a failed call costs as much
+time as a real one; the wait and the draw come through the `Sleeper` and `Random` ports, so tests
+set the outcome. *Why:* the concept asks for a simulated webhook with random failures to exercise
+retries; a fixed wait keeps the processing state easy to watch. *Trade-off:* with the default rate
+and 3 attempts about 0.8% of webhook jobs fail for good, which is the point; set the rate to 0 for
+demos that need every job to succeed.
+
+**Handlers return expected failures instead of throwing them.** A `JobHandler` returns
+`{ outcome: 'completed', result }` or `{ outcome: 'failed', error }`, and the worker reports the
+error as is, `details` included. Thrown errors stay for the unexpected (`DomainError` code, or
+`HANDLER_ERROR`). *Why not a `DomainError` with a new code:* `ERROR_CODES` is the closed list of API
+errors, each mapped to an HTTP status by the exception filter; `WEBHOOK_HTTP_ERROR` is data about a
+job attempt, not an answer of our API, so it lives with the job failure codes of job-execution-service
+(`WEBHOOK_JOB_ERROR_CODES` next to `JOB_ERROR_CODES`). *Trade-off:* two failure paths in the worker,
+one for returned and one for thrown failures; both end in the same `failed` report.
 
 ---
 

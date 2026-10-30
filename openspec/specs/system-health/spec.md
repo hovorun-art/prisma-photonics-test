@@ -43,18 +43,6 @@ closes its connections and exits with a success code.
 - **WHEN** job-service receives a termination signal
 - **THEN** it closes its connections and exits with a success code
 
-### Requirement: job-ui shows that it has started
-job-ui SHALL show basic information that the UI has started (the application name and a short
-started message). It SHALL NOT call the backend or show any backend status.
-
-#### Scenario: UI started
-- **WHEN** a user opens job-ui
-- **THEN** the page shows the application name and the started message
-
-#### Scenario: Backend not needed
-- **WHEN** a user opens job-ui while job-service is not running
-- **THEN** the page still shows the application name and the started message, and no request to the backend is made
-
 ### Requirement: API documentation is published
 job-service SHALL publish OpenAPI documentation of its public endpoints.
 

@@ -5,7 +5,7 @@ import type {
   JobHandler,
   RunJobHandlerRequest,
   RunJobHandlerResponse,
-} from '../../domain/notifications/job-handler.js';
+} from '../../domain/execution/job-handler.js';
 
 export interface EmailJobHandlerDeps {
   random: Random;
@@ -29,6 +29,6 @@ export class EmailJobHandler implements JobHandler {
     const { value: ms } = this.d.random.int({ min: this.p.sendMinMs, max: this.p.sendMaxMs });
     await this.d.sleeper.sleep({ ms, signal: req.signal });
     const result: EmailJobResult = { messageId: this.d.random.uuid().value };
-    return { result };
+    return { outcome: 'completed', result };
   }
 }

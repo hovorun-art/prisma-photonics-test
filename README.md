@@ -4,9 +4,10 @@ A background job processing system: an API accepts jobs, workers take them from 
 them, Postgres keeps their state and a web UI shows them. Built as an interview task; design
 trade-offs are in [DECISIONS.md](DECISIONS.md), AI usage in `AI_USAGE.md`.
 
-> Status: email jobs run end to end: submit through the API, a job-execution-service instance
-> picks the job from the queue and runs it, and the job ends `completed` with a mock message id.
-> The UI for jobs arrives next ([docs/roadmap/](docs/roadmap/)). The full API is documented at
+> Status: email jobs run end to end: submit from the UI or the API, a job-execution-service
+> instance picks the job from the queue and runs it, and the job ends `completed` with a mock
+> message id. job-ui lists jobs, shows a job, submits email jobs and deletes finished ones. Next
+> steps are in [docs/roadmap/](docs/roadmap/). The full API is documented at
 > http://localhost:3000/docs.
 
 ## Run it
@@ -103,7 +104,9 @@ of an image.
 - **job-execution-service** (NestJS) takes jobs from the queue (BullMQ on Redis), runs them (email
   for now) and reports each step through job-service's internal API; it has no database access.
   It scales horizontally and runs several jobs per instance (`JOB_EXECUTION_CONCURRENCY`).
-- **job-ui** (React + Vite) is served by nginx, which forwards `/api` to job-service.
+- **job-ui** (React + Vite) is served by nginx, which forwards `/api` to job-service. Pages:
+  `/jobs` (list, also the start page), `/jobs/new` (submit an email job), `/jobs/:id` (one job);
+  list and job page refresh by polling.
 - **Shared packages:** `packages/contracts` (Zod schemas for every request, response and error),
   `packages/kernel` (framework-free ports and base classes), `packages/service-kit` (bootstrap,
   config, logging, Redis and health shared by both backends).

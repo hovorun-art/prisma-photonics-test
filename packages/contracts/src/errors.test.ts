@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { ERROR_CODES } from '@job-queue/kernel';
 
-import { ErrorBody, ErrorCode } from './index.js';
+import { ErrorBody, ErrorCode, ValidationFailedDetails } from './index.js';
 
 describe('ErrorCode', () => {
   it('accepts exactly the codes registered in the kernel', () => {
@@ -40,5 +40,26 @@ describe('ErrorBody', () => {
     expect(ErrorBody.safeParse({ code: 'INTERNAL_ERROR', message: 'Internal error' }).success).toBe(
       false,
     );
+  });
+});
+
+describe('ValidationFailedDetails', () => {
+  it('accepts the issues of a VALIDATION_FAILED body, each with a path and a message', () => {
+    const details = ValidationFailedDetails.parse({
+      issues: [{ path: ['payload', 'to'], message: 'Invalid email', code: 'invalid_format' }],
+    });
+
+    expect(details.issues).toEqual([{ path: ['payload', 'to'], message: 'Invalid email' }]);
+  });
+
+  it('accepts numeric path segments', () => {
+    expect(
+      ValidationFailedDetails.safeParse({ issues: [{ path: ['items', 0], message: 'x' }] }).success,
+    ).toBe(true);
+  });
+
+  it('rejects details without issues or with an issue missing its message', () => {
+    expect(ValidationFailedDetails.safeParse({}).success).toBe(false);
+    expect(ValidationFailedDetails.safeParse({ issues: [{ path: [] }] }).success).toBe(false);
   });
 });

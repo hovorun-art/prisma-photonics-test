@@ -12,3 +12,14 @@ export const ErrorBody = z.object({
   details: z.record(z.string(), z.unknown()),
 });
 export type ErrorBody = z.infer<typeof ErrorBody>;
+
+/** One problem in a rejected request: where it is (`['payload', 'to']`) and what is wrong. */
+export const ValidationIssue = z.object({
+  path: z.array(z.union([z.string(), z.number()])),
+  message: z.string(),
+});
+export type ValidationIssue = z.infer<typeof ValidationIssue>;
+
+/** The `details` of a `VALIDATION_FAILED` error body. */
+export const ValidationFailedDetails = z.object({ issues: z.array(ValidationIssue) });
+export type ValidationFailedDetails = z.infer<typeof ValidationFailedDetails>;

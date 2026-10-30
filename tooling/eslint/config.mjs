@@ -30,9 +30,14 @@ const COMPOSITION_ROOT = [
   'packages/service-kit/src/**/*.module.ts',
 ];
 
-/** Files where free functions are allowed: React, the composition root and tool configs. */
+/**
+ * Files where free functions are allowed: React components and hooks, shadcn's `cn`, the
+ * composition root and tool configs.
+ */
 const FREE_FUNCTIONS_ALLOWED = [
   '**/*.tsx',
+  'apps/job-ui/src/**/use-*.ts',
+  'apps/job-ui/src/lib/class-names.ts',
   'apps/*/src/main.ts',
   '**/*.config.ts',
   '**/*.config.mjs',
@@ -276,6 +281,11 @@ export default tseslint.config(
       ...reactHooks.configs.recommended.rules,
       'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
     },
+  },
+  {
+    // shadcn/ui components come from its CLI and export their variant helpers next to them.
+    files: ['apps/job-ui/src/components/ui/**/*.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
   },
   {
     files: ['**/*.test.{ts,tsx}', '**/*.spec.ts', '**/test/**/*.ts'],
