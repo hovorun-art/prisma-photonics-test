@@ -1,4 +1,4 @@
-import { HEALTH_ROUTE, HealthResponse, JOBS_ROUTE } from '@job-queue/contracts';
+import { HEALTH_ROUTE, HealthResponse, JOBS_ROUTE, JobStatus, JobType } from '@job-queue/contracts';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { PrismaDatabase } from '../../src/infra/prisma/prisma-database.js';
@@ -7,7 +7,7 @@ import { JobServiceUnderTest } from './job-service-under-test.js';
 interface OpenApiOperation {
   responses: Record<string, { content?: Record<string, { schema?: unknown }> }>;
   requestBody?: { content: Record<string, { schema?: unknown }> };
-  parameters?: { name: string; in: string }[];
+  parameters?: { name: string; in: string; schema?: unknown }[];
 }
 
 interface OpenApiDocument {
@@ -81,7 +81,20 @@ describe('job-service health, docs and shutdown', () => {
       expect(jobs?.get?.parameters?.map((parameter) => parameter.name).sort()).toEqual([
         'limit',
         'offset',
+        'status',
+        'type',
       ]);
+      // The filters are lists of the known values, so clients see what they may repeat.
+      const parameter = (name: string): unknown =>
+        jobs?.get?.parameters?.find((candidate) => candidate.name === name);
+      expect(parameter('status')).toMatchObject({
+        in: 'query',
+        schema: { type: 'array', items: { type: 'string', enum: JobStatus.options } },
+      });
+      expect(parameter('type')).toMatchObject({
+        in: 'query',
+        schema: { type: 'array', items: { type: 'string', enum: JobType.options } },
+      });
       expect(jobs?.get?.responses['200']?.content?.['application/json']?.schema).toBeDefined();
       expect(job?.get?.responses['200']?.content?.['application/json']?.schema).toBeDefined();
       expect(job?.get?.parameters?.map((parameter) => parameter.name)).toEqual(['id']);

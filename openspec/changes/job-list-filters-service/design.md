@@ -24,22 +24,23 @@ also feeds the Swagger docs. The `jobs` table already has `(status, created_at D
 ## Decisions
 
 ### Contract: arrays normalised at the edge
-`QueryJobsRequest` gains `status` and `type`, each optional, typed as a non-empty array of
-`JobStatus` / `JobType`. Express's query parser gives a string for one occurrence and an array for
-repeated ones, so the schema accepts both and normalises to an array
-(`z.union([JobStatus, z.array(JobStatus).min(1)]).transform(...)`-style, written once as a small
-schema factory for both fields inside `job.ts`, since contracts are schema declarations, not
-classes). Duplicates are removed in the same transform, so inner layers see a set of values.
-An empty value (`status=`) is the string `""`, which is not a valid enum member, so it fails with an
-issue for the field without special handling; an unknown value among known ones fails the same way.
+`QueryJobsRequest` gains `status` and `type`, each optional. Express's query parser gives a string
+for one occurrence and an array for repeated ones, so one shared leading step,
+`z.transform(value => unique([value].flat()))`, turns either into a list without duplicates, and
+each field pipes it into `z.array(JobStatus | JobType).min(1)`. Inner layers see a set of values.
+An empty value (`status=`) becomes `[""]`, which is not a valid enum member, so it fails with an
+issue for the field without special handling; an unknown value among known ones, an empty list or a
+nested object fail the same way.
 
 - Alternative: comma-separated values. Rejected by the user (decisions.md).
 - Alternative: preprocess in the controller. Rejected: validation belongs to the shared schema,
   and the docs would not show the parameters.
 
-Swagger: the generated DTO documents both parameters as arrays of the enum. If `nestjs-zod`
-renders the union oddly, the controller adds `@ApiQuery({ name, isArray: true, enum, required:
-false })` for the two fields; the docs scenario in `job-management` already covers the route list.
+Swagger: because the pipe starts with a transform, the generated docs show the field as an array
+of the enum (`minItems: 1`), so the contract documents itself. A `z.union([string, string[]])`
+first step was tried and rejected: the docs then showed `string | string[]` without the enum
+values, and adding `@ApiQuery` on top does not help, because `cleanupOpenApiDoc` strips the merged
+parameter's `type`.
 
 ### Domain and infra pass filters through unchanged
 - `QueryJobServiceRequest` and `QueryJobRepositoryRequest` gain optional

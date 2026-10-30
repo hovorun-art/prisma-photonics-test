@@ -170,6 +170,170 @@ describe('PrismaJobRepository against Postgres', () => {
     );
   });
 
+  describe('filters', () => {
+    type Kind = Pick<Job, 'status' | 'type'>;
+    const PAYLOADS = {
+      email: { to: 'ada@example.com', subject: 'Filtered', body: 'Hi' },
+      webhook: { method: 'GET', url: 'http://example.com/ping' },
+      'flight-transit': { origin: 'LHR', destination: 'JFK', departureDate: '2030-06-15' },
+    } as const;
+
+    /** Stores one job per kind, one second apart in the given order, so newest first is the reverse. */
+    const storeKinds = async (kinds: Kind[]): Promise<Job[]> => {
+      const jobs: Job[] = [];
+      for (const [i, kind] of kinds.entries()) {
+        const row = await database.job.create({
+          data: {
+            ...kind,
+            type: kind.type === 'flight-transit' ? 'flight_transit' : kind.type,
+            payload: PAYLOADS[kind.type],
+            priority: 5,
+            attempts: 0,
+            maxAttempts: 3,
+            createdAt: new Date(Date.UTC(2026, 9, 30, 12, 0, i)),
+          },
+        });
+        jobs.push((await repository.get({ id: row.id })).job);
+      }
+      return jobs;
+    };
+    const idsNewestFirst = (jobs: Job[]): string[] => jobs.map((job) => job.id).reverse();
+
+    it('Filter by one status', async () => {
+      const [failedOld, , failedNew] = await storeKinds([
+        { status: 'failed', type: 'email' },
+        { status: 'completed', type: 'email' },
+        { status: 'failed', type: 'webhook' },
+        { status: 'pending', type: 'webhook' },
+      ]);
+
+      const page = await repository.query({ limit: 10, offset: 0, statuses: ['failed'] });
+
+      expect(page.items.map((job) => job.id)).toEqual(idsNewestFirst([failedOld!, failedNew!]));
+      expect(page.total).toBe(2);
+    });
+
+    it('Filter by several statuses', async () => {
+      const [failed, , cancelled] = await storeKinds([
+        { status: 'failed', type: 'email' },
+        { status: 'completed', type: 'email' },
+        { status: 'cancelled', type: 'webhook' },
+        { status: 'pending', type: 'webhook' },
+      ]);
+
+      const page = await repository.query({
+        limit: 10,
+        offset: 0,
+        statuses: ['failed', 'cancelled'],
+      });
+
+      expect(page.items.map((job) => job.id)).toEqual(idsNewestFirst([failed!, cancelled!]));
+      expect(page.total).toBe(2);
+    });
+
+    it('Filter by one type', async () => {
+      const [, webhook] = await storeKinds([
+        { status: 'pending', type: 'email' },
+        { status: 'pending', type: 'webhook' },
+        { status: 'pending', type: 'flight-transit' },
+      ]);
+
+      const page = await repository.query({ limit: 10, offset: 0, types: ['webhook'] });
+
+      expect(page.items.map((job) => job.id)).toEqual([webhook!.id]);
+      expect(page.total).toBe(1);
+    });
+
+    it('Filter by several types', async () => {
+      const [email, , transit] = await storeKinds([
+        { status: 'pending', type: 'email' },
+        { status: 'pending', type: 'webhook' },
+        { status: 'pending', type: 'flight-transit' },
+      ]);
+
+      const page = await repository.query({
+        limit: 10,
+        offset: 0,
+        types: ['email', 'flight-transit'],
+      });
+
+      expect(page.items.map((job) => job.id)).toEqual(idsNewestFirst([email!, transit!]));
+      expect(page.total).toBe(2);
+    });
+
+    it('Status and type together', async () => {
+      const [, failedWebhook] = await storeKinds([
+        { status: 'failed', type: 'email' },
+        { status: 'failed', type: 'webhook' },
+        { status: 'completed', type: 'webhook' },
+      ]);
+
+      const page = await repository.query({
+        limit: 10,
+        offset: 0,
+        statuses: ['failed'],
+        types: ['webhook'],
+      });
+
+      expect(page.items.map((job) => job.id)).toEqual([failedWebhook!.id]);
+      expect(page.total).toBe(1);
+    });
+
+    it('Paging through filtered jobs', async () => {
+      const jobs = await storeKinds([
+        { status: 'failed', type: 'email' },
+        { status: 'completed', type: 'email' },
+        { status: 'failed', type: 'email' },
+        { status: 'failed', type: 'webhook' },
+        { status: 'pending', type: 'email' },
+        { status: 'failed', type: 'email' },
+      ]);
+      const failedNewestFirst = jobs.filter((job) => job.status === 'failed').reverse();
+
+      const page = await repository.query({ limit: 2, offset: 1, statuses: ['failed'] });
+
+      expect(page.items.map((job) => job.id)).toEqual([
+        failedNewestFirst[1]!.id,
+        failedNewestFirst[2]!.id,
+      ]);
+      expect(page.total).toBe(4);
+    });
+
+    it('returns jobs of every status and type without a filter', async () => {
+      const jobs = await storeKinds([
+        { status: 'pending', type: 'email' },
+        { status: 'failed', type: 'webhook' },
+        { status: 'completed', type: 'flight-transit' },
+        { status: 'cancelled', type: 'email' },
+      ]);
+
+      const page = await repository.query({ limit: 10, offset: 0 });
+
+      expect(page.items.map((job) => job.id)).toEqual(idsNewestFirst(jobs));
+      expect(page.total).toBe(4);
+    });
+
+    it('counts the filtered jobs even when the offset is past them', async () => {
+      await storeKinds([
+        { status: 'failed', type: 'email' },
+        { status: 'completed', type: 'email' },
+        { status: 'failed', type: 'webhook' },
+      ]);
+
+      const page = await repository.query({ limit: 10, offset: 2, statuses: ['failed'] });
+
+      expect(page).toEqual({ items: [], total: 2 });
+    });
+
+    it('No job matches the status', async () => {
+      await storeKinds([{ status: 'pending', type: 'email' }]);
+
+      const page = await repository.query({ limit: 10, offset: 0, statuses: ['cancelled'] });
+
+      expect(page).toEqual({ items: [], total: 0 });
+    });
+  });
+
   it('applies the changes when the expected status and attempts match', async () => {
     const job = await store();
 

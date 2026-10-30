@@ -1,4 +1,10 @@
-import type { CreateJobRequest, Job, UpdateJobRequest } from '@job-queue/contracts';
+import type {
+  CreateJobRequest,
+  Job,
+  JobStatus,
+  JobType,
+  UpdateJobRequest,
+} from '@job-queue/contracts';
 
 /**
  * Everything job-service does with jobs, in five operations. `update` holds the lifecycle rules
@@ -40,6 +46,10 @@ export interface QueryJobServiceRequest {
   /** The configured default page size when omitted. */
   limit?: number | undefined;
   offset: number;
+  /** Only jobs in one of these statuses; every status when omitted. */
+  statuses?: JobStatus[] | undefined;
+  /** Only jobs of one of these types; every type when omitted. */
+  types?: JobType[] | undefined;
 }
 
 export interface QueryJobServiceResponse {
