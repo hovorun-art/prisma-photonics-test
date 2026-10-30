@@ -5,7 +5,7 @@ import { en } from '@/locales';
 
 import type { TransitFormField, TransitFormValues } from '../model/transit-form-values';
 import { AirportCombobox } from './airport-combobox';
-import { FormField, type JobFormFields } from './job-form';
+import { FormField, type JobFormFields } from './job-form-sections';
 
 /**
  * "2. Payload" of a flight transit job (design "SubmitTransit"): origin and destination picked

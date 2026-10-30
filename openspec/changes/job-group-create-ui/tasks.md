@@ -36,10 +36,10 @@ Owns: `apps/job-ui/src/features/groups/model/group-job-tabs.impl.ts`, `apps/job-
 
 ## 3. Split the job form into sections and footer
 
-Owns: `apps/job-ui/src/features/jobs/submit/job-form.tsx`, `apps/job-ui/src/features/jobs/submit/job-form-sections.tsx`, `apps/job-ui/src/features/jobs/submit/submit-job-page.tsx`, `apps/job-ui/src/features/jobs/submit/submit-job-page.test.tsx` · Depends on: 1 · Parallel with: 2
+Owns: `apps/job-ui/src/features/jobs/submit/job-form.tsx`, `apps/job-ui/src/features/jobs/submit/job-form-sections.tsx`, `apps/job-ui/src/features/jobs/submit/submit-job-page.tsx`, `apps/job-ui/src/features/jobs/submit/submit-job-page.test.tsx`, `apps/job-ui/src/features/jobs/submit/email-payload-fields.tsx`, `apps/job-ui/src/features/jobs/submit/webhook-payload-fields.tsx`, `apps/job-ui/src/features/jobs/submit/transit-payload-fields.tsx` (their import of `FormField`) · Depends on: 1 · Parallel with: 2
 
-- [ ] 3.1 Run `submit-job-page.test.tsx` and `apps/job-ui/test/e2e/jobs.spec.ts` green as the baseline (refactor with no behaviour change; the existing tests are the safety net)
-- [ ] 3.2 Move the three sections, `FormField` and the field `input`/`errorOf` logic into `JobFormSections` (reads the form from context, takes the draft, picker and payload); `JobForm` keeps the create mutation, alert and footer and renders `JobFormSections`; verify `submit-job-page.test.tsx` and job-ui's `jobs.spec.ts` Playwright still pass unchanged
+- [x] 3.1 Run `submit-job-page.test.tsx` and `apps/job-ui/test/e2e/jobs.spec.ts` green as the baseline (refactor with no behaviour change; the existing tests are the safety net)
+- [x] 3.2 Move the three sections, `FormField` and the field `input`/`errorOf` logic into `JobFormSections` (reads the form from context, takes the draft, picker and payload); `JobForm` keeps the create mutation, alert and footer and renders `JobFormSections`; verify `submit-job-page.test.tsx` and job-ui's `jobs.spec.ts` Playwright still pass unchanged
 
 ## 4. New group page
 
