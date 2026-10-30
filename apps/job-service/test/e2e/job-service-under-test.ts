@@ -2,9 +2,11 @@ import { fileURLToPath } from 'node:url';
 
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
 import {
+  type ChangeJobStatusRequest,
   ErrorBody,
   FINISHED_JOB_STATUSES,
   type FlightTransitJobResult,
+  type JobError,
   CreateJobsBulkResponse,
   INTERNAL_JOBS_ROUTE,
   JOBS_BULK_ROUTE,
@@ -127,6 +129,14 @@ export interface SeedRequest {
   maxAttempts?: number;
   /** When a finished job finished (ISO 8601); defaults to now. */
   completedAt?: string;
+  /** The error of a failed attempt; defaults to none. */
+  error?: JobError;
+}
+
+export interface ChangeStatusRequest {
+  id: string;
+  /** A string is sent as it is, so malformed JSON can be sent too. */
+  body: ChangeJobStatusRequest | Record<string, unknown> | string;
 }
 
 export interface CallRequest {
@@ -361,6 +371,15 @@ export class JobServiceUnderTest implements Closable {
     return fetch(this.url(`${JOBS_ROUTE}/${id}`));
   }
 
+  /** `PATCH /v1/jobs/:id`: a client's cancel or retry. */
+  changeStatus(req: ChangeStatusRequest): Promise<Response> {
+    return fetch(this.url(`${JOBS_ROUTE}/${req.id}`), {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: typeof req.body === 'string' ? req.body : JSON.stringify(req.body),
+    });
+  }
+
   remove(id: string): Promise<Response> {
     return fetch(this.url(`${JOBS_ROUTE}/${id}`), { method: 'DELETE' });
   }
@@ -462,7 +481,7 @@ export class JobServiceUnderTest implements Closable {
         priority: 5,
         attempts: options.attempts ?? (notStarted ? 0 : 1),
         maxAttempts: options.maxAttempts ?? 3,
-        error: null,
+        error: options.error ?? null,
         scheduledAt: status === 'scheduled' ? new Date(Date.now() + 3_600_000).toISOString() : null,
         startedAt: notStarted ? null : now,
         completedAt: finished ? (options.completedAt ?? now) : null,

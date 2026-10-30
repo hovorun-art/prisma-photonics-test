@@ -40,6 +40,12 @@ export function AppFrame() {
             >
               {en.frame.jobs}
             </NavLink>
+            <NavLink
+              to="/groups"
+              className={({ isActive }) => cn(NAV_LINK, isActive && 'bg-secondary text-foreground')}
+            >
+              {en.frame.groups}
+            </NavLink>
             <a
               href={`${API_BASE_PATH}/docs`}
               target="_blank"

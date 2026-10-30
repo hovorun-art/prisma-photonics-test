@@ -63,6 +63,8 @@ export interface GetJobRepositoryRequest {
 
 export interface GetJobRepositoryResponse {
   job: Job;
+  /** The job's run: 1, plus one per manual retry. Queue entries of the job carry it. */
+  run: number;
 }
 
 export interface QueryJobRepositoryRequest {
@@ -95,6 +97,7 @@ export interface JobChanges {
   error?: JobError | null;
   startedAt?: string | null;
   completedAt?: string | null;
+  run?: number;
 }
 
 export interface UpdateJobRepositoryRequest {

@@ -112,11 +112,12 @@ a worker that crashes mid-job still uses up an attempt, so a job that kills its 
 forever. In job-api the retry is immediate; backoff delays come with the retry-backoff change.
 
 **Queue entries carry only the job id, one entry per attempt.** job-service puts
-`{ jobId }` on the BullMQ queue under the entry id `<jobId>_<attempt>`; the worker reads the job
+`{ jobId }` on the BullMQ queue under the entry id `<jobId>_<run>_<attempt>`; the worker reads the job
 from job-service, so Postgres stays the only copy of job data and a deleted or changed job is seen
 at once. BullMQ ignores an `add` with an id it already has, so the same attempt is never queued
-twice, while a retry (the next attempt) gets its own entry. (`:` would read better, but BullMQ
-rejects it in custom ids.) Ids themselves come from Postgres (`gen_random_uuid()`).
+twice, while a retry (the next attempt) gets its own entry. `run` is 1 until a client retries the
+job by hand (see "Cancel and retry by hand"). (`:` would read better, but BullMQ rejects it in
+custom ids.) Ids themselves come from Postgres (`gen_random_uuid()`).
 
 **Enqueue failure leaves the job pending, not the request failed.** A job is stored first, then
 queued. If Redis is down or slower than the configured timeout, the submit (or the retry report)
@@ -126,6 +127,44 @@ waits. *Alternatives:* deleting the row and answering 503 (simple, but the clien
 may not); a transactional outbox (a row in the same transaction, relayed to Redis until it
 succeeds), which is the robust answer and the one we would take with more time. *Trade-off:* a
 window in which a job is pending but not queued.
+
+**Cancel and retry by hand: one route, the same compare-and-set.** `PATCH /v1/jobs/:id` takes
+`{ "status": "cancelled" }` or `{ "status": "pending" }`, the only two statuses a client may set
+(the worker's reports go through `/internal`). Cancel is allowed from `scheduled`, `pending` and
+`processing`; retry only from `failed`, and it starts the job over: zero attempts, error, result and
+times cleared, queued again. Both are written with the conditional `UPDATE` above, so a cancel that
+races a worker's report, or two retries at once, leave exactly one winner and a 409 for the other.
+A wrong current status is 409 too, also for a job already in the target status, so a client always
+learns whether its own request changed the job. *Why:* the concept names the client update as
+"cancelled from pending or scheduled, pending from failed"; one route keeps the API to the statuses
+a client may set. *Trade-off:* `PATCH` on the job resource now means a status change; the later
+`job-update` change (priority, schedule) has to share it or use its own route.
+
+**Cancelling a running job: beyond the task, through Redis pub/sub.** The task only asks to cancel
+pending or scheduled jobs; we also cancel `processing` ones, because a user who cancels expects the
+work to stop. job-service writes `cancelled` first, then publishes `{ jobId }` on the
+`job-cancellations` Redis channel (through `JobQueue.cancel`, a connection of its own because
+BullMQ 6's client has no typed `publish`). Every worker listens (`JobCancellations`); the one running
+the job aborts its handler through the `AbortSignal` the handlers already take, and reports nothing.
+A worker registers a job before it reports the start, so a cancel right after the start was accepted
+is not missed. *Why pub/sub:* it is instant and needs nothing per job; polling the job from the
+worker would be slower than most jobs (1-3 s) and add load; BullMQ's own cancellation of active jobs
+is a BullMQ Pro feature. *Safety net:* pub/sub is fire and forget. If a worker misses the message
+(reconnecting, Redis down when job-service publishes), the handler runs to its end and its
+`completed` or `failed` report gets 409, because the job is no longer `processing`; the worker logs
+that as a lost race. The job stays `cancelled`; only the work is wasted. A failed publish is only
+logged; the cancel still answers 200. A publish waits for its connection to be ready (just after
+start, or while it reconnects) only within the enqueue timeout and is never sent later: a late
+announcement could stop a later run of the same job, after a retry.
+
+**Retry by hand: a run counter keeps queue entry ids new.** A retried job starts again at attempt
+1, but `<jobId>_1` is still in Redis (finished entries are kept for inspection), and BullMQ would
+ignore the new entry. So each job has a `run` column (1, plus one per manual retry), not part of the
+public job, and entry ids carry it. Entries queued before the column existed (`<jobId>_<attempt>`)
+are still read, as run 1. *Alternatives:* removing the old entries before re-adding (fails while an
+entry is still `active` just after its failure report, and the add is then silently ignored), or a
+random suffix per retry (failure retries inside one run need it too, so it must be stored anyway).
+*Trade-off:* one internal column, and an entry id format the job-ui never sees.
 
 **Query: offset pages over indexed columns.** `GET /v1/jobs?limit&offset` returns newest first,
 ordered by `(created_at DESC, id DESC)` so jobs created in the same millisecond keep a stable order
@@ -314,7 +353,8 @@ and one request per open page per interval; SSE is the planned upgrade if time a
 queue statistics, the health pill, scheduling and idempotency fields are in place but disabled with
 a "Coming soon" tooltip; each later change enables its part (the statistics cards and the API
 status pill are live since `queue-stats-service`, the status and type filters since
-`job-list-filters-ui`). *Why:* reviewers see the target UI,
+`job-list-filters-ui`, Cancel and Retry since `job-status-change`: Cancel asks for confirmation,
+since a running job's work is lost; Retry runs at once). *Why:* reviewers see the target UI,
 and later changes only wire behaviour. *Trade-off:* visible controls that do nothing yet.
 
 **job-ui: the form validates with the API's own schema.** The submit form uses `react-hook-form`
@@ -357,6 +397,26 @@ shadcn's Command, which matches the other `components/ui` primitives. *Alternati
 hooks only, all markup by hand), `react-select` (v5.10.2, ~12M weekly; its own emotion styling).
 A free-text IATA field as in the design was rejected: it lets users type codes the API rejects.
 *Trade-off:* one more dependency for one field.
+
+**job-ui: one `/api` prefix, routed by path to two services.** The browser calls everything under
+`/api`; nginx (and the Vite dev proxy) send `/api/v1/groups*` to job-group-service and every other
+`/api` path to job-service, the prefix stripped. The UI keeps one base URL and no CORS setup, and
+a route can move between services without a UI change. *Alternatives:* a second prefix
+(`/groups-api`) makes the browser know which service owns which route; calling job-group-service
+on its own port needs CORS and a second configured URL. *Trade-off:* the proxy config now holds a
+small routing table; the job-ui container starts once job-group-service has started (not when it
+is healthy), and while it is down only the group pages show their error states.
+
+**job-ui: a group's cells come from paging through its jobs.** The group page shows one cell per
+child job (design "BatchJob"). job-service has no per-group summary of job statuses, so the page
+reads `GET /v1/jobs?groupId=` page after page at job-service's maximum page size (100, the UI's
+`groupJobsPageSize`) on every poll, drops a job a shifted page repeats, and shows the jobs oldest
+first; the counts above the cells come from the group itself. *Alternatives:* a job-service route
+returning every child's id and status in one call (cheaper, but a backend change outside this UI
+change); showing cells only for the first page (no full picture). *Trade-off:* a group of N jobs
+costs N/100 requests per poll, fine for groups of hundreds; for much larger groups that summary
+route is the fix. The cells and the counts can differ for up to one poll, since the counts are as
+of the group's last check.
 
 **Internal API protected by a shared service token.** Routes under `/internal` require
 `Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
@@ -610,7 +670,7 @@ writer in its own process (the separate log service).
 ## 1. Job Pickup Strategy
 
 **Approach chosen:** two layers. BullMQ hands each queue entry (one per attempt, id
-`<jobId>_<attempt>`) to one worker at a time: its atomic move from waiting to active is what spreads
+`<jobId>_<run>_<attempt>`) to one worker at a time: its atomic move from waiting to active is what spreads
 work over instances and over the in-process concurrency slots (5 per instance by default). That
 alone is not trusted to prevent a double run, so the worker then asks job-service to start the job
 (`PATCH /internal/v1/jobs/:id` with `processing`; the worker sends nothing else). job-service reads
@@ -701,6 +761,18 @@ re-queues such jobs from Postgres, the same way it handles `pending` jobs whose 
 Clock skew between job-service and Redis only shifts the start by that skew; a worker does not
 check the time again, because a second check could drop a due entry over a few milliseconds and
 leave the job stuck.
+*In job-ui:* the submit page's "At a specific time" is a native `<input type="datetime-local">`,
+read in the browser's time zone (named in a hint under it) and sent as the same instant in UTC.
+We chose it over a calendar picker (shadcn's Calendar on react-day-picker 10.0.2, ~45M weekly
+npm downloads, TypeScript types, ESM) because it adds no dependency, is keyboard-accessible and is
+local time by definition; it looks slightly different per browser and has minute precision, which
+is enough for a schedule. The form checks the time with the API's rules before sending (set, later
+than now, at most 30 days ahead), on submit, so a time that passed while the page was open is
+caught. *Trade-off:* the form checks against the browser's clock, the API against job-service's;
+a time a few seconds ahead can pass the form and still be created `pending` by the API (it then
+runs at once). The API stays the authority. The jobs list shows a `scheduled` job's run time under
+its status badge, and the job page shows "Scheduled for" and a Lifecycle that starts at
+`scheduled` instead of `pending` for a job created to wait.
 
 ---
 

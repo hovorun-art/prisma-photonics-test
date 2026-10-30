@@ -125,6 +125,20 @@ describe('JobPresenter', () => {
     });
   });
 
+  it('Scheduled time on the job page: date-time is in the browser time zone, not UTC', () => {
+    process.env.TZ = 'Asia/Tokyo';
+    try {
+      const inTokyo = new JobPresenter({ shortIdLength: 8 });
+
+      // 21:02 UTC on 29 Oct is 06:02 on 30 Oct in Tokyo (UTC+9).
+      expect(inTokyo.dateTime({ at: '2026-10-29T21:02:09.000Z' })).toEqual({
+        text: '30 Oct, 06:02:09',
+      });
+    } finally {
+      process.env.TZ = 'UTC';
+    }
+  });
+
   it('Times on the job page: total time runs from started to finished', () => {
     const quick = jobFixtures.build({
       startedAt: '2026-10-29T21:02:10.000Z',
@@ -185,10 +199,52 @@ describe('JobPresenter', () => {
     ]);
   });
 
+  it('Lifecycle of a scheduled job: scheduled at the creation time takes the place of pending', () => {
+    const job = jobFixtures.build({ status: 'scheduled', scheduledAt: '2026-10-30T08:00:00.000Z' });
+
+    expect(presenter.lifecycle({ job }).steps).toEqual([
+      { status: 'scheduled', reached: true, at: '21:02:09' },
+      { status: 'processing', reached: false, at: null },
+      { status: 'completed', reached: false, at: null },
+    ]);
+  });
+
+  it('Lifecycle of a completed scheduled job: scheduled, processing and completed, no pending', () => {
+    const job = jobFixtures.build({
+      status: 'completed',
+      scheduledAt: '2026-10-30T08:00:00.000Z',
+      startedAt: '2026-10-30T08:00:01.000Z',
+      completedAt: '2026-10-30T08:00:05.000Z',
+      result: { messageId: 'msg_1' },
+    });
+
+    expect(presenter.lifecycle({ job }).steps).toEqual([
+      { status: 'scheduled', reached: true, at: '21:02:09' },
+      { status: 'processing', reached: true, at: '08:00:01' },
+      { status: 'completed', reached: true, at: '08:00:05' },
+    ]);
+  });
+
+  it.each([
+    ['before', '2026-10-29T21:00:00.000Z'],
+    ['equal to', '2026-10-29T21:02:09.000Z'],
+  ])(
+    'Lifecycle of a job scheduled for a past time: a time %s the creation keeps pending',
+    (_when, scheduledAt) => {
+      const job = jobFixtures.build({ status: 'pending', scheduledAt });
+
+      expect(presenter.lifecycle({ job }).steps[0]).toEqual({
+        status: 'pending',
+        reached: true,
+        at: '21:02:09',
+      });
+    },
+  );
+
   it.each([
     ['scheduled', { cancel: true, retry: false, delete: false }],
     ['pending', { cancel: true, retry: false, delete: false }],
-    ['processing', { cancel: false, retry: false, delete: false }],
+    ['processing', { cancel: true, retry: false, delete: false }],
     ['completed', { cancel: false, retry: false, delete: true }],
     ['failed', { cancel: false, retry: true, delete: true }],
     ['cancelled', { cancel: false, retry: false, delete: true }],

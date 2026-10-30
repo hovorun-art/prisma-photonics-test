@@ -20,12 +20,14 @@ export function RequestPreview({ request }: { request: JobRequestPreview }) {
   const example = {
     id: en.submit.placeholderId,
     type: request.type,
-    status: 'pending',
+    // A job with a time to run waits as `scheduled` until then.
+    status: request.scheduledAt === undefined ? 'pending' : 'scheduled',
     priority: request.priority,
     attempts: 0,
     maxAttempts: request.maxAttempts,
     payload: request.payload,
     createdAt: en.submit.placeholderTime,
+    scheduledAt: request.scheduledAt,
   };
   return (
     <aside className="flex min-w-0 flex-[1_1_360px] flex-col gap-3">

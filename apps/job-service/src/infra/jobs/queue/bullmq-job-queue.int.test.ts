@@ -2,11 +2,22 @@ import { randomUUID } from 'node:crypto';
 
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { JOB_LIMITS, JOB_QUEUE_NAME, JobQueueEntryId } from '@job-queue/contracts';
+import {
+  JOB_CANCELLATIONS_CHANNEL,
+  JOB_LIMITS,
+  JOB_QUEUE_NAME,
+  JobCancellationMessage,
+  JobQueueEntryId,
+} from '@job-queue/contracts';
 import type { Clock } from '@job-queue/kernel';
-import { CONTAINER_IMAGES, UNREACHABLE_REDIS_URL } from '@job-queue/test-support';
+import {
+  CONTAINER_IMAGES,
+  ClientListRedisConnectionCounter,
+  UNREACHABLE_REDIS_URL,
+} from '@job-queue/test-support';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { Queue, Worker } from 'bullmq';
+import { Redis } from 'ioredis';
 import { type DeepMockProxy, mockDeep } from 'vitest-mock-extended';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
@@ -29,6 +40,7 @@ describe('BullMqJobQueue against Redis', () => {
     overrides: Partial<EnqueueJobQueueRequest> = {},
   ): EnqueueJobQueueRequest => ({
     jobId,
+    run: 1,
     attempt,
     priority: JOB_LIMITS.priority.default,
     runAt: null,
@@ -98,7 +110,9 @@ describe('BullMqJobQueue against Redis', () => {
   it('Submitted job is queued', async () => {
     await expect(queue.enqueue(entry(JOB_ID, 1))).resolves.toEqual({});
 
-    const queued = await observer.getJob(JobQueueEntryId.encode({ jobId: JOB_ID, attempt: 1 }));
+    const queued = await observer.getJob(
+      JobQueueEntryId.encode({ jobId: JOB_ID, run: 1, attempt: 1 }),
+    );
     expect(queued?.data).toEqual({ jobId: JOB_ID });
     expect(await observer.getJobCountByTypes('waiting', 'prioritized')).toBe(1);
   });
@@ -116,7 +130,18 @@ describe('BullMqJobQueue against Redis', () => {
 
     expect(await observer.getJobCountByTypes('waiting', 'prioritized')).toBe(2);
     expect(
-      (await observer.getJob(JobQueueEntryId.encode({ jobId: JOB_ID, attempt: 2 })))?.data,
+      (await observer.getJob(JobQueueEntryId.encode({ jobId: JOB_ID, run: 1, attempt: 2 })))?.data,
+    ).toEqual({ jobId: JOB_ID });
+  });
+
+  it('Retried job is queued: attempt 1 of the next run is a new entry', async () => {
+    await queue.enqueue(entry(JOB_ID, 1));
+
+    await queue.enqueue(entry(JOB_ID, 1, { run: 2 }));
+
+    expect(await observer.getJobCountByTypes('waiting', 'prioritized')).toBe(2);
+    expect(
+      (await observer.getJob(JobQueueEntryId.encode({ jobId: JOB_ID, run: 2, attempt: 1 })))?.data,
     ).toEqual({ jobId: JOB_ID });
   });
 
@@ -133,10 +158,14 @@ describe('BullMqJobQueue against Redis', () => {
         .catch((err: unknown) => err);
 
       expect(error).toBeInstanceOf(JobQueueUnavailableError);
-      expect((error as JobQueueUnavailableError).details).toEqual({ jobId: JOB_ID, attempt: 1 });
+      expect((error as JobQueueUnavailableError).details).toEqual({
+        jobId: JOB_ID,
+        run: 1,
+        attempt: 1,
+      });
       expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
       expect(warn).toHaveBeenCalledWith(
-        expect.objectContaining({ jobId: JOB_ID, attempt: 1 }),
+        expect.objectContaining({ jobId: JOB_ID, run: 1, attempt: 1 }),
         'Enqueue failed',
       );
     } finally {
@@ -174,7 +203,7 @@ describe('BullMqJobQueue against Redis', () => {
 
       expect(await observer.getJobCountByTypes('waiting', 'prioritized')).toBe(2);
       for (const jobId of [JOB_ID, OTHER_JOB_ID]) {
-        const queued = await observer.getJob(JobQueueEntryId.encode({ jobId, attempt: 1 }));
+        const queued = await observer.getJob(JobQueueEntryId.encode({ jobId, run: 1, attempt: 1 }));
         expect(queued?.data).toEqual({ jobId });
       }
     });
@@ -212,7 +241,7 @@ describe('BullMqJobQueue against Redis', () => {
 
         expect(error).toBeInstanceOf(JobQueueUnavailableError);
         expect((error as JobQueueUnavailableError).details).toEqual({
-          entries: entries.map(({ jobId, attempt }) => ({ jobId, attempt })),
+          entries: entries.map(({ jobId, run, attempt }) => ({ jobId, run, attempt })),
         });
         expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
         expect(warn).toHaveBeenCalledWith(
@@ -233,7 +262,7 @@ describe('BullMqJobQueue against Redis', () => {
 
         expect(error).toBeInstanceOf(JobQueueUnavailableError);
         expect((error as JobQueueUnavailableError).details).toEqual({
-          entries: entries.map(({ jobId, attempt }) => ({ jobId, attempt })),
+          entries: entries.map(({ jobId, run, attempt }) => ({ jobId, run, attempt })),
         });
         expect(performance.now() - startedAt).toBeGreaterThanOrEqual(ENQUEUE_TIMEOUT_MS - 1);
         expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
@@ -245,6 +274,118 @@ describe('BullMqJobQueue against Redis', () => {
         expect(await observer.getJobCountByTypes('waiting', 'prioritized')).toBe(2);
       });
     });
+  });
+
+  describe('cancel', () => {
+    it('announces the cancelled job on the cancellations channel', async () => {
+      const subscriber = new Redis(container.getConnectionUrl());
+      try {
+        const received = new Promise<unknown>((resolve) => {
+          subscriber.on('message', (_channel: string, message: string) => {
+            resolve(JSON.parse(message));
+          });
+        });
+        await subscriber.subscribe(JOB_CANCELLATIONS_CHANNEL);
+
+        await expect(queue.cancel({ jobId: JOB_ID })).resolves.toEqual({});
+
+        expect(JobCancellationMessage.parse(await received)).toEqual({ jobId: JOB_ID });
+      } finally {
+        subscriber.disconnect();
+      }
+    });
+
+    it('announces a cancellation sent right after the queue was built', async () => {
+      const subscriber = new Redis(container.getConnectionUrl());
+      const fresh = new BullMqJobQueue(
+        { logger: { warn: vi.fn() }, clock },
+        { redisUrl: container.getConnectionUrl(), enqueueTimeoutMs: ENQUEUE_TIMEOUT_MS },
+      );
+      try {
+        const received = new Promise<unknown>((resolve) => {
+          subscriber.on('message', (_channel: string, message: string) => {
+            resolve(JSON.parse(message));
+          });
+        });
+        await subscriber.subscribe(JOB_CANCELLATIONS_CHANNEL);
+
+        // No await between building the queue and the cancel: its connection is not ready yet.
+        await expect(fresh.cancel({ jobId: JOB_ID })).resolves.toEqual({});
+
+        expect(JobCancellationMessage.parse(await received)).toEqual({ jobId: JOB_ID });
+      } finally {
+        subscriber.disconnect();
+        await fresh.close();
+      }
+    });
+
+    it('rejects within the configured timeout and logs the job id while Redis cannot be reached', async () => {
+      const warn = vi.fn();
+      const unreachable = new BullMqJobQueue(
+        { logger: { warn }, clock },
+        { redisUrl: UNREACHABLE_REDIS_URL, enqueueTimeoutMs: ENQUEUE_TIMEOUT_MS },
+      );
+      const startedAt = performance.now();
+      try {
+        const error: unknown = await unreachable
+          .cancel({ jobId: JOB_ID })
+          .catch((err: unknown) => err);
+
+        expect(error).toBeInstanceOf(JobQueueUnavailableError);
+        expect((error as JobQueueUnavailableError).details).toEqual({ jobId: JOB_ID });
+        expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
+        expect(warn).toHaveBeenCalledWith(
+          expect.objectContaining({ jobId: JOB_ID }),
+          'Cancellation could not be announced',
+        );
+      } finally {
+        await unreachable.close();
+      }
+    });
+
+    it('gives up after the configured timeout while Redis stalls', async () => {
+      await pauseWrites();
+      const startedAt = performance.now();
+      try {
+        await expect(queue.cancel({ jobId: JOB_ID })).rejects.toBeInstanceOf(
+          JobQueueUnavailableError,
+        );
+        expect(performance.now() - startedAt).toBeGreaterThanOrEqual(ENQUEUE_TIMEOUT_MS - 1);
+        expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
+      } finally {
+        await unpauseWrites();
+      }
+    });
+  });
+
+  it('closes its queue and cancellations connections', async () => {
+    const counter = new ClientListRedisConnectionCounter({
+      redisUrl: container.getConnectionUrl(),
+    });
+    const connections = async (name: string): Promise<number> =>
+      (await counter.count({ name })).connections;
+    try {
+      const before = {
+        queue: await connections('job-service-queue'),
+        cancellations: await connections('job-service-cancellations'),
+      };
+      const closing = new BullMqJobQueue(
+        { logger: { warn: vi.fn() }, clock },
+        { redisUrl: container.getConnectionUrl(), enqueueTimeoutMs: ENQUEUE_TIMEOUT_MS },
+      );
+      await closing.enqueue(entry(JOB_ID, 1));
+      await closing.cancel({ jobId: JOB_ID });
+      expect(await connections('job-service-cancellations')).toBe(before.cancellations + 1);
+
+      await closing.close();
+
+      await vi.waitFor(async () => {
+        expect(await connections('job-service-queue')).toBe(before.queue);
+        expect(await connections('job-service-cancellations')).toBe(before.cancellations);
+      });
+    } finally {
+      await counter.close();
+    }
   });
 
   describe('order and time', () => {
@@ -301,7 +442,7 @@ describe('BullMqJobQueue against Redis', () => {
       expect(await takeNext()).toBeUndefined();
       expect(await observer.getJobCountByTypes('delayed')).toBe(1);
       expect(
-        (await observer.getJob(JobQueueEntryId.encode({ jobId: HIGH, attempt: 1 })))?.delay,
+        (await observer.getJob(JobQueueEntryId.encode({ jobId: HIGH, run: 1, attempt: 1 })))?.delay,
       ).toBe(DELAY_MS);
       expect(clock.now).toHaveBeenCalledOnce();
       await vi.waitFor(
@@ -323,7 +464,7 @@ describe('BullMqJobQueue against Redis', () => {
 
       expect(await takeAll(2)).toEqual([LOW, undefined]);
       expect(
-        (await observer.getJob(JobQueueEntryId.encode({ jobId: HIGH, attempt: 1 })))?.delay,
+        (await observer.getJob(JobQueueEntryId.encode({ jobId: HIGH, run: 1, attempt: 1 })))?.delay,
       ).toBe(DELAY_MS);
       expect(clock.now).toHaveBeenCalledOnce();
       await vi.waitFor(

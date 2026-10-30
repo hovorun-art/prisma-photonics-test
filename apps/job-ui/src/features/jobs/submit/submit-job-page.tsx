@@ -27,6 +27,8 @@ import { WebhookPayloadFields } from './webhook-payload-fields';
 const DEFAULT_EXECUTION: JobFormExecution = {
   priority: JOB_LIMITS.priority.default,
   maxAttempts: JOB_LIMITS.maxAttempts.default,
+  run: 'now',
+  scheduledAt: '',
 };
 /** The query parameter that holds the chosen job type; without it the page shows Email. */
 const TYPE_PARAM = 'type';
@@ -41,7 +43,7 @@ export function SubmitJobPage() {
   const navigate = useNavigate();
   const [params, setParams] = useSearchParams();
   const type: JobType = OTHER_TYPES.find((other) => other === params.get(TYPE_PARAM)) ?? 'email';
-  // Priority and max attempts, kept in step with the form, so they carry over to the next type
+  // Priority, max attempts and the run choice, kept in step with the form, so they carry over to the next type
   // whether the user switches with a card or with Back and Forward.
   const [execution, setExecution] = useState(DEFAULT_EXECUTION);
   const emailDraft = useEmailJobDraft();
@@ -144,10 +146,12 @@ function TypedSubmit<Values extends FieldValues, Field extends Path<Values>>({
       form.subscribe({
         formState: { values: true },
         callback: ({ values: current }) => {
-          const { priority, maxAttempts } = current as Partial<JobFormExecution>;
+          const { priority, maxAttempts, run, scheduledAt } = current as Partial<JobFormExecution>;
           onExecutionChange({
             priority: priority ?? DEFAULT_EXECUTION.priority,
             maxAttempts: maxAttempts ?? DEFAULT_EXECUTION.maxAttempts,
+            run: run ?? DEFAULT_EXECUTION.run,
+            scheduledAt: scheduledAt ?? DEFAULT_EXECUTION.scheduledAt,
           });
         },
       }),

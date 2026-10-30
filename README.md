@@ -6,7 +6,8 @@ trade-offs are in [DECISIONS.md](DECISIONS.md), AI usage in `AI_USAGE.md`.
 
 > Status: email jobs run end to end: submit from the UI or the API, a job-execution-service
 > instance picks the job from the queue and runs it, and the job ends `completed` with a mock
-> message id. job-ui lists jobs, shows a job, submits email jobs and deletes finished ones. Next
+> message id. job-ui lists jobs, shows a job, submits email jobs and deletes finished ones, and
+> follows job groups (a list of groups and a page per group with its progress). Next
 > steps are in [docs/roadmap/](docs/roadmap/). The full API is documented at
 > http://localhost:3000/docs.
 
@@ -73,6 +74,17 @@ curl -s 'http://localhost:3000/v1/jobs?limit=20&offset=0'
 # Only failed or cancelled webhook jobs (repeat a filter for several values; total counts matches)
 curl -s 'http://localhost:3000/v1/jobs?status=failed&status=cancelled&type=webhook'
 
+# Cancel a job that has not finished (scheduled, pending or processing; a running job is stopped)
+curl -s -X PATCH http://localhost:3000/v1/jobs/<uuid> \
+  -H 'content-type: application/json' -d '{"status":"cancelled"}'
+# {"id":"<uuid>","status":"cancelled","completedAt":"<time>",...}
+
+# Retry a failed job: back to pending with zero attempts, its error cleared, queued again
+curl -s -X PATCH http://localhost:3000/v1/jobs/<uuid> \
+  -H 'content-type: application/json' -d '{"status":"pending"}'
+# {"id":"<uuid>","status":"pending","attempts":0,"error":null,...}
+# Any other status: 400 VALIDATION_FAILED; a status that does not allow it: 409 JOB_STATUS_CONFLICT
+
 # Submit several jobs at once, tied to one group (all are stored, or none if any item is invalid)
 curl -s -X POST http://localhost:3000/v1/jobs/bulk \
   -H 'content-type: application/json' \
@@ -96,6 +108,9 @@ curl -s http://localhost:3002/v1/groups/<group-id>
 curl -s 'http://localhost:3002/v1/groups?limit=10'
 # If the submit failed, delete the still-empty group (409 JOB_GROUP_NOT_EMPTY once it has jobs)
 curl -i -X DELETE http://localhost:3002/v1/groups/<group-id>
+# job-ui reaches the same routes under its /api prefix (nginx sends them to job-group-service);
+# open http://localhost:8080/groups to follow the groups in the browser
+curl -s 'http://localhost:8080/api/v1/groups?limit=10'
 # Queue statistics: jobs pending, processing and scheduled now, completed and failed in the last
 # day, and jobs completed per minute over the last 5 minutes (both windows are configurable)
 curl -s http://localhost:3000/v1/stats
@@ -152,7 +167,8 @@ image.
                                 │  (N instances)        │
                                 └───────────────────────┘
             ┌───────────────────┐  polls GET /v1/jobs?groupId=
- clients ──►│ job-group-service │──────────────► job-service
+ clients ──►│ job-group-service │◄── job-ui (/api/v1/groups)
+            │                   │──────────────► job-service
             │ (one instance)    │──────────────► Postgres, schema job_groups
             └───────────────────┘
 ```
@@ -161,13 +177,15 @@ image.
 - **job-group-service** (NestJS) follows groups of jobs (the project's answer to the Batch job): a
   group is created empty, the client submits its jobs to job-service with the group's id, and the
   service polls job-service's public job query to count them and set the group's status. Its data
-  is in its own Postgres schema; it is API only and runs as one instance.
+  is in its own Postgres schema; it runs as one instance, and job-ui shows its groups.
 - **job-execution-service** (NestJS) takes jobs from the queue (BullMQ on Redis), runs them (email
   for now) and reports each step through job-service's internal API; it has no database access.
   It scales horizontally and runs several jobs per instance (`JOB_EXECUTION_CONCURRENCY`).
-- **job-ui** (React + Vite) is served by nginx, which forwards `/api` to job-service. Pages:
-  `/jobs` (list, also the start page), `/jobs/new` (submit an email job), `/jobs/:id` (one job);
-  list and job page refresh by polling.
+- **job-ui** (React + Vite) is served by nginx, which forwards `/api/v1/groups*` to
+  job-group-service and every other `/api` path to job-service. Pages: `/jobs` (list, also the
+  start page), `/jobs/new` (submit a job), `/jobs/:id` (one job), `/groups` (groups, newest first)
+  and `/groups/:id` (one group: its progress, one cell per job that opens the job, and its
+  details); every page refreshes by polling.
 - **Shared packages:** `packages/contracts` (Zod schemas for every request, response and error),
   `packages/kernel` (framework-free ports and base classes), `packages/service-kit` (bootstrap,
   config, logging, Redis, health, the error filter and the docs setup shared by the backends).

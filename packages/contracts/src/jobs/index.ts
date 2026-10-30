@@ -9,6 +9,8 @@ export {
 } from './airports.js';
 export {
   AirportCode,
+  CANCELLABLE_JOB_STATUSES,
+  ChangeJobStatusRequest,
   CreateEmailJobRequest,
   CreateFlightTransitJobRequest,
   CreateJobRequest,
@@ -60,5 +62,12 @@ export {
   QueryJobLogRequest,
   QueryJobLogResponse,
 } from './job-log.js';
-export { JOB_QUEUE_NAME, JobQueueAttempt, JobQueueEntryId, JobQueueMessage } from './job-queue.js';
+export {
+  JOB_CANCELLATIONS_CHANNEL,
+  JOB_QUEUE_NAME,
+  JobCancellationMessage,
+  JobQueueAttempt,
+  JobQueueEntryId,
+  JobQueueMessage,
+} from './job-queue.js';
 export { QueryStatsRequest, QueueStats, STATS_ROUTE } from './queue-stats.js';

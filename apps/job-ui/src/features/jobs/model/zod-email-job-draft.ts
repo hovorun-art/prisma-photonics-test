@@ -21,13 +21,27 @@ import type {
   SchemaJobFormDraftResponse,
 } from './job-form-draft';
 import { LocaleExecutionFieldMessages } from './execution-field-messages';
+import type { RunSchedule } from './run-schedule';
 import { ValidationIssueMapper } from './validation-issue-mapper';
+import { ZodRunScheduleForm } from './zod-run-schedule-form';
+
+export interface ZodEmailJobDraftDeps {
+  readonly runSchedule: RunSchedule;
+}
 
 /** `EmailJobDraft` for the shared Zod schemas, with the strings from `locales/en.ts`. */
 export class ZodEmailJobDraft implements EmailJobDraft {
   readonly fields = EMAIL_FORM_FIELDS;
   private readonly execution = new LocaleExecutionFieldMessages();
   private readonly issues = new ValidationIssueMapper({ fields: EMAIL_FORM_FIELDS });
+  private readonly runScheduleForm: ZodRunScheduleForm;
+  private readonly form: SchemaJobFormDraftResponse<EmailFormValues>['schema'];
+
+  constructor(private readonly d: ZodEmailJobDraftDeps) {
+    this.runScheduleForm = new ZodRunScheduleForm({ runSchedule: d.runSchedule });
+    // The same schema job-service validates with, plus the run choice.
+    this.form = this.runScheduleForm.schema({ request: CreateEmailJobRequest }).schema;
+  }
 
   emptyValues({
     execution,
@@ -36,8 +50,7 @@ export class ZodEmailJobDraft implements EmailJobDraft {
   }
 
   schema(): SchemaJobFormDraftResponse<EmailFormValues> {
-    // The same schema job-service validates with.
-    return { schema: CreateEmailJobRequest };
+    return { schema: this.form };
   }
 
   fieldMessage({
@@ -62,6 +75,8 @@ export class ZodEmailJobDraft implements EmailJobDraft {
       case 'priority':
       case 'maxAttempts':
         return this.execution.message({ field });
+      case 'scheduledAt':
+        return this.d.runSchedule.message({ run: values.run, scheduledAt: values.scheduledAt });
     }
   }
 
@@ -72,6 +87,6 @@ export class ZodEmailJobDraft implements EmailJobDraft {
   previewRequest({
     values,
   }: PreviewRequestJobFormDraftRequest<EmailFormValues>): PreviewRequestJobFormDraftResponse {
-    return { request: values };
+    return { request: this.runScheduleForm.preview({ values }).values };
   }
 }

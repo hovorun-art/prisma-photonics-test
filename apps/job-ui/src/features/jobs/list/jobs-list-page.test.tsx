@@ -102,6 +102,34 @@ describe('JobsListPage', () => {
     expect(secondRow).toHaveTextContent('to ops@acme.test · “Weekly digest”');
   });
 
+  it('Scheduled job in the list: the Status cell shows the badge and the local run time under it', async () => {
+    const job = jobFixtures.build({ status: 'scheduled', scheduledAt: '2026-10-30T08:00:00.000Z' });
+    answerPages({ items: [job], total: 1 });
+
+    renderList();
+
+    await screen.findByRole('link', { name: job.id.slice(0, 8) });
+    const [, row] = screen.getAllByRole('row');
+    const status = within(row!).getAllByRole('cell')[2];
+    expect(status).toHaveTextContent(en.statuses.scheduled);
+    expect(status).toHaveTextContent('30 Oct, 08:00:00');
+  });
+
+  it('Started scheduled job in the list: the Status cell shows only the badge', async () => {
+    const job = jobFixtures.build({
+      status: 'processing',
+      scheduledAt: '2026-10-30T08:00:00.000Z',
+      startedAt: '2026-10-30T08:00:01.000Z',
+    });
+    answerPages({ items: [job], total: 1 });
+
+    renderList();
+
+    await screen.findByRole('link', { name: job.id.slice(0, 8) });
+    const [, row] = screen.getAllByRole('row');
+    expect(within(row!).getAllByRole('cell')[2]).toHaveTextContent(/^processing$/);
+  });
+
   it('Open a job from the list: clicking the short id opens the job page', async () => {
     const user = userEvent.setup();
     const job = jobFixtures.build();

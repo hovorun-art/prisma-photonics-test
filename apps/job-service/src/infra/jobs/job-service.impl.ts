@@ -1,4 +1,5 @@
 import {
+  CANCELLABLE_JOB_STATUSES,
   type CreateJobRequest,
   FINISHED_JOB_STATUSES,
   JOB_LIMITS,
@@ -11,8 +12,10 @@ import {
 } from '@job-queue/contracts';
 import {
   type Clock,
+  DaysAheadScheduleLimit,
   type DepartureDay,
   JobStatusConflictError,
+  type ScheduleLimit,
   UtcDepartureDay,
 } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
@@ -28,6 +31,8 @@ import type { PageLimit } from '@job-queue/kernel';
 import type { JobQueue } from '../../domain/jobs/job-queue.js';
 import type { JobChanges, JobRepository, NewJob } from '../../domain/jobs/job-repository.js';
 import type {
+  ChangeStatusJobServiceRequest,
+  ChangeStatusJobServiceResponse,
   CreateJobServiceRequest,
   CreateJobServiceResponse,
   CreateManyJobServiceRequest,
@@ -73,6 +78,7 @@ interface LogUpdateRequest {
 
 interface RequireStatusRequest {
   current: Job;
+  /** The statuses the change is allowed from. */
   statuses: readonly JobStatus[];
 }
 
@@ -83,9 +89,19 @@ interface RequireValidResultRequest {
 
 interface EnqueueRequest {
   jobId: string;
+  run: number;
   attempt: number;
   priority: number;
   runAt: string | null;
+}
+
+interface CancelRequest {
+  current: Job;
+}
+
+interface RetryRequest {
+  current: Job;
+  run: number;
 }
 
 interface NewJobRequest {
@@ -113,7 +129,9 @@ interface DepartureDayIssuesRequest {
  * next state from the stored job and writes it only while the job is still in that state, so a
  * concurrent report loses with a status conflict. A failed attempt goes back to pending (and is
  * queued again at once, with the job's priority) while attempts remain, otherwise it fails the job
- * for good. Queueing problems never fail a request: the job keeps its status and is logged.
+ * for good. `changeStatus` is the client's side: cancel or retry, written the same conditional
+ * way. Queueing problems never fail a request: the job keeps its status (a cancel whose
+ * announcement fails stays cancelled) and is logged.
  */
 export class JobServiceImpl implements JobService {
   constructor(
@@ -144,6 +162,7 @@ export class JobServiceImpl implements JobService {
     this.d.logger.log({ jobId: job.id }, 'Job submitted');
     await this.enqueue({
       jobId: job.id,
+      run: 1,
       attempt: 1,
       priority: job.priority,
       runAt: job.scheduledAt,
@@ -184,8 +203,9 @@ export class JobServiceImpl implements JobService {
     return { jobs };
   }
 
-  get(req: GetJobServiceRequest): Promise<GetJobServiceResponse> {
-    return this.d.repository.get({ id: req.id });
+  async get(req: GetJobServiceRequest): Promise<GetJobServiceResponse> {
+    const { job } = await this.d.repository.get({ id: req.id });
+    return { job };
   }
 
   async query(req: QueryJobServiceRequest): Promise<QueryJobServiceResponse> {
@@ -200,7 +220,7 @@ export class JobServiceImpl implements JobService {
   }
 
   async update(req: UpdateJobServiceRequest): Promise<UpdateJobServiceResponse> {
-    const { job: current } = await this.d.repository.get({ id: req.id });
+    const { job: current, run } = await this.d.repository.get({ id: req.id });
     let changes: JobChanges;
 
     switch (req.update.status) {
@@ -239,11 +259,22 @@ export class JobServiceImpl implements JobService {
     if (job.status === 'pending')
       await this.enqueue({
         jobId: job.id,
+        run,
         attempt: current.attempts + 1,
         priority: current.priority,
         runAt: null,
       });
     return { job };
+  }
+
+  async changeStatus(req: ChangeStatusJobServiceRequest): Promise<ChangeStatusJobServiceResponse> {
+    const { job: current, run } = await this.d.repository.get({ id: req.id });
+    switch (req.change.status) {
+      case 'cancelled':
+        return this.cancel({ current });
+      case 'pending':
+        return this.retry({ current, run });
+    }
   }
 
   async delete(req: DeleteJobServiceRequest): Promise<DeleteJobServiceResponse> {
@@ -273,6 +304,53 @@ export class JobServiceImpl implements JobService {
         break;
       }
     }
+  }
+
+  /**
+   * Cancels a waiting or running job, then announces it so the worker running it stops. A failed
+   * announcement is only logged: the job is cancelled, and a late report from the worker is refused.
+   * Announced for a pending job too, since a worker may have started it since it was read.
+   */
+  private async cancel({ current }: CancelRequest): Promise<ChangeStatusJobServiceResponse> {
+    this.requireStatus({ current, statuses: CANCELLABLE_JOB_STATUSES });
+    const { job } = await this.d.repository.update({
+      id: current.id,
+      expected: { status: current.status, attempts: current.attempts },
+      changes: { status: 'cancelled', completedAt: this.now() },
+    });
+    try {
+      await this.d.queue.cancel({ jobId: job.id });
+    } catch (err) {
+      this.d.logger.warn({ err, jobId: job.id }, 'Cancelled job could not be announced to workers');
+    }
+    return { job };
+  }
+
+  /** Starts a failed job again as if newly submitted, in a new run so its queue entries are new. */
+  private async retry({ current, run }: RetryRequest): Promise<ChangeStatusJobServiceResponse> {
+    this.requireStatus({ current, statuses: ['failed'] });
+    const { job } = await this.d.repository.update({
+      id: current.id,
+      expected: { status: current.status, attempts: current.attempts },
+      changes: {
+        status: 'pending',
+        attempts: 0,
+        result: null,
+        error: null,
+        startedAt: null,
+        completedAt: null,
+        run: run + 1,
+      },
+    });
+    // A retry runs at once, with the job's own priority, even for a job once scheduled.
+    await this.enqueue({
+      jobId: job.id,
+      run: run + 1,
+      attempt: 1,
+      priority: job.priority,
+      runAt: null,
+    });
+    return { job };
   }
 
   /** Retry while attempts remain (the attempt was counted on start), otherwise fail for good. */
@@ -326,16 +404,25 @@ export class JobServiceImpl implements JobService {
    */
   private scheduleIssues({ job, now }: ScheduleIssuesRequest): JobFieldIssue[] {
     if (job.scheduledAt === undefined) return [];
-    const { maxAheadDays } = JOB_LIMITS.scheduledAt;
-    const latest = new Date(now.getTime() + maxAheadDays * 24 * 60 * 60 * 1000);
-    if (Date.parse(job.scheduledAt) <= latest.getTime()) return [];
+    const { latest, tooFar } = this.scheduleLimitAt(now).check({
+      scheduledAt: new Date(job.scheduledAt),
+    });
+    if (!tooFar) return [];
     return [
       {
         code: 'too_big',
         path: ['scheduledAt'],
-        message: `The execution time may be at most ${String(maxAheadDays)} days ahead: ${job.scheduledAt} is after ${latest.toISOString()}`,
+        message: `The execution time may be at most ${String(JOB_LIMITS.scheduledAt.maxAheadDays)} days ahead: ${job.scheduledAt} is after ${latest.toISOString()}`,
       },
     ];
+  }
+
+  /** The how-far-ahead rule job-ui's form applies too, shared through the kernel, fixed at `now`. */
+  private scheduleLimitAt(now: Date): ScheduleLimit {
+    return new DaysAheadScheduleLimit(
+      { clock: { now: () => ({ now }) } },
+      { maxAheadDays: JOB_LIMITS.scheduledAt.maxAheadDays },
+    );
   }
 
   /** The UTC day rule job-ui's form applies too, shared through the kernel, fixed at `now`. */
@@ -355,12 +442,15 @@ export class JobServiceImpl implements JobService {
   }
 
   /** The job keeps its status when this fails; the sweep in `crash-recovery` queues it later. */
-  private async enqueue({ jobId, attempt, priority, runAt }: EnqueueRequest): Promise<void> {
+  private async enqueue({ jobId, run, attempt, priority, runAt }: EnqueueRequest): Promise<void> {
     try {
-      await this.d.queue.enqueue({ jobId, attempt, priority, runAt });
+      await this.d.queue.enqueue({ jobId, run, attempt, priority, runAt });
       this.d.logger.log({ jobId, attempt }, 'Attempt queued');
     } catch (err) {
-      this.d.logger.warn({ err, jobId, attempt }, 'Job keeps its status: it could not be queued');
+      this.d.logger.warn(
+        { err, jobId, run, attempt },
+        'Job keeps its status: it could not be queued',
+      );
     }
   }
 
@@ -370,6 +460,7 @@ export class JobServiceImpl implements JobService {
       await this.d.queue.enqueueMany({
         entries: jobs.map((job) => ({
           jobId: job.id,
+          run: 1,
           attempt: 1,
           priority: job.priority,
           runAt: job.scheduledAt,

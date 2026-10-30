@@ -10,6 +10,8 @@ export interface JobFieldTexts {
   readonly priority: string;
   readonly attempts: string;
   readonly created: string;
+  /** The time the job was submitted to run at; `null` when it has none. */
+  readonly scheduledFor: string | null;
   readonly started: string;
   readonly finished: string;
   readonly totalTime: string;
@@ -24,6 +26,7 @@ export function useJobFields(job: Job): JobFieldTexts {
     priority: String(job.priority),
     attempts: `${job.attempts} / ${job.maxAttempts}`,
     created: dateTime(job.createdAt),
+    scheduledFor: job.scheduledAt ? presenter.dateTime({ at: job.scheduledAt }).text : null,
     started: dateTime(job.startedAt),
     finished: dateTime(job.completedAt),
     totalTime: presenter.totalTime({ job }).text ?? en.job.notYet,

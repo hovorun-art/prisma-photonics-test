@@ -2,11 +2,11 @@ import type { Job } from '@job-queue/contracts';
 import { Link } from 'react-router';
 
 import { Button } from '@/components/ui/button';
-import { Skeleton } from '@/components/ui/skeleton';
 import { en } from '@/locales';
 
 import { ComingSoon } from '../../app-frame/coming-soon';
 import { useJobPresenter } from '../hooks/use-job-presenter';
+import { LIST_CELL as CELL, ListTable } from './list-table';
 import { StatusBadge } from './status-badge';
 
 const COLUMNS = [
@@ -19,44 +19,18 @@ const COLUMNS = [
   en.list.columns.created,
   en.list.columns.actions,
 ];
-const SKELETON_ROWS = 5;
-const CELL = 'px-2 py-3 first:pl-5 last:pr-5';
-
 /** The jobs table (design "Main"); scrolls horizontally on narrow screens. */
 export function JobsTable({ jobs }: { jobs: readonly Job[] | undefined }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[1040px] border-collapse text-left">
-        <thead className="h-10 bg-surface-muted text-xs font-medium tracking-[0.04em] text-muted-foreground uppercase">
-          <tr>
-            {COLUMNS.map((column) => (
-              <th key={column} scope="col" className={`${CELL} font-medium last:text-right`}>
-                {column}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        {jobs ? (
-          <tbody>
-            {jobs.map((job) => (
-              <JobRow key={job.id} job={job} />
-            ))}
-          </tbody>
-        ) : (
-          <tbody aria-label={en.list.loading} aria-busy="true">
-            {Array.from({ length: SKELETON_ROWS }, (_, i) => (
-              <tr key={i} className="border-t border-border-soft">
-                {COLUMNS.map((column) => (
-                  <td key={column} className={CELL}>
-                    <Skeleton className="h-4 w-full" />
-                  </td>
-                ))}
-              </tr>
-            ))}
-          </tbody>
-        )}
-      </table>
-    </div>
+    <ListTable
+      columns={COLUMNS}
+      rows={jobs?.map((job) => (
+        <JobRow key={job.id} job={job} />
+      ))}
+      loadingLabel={en.list.loading}
+      minWidth="min-w-[1040px]"
+      lastColumnRight
+    />
   );
 }
 
@@ -75,6 +49,11 @@ function JobRow({ job }: { job: Job }) {
       <td className={`${CELL} font-mono text-xs text-subtle-foreground`}>{job.type}</td>
       <td className={CELL}>
         <StatusBadge status={job.status} />
+        {job.status === 'scheduled' && job.scheduledAt && (
+          <div className="mt-1 font-mono text-xs whitespace-nowrap text-muted-foreground">
+            {presenter.dateTime({ at: job.scheduledAt }).text}
+          </div>
+        )}
       </td>
       <td className={`${CELL} font-mono text-[13px]`}>{job.priority}</td>
       <td className={`${CELL} font-mono text-[13px] text-subtle-foreground`}>

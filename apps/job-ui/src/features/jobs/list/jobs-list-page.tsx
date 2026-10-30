@@ -1,5 +1,4 @@
 import { FilterX, Plus } from 'lucide-react';
-import { useState } from 'react';
 import { Link } from 'react-router';
 
 import { Button } from '@/components/ui/button';
@@ -8,21 +7,14 @@ import { en } from '@/locales';
 
 import { useJobFilters } from '../hooks/use-job-filters';
 import { useJobsPage } from '../hooks/use-jobs-page';
+import { useOffsetPaging } from '../hooks/use-offset-paging';
 import { useQueueStats } from '../hooks/use-queue-stats';
+import { EmptyList } from './empty-list';
 import { JobsPager } from './jobs-pager';
 import { JobsTable } from './jobs-table';
 import { JobsToolbar } from './jobs-toolbar';
 import { LiveIndicator } from './live-indicator';
 import { QueueStats } from './queue-stats';
-
-/** Where the list is: its offset and the offsets of the pages before it, for one set of filters. */
-interface Paging {
-  readonly filtersKey: string;
-  readonly offset: number;
-  /** Offsets of the pages visited before this one, so Previous returns to exactly that page even
-   * from a last page shorter than the others. */
-  readonly previousOffsets: readonly number[];
-}
 
 /**
  * The jobs list (design "Main"): newest first, a page at a time, refreshed by polling, narrowed by
@@ -32,13 +24,10 @@ interface Paging {
 export function JobsListPage() {
   const { filters, setFilters } = useJobFilters();
   const filtersKey = `${filters.status ?? ''}|${filters.type ?? ''}`;
-  const [paging, setPaging] = useState<Paging>({ filtersKey, offset: 0, previousOffsets: [] });
-  // A filter change drops the stored paging (not only hides it), so returning to earlier filters
-  // starts at their first page too. Set during render, React's pattern for state that follows input.
-  const current: Paging =
-    paging.filtersKey === filtersKey ? paging : { filtersKey, offset: 0, previousOffsets: [] };
-  if (current !== paging) setPaging(current);
-  const query = useJobsPage({ offset: current.offset, filters });
+  // A filter change drops the stored paging, so returning to earlier filters starts at their first
+  // page too.
+  const paging = useOffsetPaging(filtersKey);
+  const query = useJobsPage({ offset: paging.offset, filters });
   const page = query.data;
   const stats = useQueueStats();
   const filtered = filters.status !== undefined || filters.type !== undefined;
@@ -74,22 +63,12 @@ export function JobsListPage() {
         )}
         {page && page.total > 0 && (
           <JobsPager
-            offset={current.offset}
+            offset={paging.offset}
             shown={page.items.length}
             total={page.total}
-            onPrevious={() => {
-              setPaging({
-                filtersKey,
-                offset: current.previousOffsets.at(-1) ?? 0,
-                previousOffsets: current.previousOffsets.slice(0, -1),
-              });
-            }}
+            onPrevious={paging.previous}
             onNext={() => {
-              setPaging({
-                filtersKey,
-                offset: current.offset + page.items.length,
-                previousOffsets: [...current.previousOffsets, current.offset],
-              });
+              paging.next(page.items.length);
             }}
           />
         )}
@@ -113,15 +92,13 @@ function NoMatchingJobs({ onClear }: { onClear: () => void }) {
 
 function EmptyJobs() {
   return (
-    <div className="flex flex-col items-center gap-3 px-5 py-14 text-center">
-      <div className="font-medium">{en.list.emptyTitle}</div>
-      <div className="text-[13px] text-muted-foreground">{en.list.emptyHint}</div>
+    <EmptyList title={en.list.emptyTitle} hint={en.list.emptyHint}>
       <Button asChild className="no-underline">
         <Link to="/jobs/new">
           <Plus aria-hidden="true" />
           {en.frame.newJob}
         </Link>
       </Button>
-    </div>
+    </EmptyList>
   );
 }

@@ -61,11 +61,11 @@ const PENDING_JOB = {
   updatedAt: '2026-10-29T21:02:09.000Z',
 } as const;
 
-/** Test-only: a pending email job with fixed ids and times, as job-service returns it. */
+/** Test-only: a pending email job with a new id and fixed times, as job-service returns it. */
 export class EmailJobFixtures implements JobFixtures {
   build(req: BuildJobFixturesRequest = {}): BuildJobFixturesResponse {
     return {
-      id: '7f3a9c21-4b5d-4e6f-8a7b-9c0d1e2f3a4b',
+      id: randomUUID(),
       ...PENDING_JOB,
       type: 'email',
       payload: { to: 'ops@acme.test', subject: 'Weekly digest', body: 'Hi team' },

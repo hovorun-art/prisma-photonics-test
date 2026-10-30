@@ -593,6 +593,34 @@ describe('PrismaJobRepository against Postgres', () => {
     ).rejects.toBeInstanceOf(JobNotFoundError);
   });
 
+  it('gives a new job run 1, created alone or in a bulk', async () => {
+    const { job } = await repository.create({ job: newJob() });
+    const { jobs } = await repository.createMany({ jobs: [newJob()] });
+
+    expect((await repository.get({ id: job.id })).run).toBe(1);
+    expect((await repository.get({ id: jobs[0]?.id ?? UNKNOWN_ID })).run).toBe(1);
+  });
+
+  it('stores a new run with an update and keeps it when an update leaves it out', async () => {
+    const job = await store({ status: 'failed', attempts: 3 });
+
+    await repository.update({
+      id: job.id,
+      expected: { status: 'failed', attempts: 3 },
+      changes: { status: 'pending', attempts: 0, run: 2 },
+    });
+    await repository.update({
+      id: job.id,
+      expected: { status: 'pending', attempts: 0 },
+      changes: { status: 'processing', attempts: 1 },
+    });
+
+    expect(await repository.get({ id: job.id })).toMatchObject({
+      job: { status: 'processing', attempts: 1 },
+      run: 2,
+    });
+  });
+
   it.each([
     { name: 'Two workers start the same job', status: 'pending', scheduledAt: null },
     {

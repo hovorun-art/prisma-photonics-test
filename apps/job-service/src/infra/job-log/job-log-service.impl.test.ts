@@ -68,7 +68,7 @@ describe('JobLogServiceImpl', () => {
   });
 
   it('uses the resolved page size and passes after and levels to the store', async () => {
-    repository.get.mockResolvedValueOnce({ job: {} as never });
+    repository.get.mockResolvedValueOnce({ job: {} as never, run: 1 });
     pageLimit.resolve.mockReturnValueOnce({ limit: PAGE_SIZE });
     store.query.mockResolvedValueOnce({ entries: [] });
 
@@ -84,7 +84,7 @@ describe('JobLogServiceImpl', () => {
   });
 
   it('maps entries and takes the cursor from the last one', async () => {
-    repository.get.mockResolvedValueOnce({ job: {} as never });
+    repository.get.mockResolvedValueOnce({ job: {} as never, run: 1 });
     pageLimit.resolve.mockReturnValueOnce({ limit: PAGE_SIZE });
     const first = positioned('10-0');
     const last = positioned('11-2', {
@@ -119,7 +119,7 @@ describe('JobLogServiceImpl', () => {
   });
 
   it('returns the given after as the cursor when nothing is returned', async () => {
-    repository.get.mockResolvedValueOnce({ job: {} as never });
+    repository.get.mockResolvedValueOnce({ job: {} as never, run: 1 });
     pageLimit.resolve.mockReturnValueOnce({ limit: PAGE_SIZE });
     store.query.mockResolvedValueOnce({ entries: [] });
 
@@ -129,7 +129,7 @@ describe('JobLogServiceImpl', () => {
   });
 
   it('returns a null cursor when nothing is returned and no after was given', async () => {
-    repository.get.mockResolvedValueOnce({ job: {} as never });
+    repository.get.mockResolvedValueOnce({ job: {} as never, run: 1 });
     pageLimit.resolve.mockReturnValueOnce({ limit: PAGE_SIZE });
     store.query.mockResolvedValueOnce({ entries: [] });
 
@@ -137,7 +137,7 @@ describe('JobLogServiceImpl', () => {
   });
 
   it('passes a store outage on', async () => {
-    repository.get.mockResolvedValueOnce({ job: {} as never });
+    repository.get.mockResolvedValueOnce({ job: {} as never, run: 1 });
     pageLimit.resolve.mockReturnValueOnce({ limit: PAGE_SIZE });
     store.query.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'query' }));
 

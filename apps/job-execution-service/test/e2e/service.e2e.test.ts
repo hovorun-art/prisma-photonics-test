@@ -1,5 +1,5 @@
 import { HEALTH_ROUTE, HealthResponse } from '@job-queue/contracts';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { JobExecutionServiceUnderTest } from './job-execution-service-under-test.js';
 
@@ -42,6 +42,33 @@ describe('job-execution-service health, start and shutdown', () => {
     expect(starting.consumer.start).toHaveBeenCalledExactlyOnceWith({
       execute: expect.any(Function) as unknown,
     });
+    expect(starting.cancellations.listen).toHaveBeenCalledExactlyOnceWith({
+      onCancel: expect.any(Function) as unknown,
+    });
+    // It listens before it takes entries, so no cancel of a job it starts is missed.
+    expect(starting.cancellations.listen.mock.invocationCallOrder[0]).toBeLessThan(
+      starting.consumer.start.mock.invocationCallOrder[0] ?? 0,
+    );
+  });
+
+  it('starts and runs jobs even when it cannot listen for cancellations', async () => {
+    const starting = await JobExecutionServiceUnderTest.start({
+      listenFails: new Error('Redis is away'),
+    });
+    try {
+      expect((await fetch(starting.url(HEALTH_ROUTE.path))).status).toBe(200);
+      expect(starting.consumer.start).toHaveBeenCalledOnce();
+      await vi.waitFor(() => {
+        expect(
+          starting.logs.filter(
+            (line) => line.level === 50 && line.msg === 'Could not listen for job cancellations',
+          ),
+        ).toHaveLength(1);
+      });
+    } finally {
+      starting.stubIdleShutdown();
+      await starting.close();
+    }
   });
 
   it('opens the job log before taking queue entries', async () => {
@@ -64,6 +91,11 @@ describe('job-execution-service health, start and shutdown', () => {
     await stopping.close();
 
     expect(stopping.consumer.close).toHaveBeenCalledOnce();
+    expect(stopping.cancellations.close).toHaveBeenCalledOnce();
+    // Cancellations are heard until the running jobs are done.
+    expect(stopping.consumer.close.mock.invocationCallOrder[0]).toBeLessThan(
+      stopping.cancellations.close.mock.invocationCallOrder[0] ?? 0,
+    );
     expect(stopping.redis.close).toHaveBeenCalledOnce();
     expect(stopping.jobLog.close).toHaveBeenCalledOnce();
     await expect(fetch(health)).rejects.toThrow();

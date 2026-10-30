@@ -24,6 +24,11 @@ import type { ExecutionConfig } from '../../src/domain/config/execution-config.j
 import type { InstanceId } from '../../src/domain/instance/instance-id.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../src/domain/jobs/job-repository.js';
 import {
+  JOB_CANCELLATIONS,
+  type JobCancellations,
+  type ListenJobCancellationsRequest,
+} from '../../src/domain/queue/job-cancellations.js';
+import {
   JOB_QUEUE_CONSUMER,
   type JobQueueConsumer,
   type JobQueueEntry,
@@ -54,6 +59,11 @@ export interface SendsEmailRequest {
   messageId: string;
 }
 
+export interface StartRequest {
+  /** Listening for cancellations fails at bootstrap with this error. */
+  listenFails?: Error;
+}
+
 /** One JSON log line as pino writes it. */
 export type LogLine = Record<string, unknown> & { level: number; msg?: string };
 
@@ -63,6 +73,8 @@ interface JobExecutionServiceUnderTestDeps {
   config: ExecutionConfig;
   execute: StartJobQueueConsumerRequest['execute'];
   consumer: DeepMockProxy<JobQueueConsumer>;
+  cancellations: DeepMockProxy<JobCancellations>;
+  onCancel: ListenJobCancellationsRequest['onCancel'];
   redis: DeepMockProxy<RedisConnection>;
   jobs: DeepMockProxy<JobRepository>;
   random: DeepMockProxy<Random>;
@@ -74,7 +86,8 @@ interface JobExecutionServiceUnderTestDeps {
  * job-execution-service for the e2e tests: the real `AppModule`, set up with the same steps as
  * `main.ts`, listening over HTTP, with its log lines collected. It has no database; what is outside
  * it is mocked at its ports: the queue consumer (entries are handed in through the `execute` it
- * registered on start), the Redis connection and job-service's internal API. Time and randomness
+ * registered on start), the cancellations job-service announces (handed in through the `onCancel`
+ * it listens with), the Redis connection and job-service's internal API. Time and randomness
  * are mocked too, so handlers and the shutdown grace period run deterministically.
  */
 export class JobExecutionServiceUnderTest implements Closable {
@@ -87,6 +100,7 @@ export class JobExecutionServiceUnderTest implements Closable {
   readonly app: INestApplication;
   readonly config: ExecutionConfig;
   readonly consumer: DeepMockProxy<JobQueueConsumer>;
+  readonly cancellations: DeepMockProxy<JobCancellations>;
   readonly redis: DeepMockProxy<RedisConnection>;
   readonly jobs: DeepMockProxy<JobRepository>;
   readonly random: DeepMockProxy<Random>;
@@ -97,6 +111,7 @@ export class JobExecutionServiceUnderTest implements Closable {
     this.app = d.app;
     this.config = d.config;
     this.consumer = d.consumer;
+    this.cancellations = d.cancellations;
     this.redis = d.redis;
     this.jobs = d.jobs;
     this.random = d.random;
@@ -104,7 +119,7 @@ export class JobExecutionServiceUnderTest implements Closable {
     this.jobLog = d.jobLog;
   }
 
-  static async start(): Promise<JobExecutionServiceUnderTest> {
+  static async start(req: StartRequest = {}): Promise<JobExecutionServiceUnderTest> {
     const parsed = new ZodExecutionConfigParser().parse({
       env: {
         NODE_ENV: 'test',
@@ -127,6 +142,10 @@ export class JobExecutionServiceUnderTest implements Closable {
     if (!parsed.ok) throw new Error(parsed.problems);
     const logs = JobExecutionServiceUnderTest.logLines;
     const consumer = mockDeep<JobQueueConsumer>();
+    const cancellations = mockDeep<JobCancellations>();
+    // Listening starts on bootstrap and resolves once subscribed, as the Redis adapter does.
+    if (req.listenFails === undefined) cancellations.listen.mockResolvedValueOnce({});
+    else cancellations.listen.mockRejectedValueOnce(req.listenFails);
     const redis = mockDeep<RedisConnection>();
     const jobs = mockDeep<JobRepository>();
     const random = mockDeep<Random>();
@@ -144,6 +163,8 @@ export class JobExecutionServiceUnderTest implements Closable {
     })
       .overrideProvider(JOB_QUEUE_CONSUMER)
       .useValue(consumer)
+      .overrideProvider(JOB_CANCELLATIONS)
+      .useValue(cancellations)
       .overrideProvider(REDIS_CONNECTION)
       .useValue(redis)
       .overrideProvider(JOB_REPOSITORY)
@@ -160,12 +181,18 @@ export class JobExecutionServiceUnderTest implements Closable {
     await app.listen(0, '127.0.0.1');
     const [started] = consumer.start.mock.calls[0] ?? [];
     if (started === undefined) throw new Error('job-execution-service did not start its consumer');
+    const [listening] = cancellations.listen.mock.calls[0] ?? [];
+    if (listening === undefined) {
+      throw new Error('job-execution-service did not listen for cancellations');
+    }
     return new JobExecutionServiceUnderTest({
       app,
       baseUrl: await app.getUrl(),
       config: parsed.config,
       execute: started.execute,
       consumer,
+      cancellations,
+      onCancel: listening.onCancel,
       redis,
       jobs,
       random,
@@ -183,6 +210,7 @@ export class JobExecutionServiceUnderTest implements Closable {
   clear(): void {
     JobExecutionServiceUnderTest.logLines.length = 0;
     mockReset(this.consumer);
+    mockReset(this.cancellations);
     mockReset(this.redis);
     mockReset(this.jobs);
     mockReset(this.random);
@@ -199,6 +227,7 @@ export class JobExecutionServiceUnderTest implements Closable {
   /** The next shutdown with no job running: the consumer closes at once, within the grace period. */
   stubIdleShutdown(): void {
     this.consumer.close.mockResolvedValueOnce({});
+    this.cancellations.close.mockResolvedValueOnce({});
     this.sleepsUntilAborted();
   }
 
@@ -220,6 +249,11 @@ export class JobExecutionServiceUnderTest implements Closable {
 
   url(path: string): string {
     return new URL(path, this.d.baseUrl).toString();
+  }
+
+  /** Tells the app that job-service cancelled a job, as the cancellations listener does. */
+  announceCancel(jobId: string): void {
+    this.d.onCancel(jobId);
   }
 
   /** Hands one queue entry to the app, as the queue consumer does. */

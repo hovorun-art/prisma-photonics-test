@@ -11,7 +11,18 @@ export interface JobExecution {
    * jobs keep the state job-service last accepted. Used when the shutdown grace period runs out.
    */
   abort(): AbortJobExecutionResponse;
+  /**
+   * Stops the job if this worker runs it: its handler is aborted and nothing more is reported, since
+   * job-service has already cancelled it. A job this worker does not run is ignored.
+   */
+  cancel(req: CancelJobExecutionRequest): CancelJobExecutionResponse;
 }
+
+export interface CancelJobExecutionRequest {
+  jobId: string;
+}
+
+export type CancelJobExecutionResponse = Record<string, never>;
 
 export type AbortJobExecutionResponse = Record<string, never>;
 
@@ -19,7 +30,7 @@ export type ExecuteJobExecutionRequest = JobQueueEntry;
 
 export interface ExecuteJobExecutionResponse {
   /** What happened to the entry. */
-  outcome: 'completed' | 'failed' | 'skipped' | 'abandoned';
+  outcome: 'completed' | 'failed' | 'skipped' | 'abandoned' | 'cancelled';
 }
 
 export const JOB_EXECUTION = Symbol('JobExecution');
