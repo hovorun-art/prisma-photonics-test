@@ -214,6 +214,17 @@ react-router's `errorElement` (only in its data-router mode, which the app does 
 hand-written class component. *Why this library:* v6, ~20M weekly downloads, typed, React 19
 support, and the pattern TanStack Query documents. *Trade-off:* one more dependency.
 
+**job-ui: airports are picked from a searchable list built on `cmdk`.** The transit form's origin
+and destination fields are comboboxes over the bundled airport list (shadcn's Command in a
+Popover), so only codes job-service accepts can be entered; the search matches code, name, city
+and country by plain substring rather than `cmdk`'s fuzzy ranking, so `jfk` shows JFK and nothing
+else. *Why this library:* `cmdk` v1.1.1, ~46M weekly downloads, typed, ESM, and the base of
+shadcn's Command, which matches the other `components/ui` primitives. *Alternatives:*
+`@headlessui/react` (v2.2.10, ~10M weekly; not part of shadcn), `downshift` (v9.4.0, ~6M weekly;
+hooks only, all markup by hand), `react-select` (v5.10.2, ~12M weekly; its own emotion styling).
+A free-text IATA field as in the design was rejected: it lets users type codes the API rejects.
+*Trade-off:* one more dependency for one field.
+
 **Internal API protected by a shared service token.** Routes under `/internal` require
 `Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
 docs. *Trade-off:* a shared secret in environment variables is weaker than service identity (mTLS,

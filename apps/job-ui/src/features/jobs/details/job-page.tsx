@@ -4,6 +4,7 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
 import { en } from '@/locales';
 
+import { TransitReport } from '../../transit-map';
 import { ApiError } from '../api/api-error';
 import { useJob } from '../hooks/use-job';
 import { JobDetailsList } from './job-details-list';
@@ -12,7 +13,7 @@ import { JobNotFound } from './job-not-found';
 import { JsonCard } from './json-card';
 import { Lifecycle } from './lifecycle';
 
-/** One job (design "JobDetail"), refreshed by polling. */
+/** One job (design "JobDetail"), refreshed by polling; a completed transit job shows its report. */
 export function JobPage() {
   const { id = '' } = useParams();
   const query = useJob(id);
@@ -30,7 +31,9 @@ export function JobPage() {
         <span aria-hidden="true">/</span>
         <span className="font-mono text-xs text-foreground">{id}</span>
       </nav>
-      {job ? (
+      {job?.type === 'flight-transit' && job.status === 'completed' && job.result ? (
+        <TransitReport job={{ ...job, result: job.result }} connectionLost={query.isError} />
+      ) : job ? (
         <>
           <JobHeader job={job} connectionLost={query.isError} />
           {job.status === 'failed' && (

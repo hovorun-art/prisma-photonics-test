@@ -12,7 +12,7 @@ and see each one's result in the UI, including the aircraft transit on a map.
 | `webhook-job-ui` | Submit webhook jobs in the UI and show them in the list and on the job page | `webhook-job`, `job-ui-crud` |
 | `flight-transit-job` | Aircraft transit report job: two airports, dates, generated route and aircraft data | `email-job-execution` |
 | `flight-transit-job-execution` | Generate the transit report in job-execution-service: flight, aircraft, times, great-circle path and waypoints | `flight-transit-job` |
-| `flight-transit-map` | Show a transit report's route on a map, with hover details for aircraft and transit | `flight-transit-job-execution` |
+| `flight-transit-job-ui` | Submit transit jobs in the UI, summarise them in the list, and show a completed job's report with its route on a map and hover details for aircraft and transit (took over `flight-transit-map`) | `flight-transit-job`, `job-ui-crud` |
 | `batch-job` | Batch job type: processes items one by one, reports progress, returns a summary | `email-job-execution` |
 
 ## Open questions

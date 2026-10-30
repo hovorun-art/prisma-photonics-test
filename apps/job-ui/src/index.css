@@ -111,3 +111,17 @@
     @apply text-link;
   }
 }
+
+/* The transit report's map: Leaflet draws SVG paths, coloured here from the theme. */
+@layer components {
+  .transit-route {
+    stroke: var(--primary);
+  }
+  .transit-flown {
+    stroke: var(--link);
+  }
+  .transit-airport {
+    stroke: var(--primary);
+    fill: var(--card);
+  }
+}

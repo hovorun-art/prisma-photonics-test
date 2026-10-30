@@ -3,20 +3,19 @@ import type { Job } from '@job-queue/contracts';
 import { Card } from '@/components/ui/card';
 import { en } from '@/locales';
 
-import { useJobPresenter } from '../hooks/use-job-presenter';
+import { useJobFields } from '../hooks/use-job-fields';
 
 /** The job's fields as a key/value list (design "JobDetail"). */
 export function JobDetailsList({ job }: { job: Job }) {
-  const presenter = useJobPresenter();
-  const dateTime = (at: string | null) => (at ? presenter.dateTime({ at }).text : en.job.notYet);
+  const fields = useJobFields(job);
   const rows: [string, string][] = [
-    [en.job.fields.type, en.jobTypes[job.type]],
-    [en.job.fields.priority, String(job.priority)],
-    [en.job.fields.attempts, `${job.attempts} / ${job.maxAttempts}`],
-    [en.job.fields.created, dateTime(job.createdAt)],
-    [en.job.fields.started, dateTime(job.startedAt)],
-    [en.job.fields.finished, dateTime(job.completedAt)],
-    [en.job.fields.totalTime, presenter.totalTime({ job }).text ?? en.job.notYet],
+    [en.job.fields.type, fields.type],
+    [en.job.fields.priority, fields.priority],
+    [en.job.fields.attempts, fields.attempts],
+    [en.job.fields.created, fields.created],
+    [en.job.fields.started, fields.started],
+    [en.job.fields.finished, fields.finished],
+    [en.job.fields.totalTime, fields.totalTime],
   ];
   return (
     <Card role="region" aria-label={en.job.details} className="gap-3 px-5 py-4 shadow-none">
