@@ -44,6 +44,8 @@ model Job {
   maxAttempts Int       @map("max_attempts")
   result      Json?
   error       Json?
+  /// The group the job was submitted in, as the client gave it; no meaning to job-service.
+  groupId     String?   @map("group_id") @db.Uuid
   scheduledAt DateTime? @map("scheduled_at") @db.Timestamptz(3)
   startedAt   DateTime? @map("started_at") @db.Timestamptz(3)
   completedAt DateTime? @map("completed_at") @db.Timestamptz(3)
@@ -56,6 +58,8 @@ model Job {
   @@index([status, createdAt(sort: Desc)], map: "jobs_status_created_at_idx")
   /// Type filters.
   @@index([type, createdAt(sort: Desc)], map: "jobs_type_created_at_idx")
+  /// Group filters (a group's jobs, polled by job-group-service).
+  @@index([groupId, createdAt(sort: Desc)], map: "jobs_group_id_created_at_idx")
   /// The statistics' counts of jobs finished within a window.
   @@index([status, completedAt], map: "jobs_status_completed_at_idx")
   @@map("jobs")

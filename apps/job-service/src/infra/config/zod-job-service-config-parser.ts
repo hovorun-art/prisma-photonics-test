@@ -3,11 +3,12 @@ import { z } from 'zod';
 
 import type { JobServiceConfig } from '../../domain/config/job-service-config.js';
 
-/** The Express default (100 kB), set explicitly. */
-const DEFAULT_BODY_LIMIT_BYTES = 102_400;
+/** 1 MiB: room for a bulk of the default maximum of jobs at their largest payloads. */
+const DEFAULT_BODY_LIMIT_BYTES = 1_048_576;
 const DEFAULT_QUERY_DEFAULT_LIMIT = 20;
 const DEFAULT_QUERY_MAX_LIMIT = 100;
 const DEFAULT_ENQUEUE_TIMEOUT_MS = 2_000;
+const DEFAULT_BULK_MAX_JOBS = 100;
 const DEFAULT_STATS_RECENT_WINDOW_MINUTES = 24 * 60;
 const DEFAULT_STATS_THROUGHPUT_WINDOW_MINUTES = 5;
 
@@ -41,6 +42,7 @@ const JobServiceEnv = baseEnv
       .int()
       .positive()
       .default(DEFAULT_ENQUEUE_TIMEOUT_MS),
+    JOB_SERVICE_BULK_MAX_JOBS: z.coerce.number().int().positive().default(DEFAULT_BULK_MAX_JOBS),
     JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES: z.coerce
       .number()
       .int()
@@ -63,6 +65,7 @@ const JobServiceEnv = baseEnv
     queryDefaultLimit: env.JOB_SERVICE_QUERY_DEFAULT_LIMIT,
     queryMaxLimit: env.JOB_SERVICE_QUERY_MAX_LIMIT,
     enqueueTimeoutMs: env.JOB_SERVICE_ENQUEUE_TIMEOUT_MS,
+    bulkMaxJobs: env.JOB_SERVICE_BULK_MAX_JOBS,
     statsRecentWindowMinutes: env.JOB_SERVICE_STATS_RECENT_WINDOW_MINUTES,
     statsThroughputWindowMinutes: env.JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES,
   }));

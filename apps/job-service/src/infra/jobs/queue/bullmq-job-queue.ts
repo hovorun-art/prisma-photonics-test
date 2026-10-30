@@ -7,6 +7,8 @@ import { JobQueueUnavailableError } from '../../../domain/jobs/errors/job-queue-
 import type {
   EnqueueJobQueueRequest,
   EnqueueJobQueueResponse,
+  EnqueueManyJobQueueRequest,
+  EnqueueManyJobQueueResponse,
   JobQueue,
 } from '../../../domain/jobs/job-queue.js';
 
@@ -48,17 +50,8 @@ export class BullMqJobQueue implements JobQueue {
 
   async enqueue(req: EnqueueJobQueueRequest): Promise<EnqueueJobQueueResponse> {
     const entryId = JobQueueEntryId.encode({ jobId: req.jobId, attempt: req.attempt });
-    const timeout = AbortSignal.timeout(this.p.enqueueTimeoutMs);
-    const timedOut = new Promise<never>((_resolve, reject) => {
-      timeout.addEventListener('abort', () => {
-        reject(timeout.reason as Error);
-      });
-    });
     try {
-      await Promise.race([
-        this.queue.add(entryId, { jobId: req.jobId }, { jobId: entryId }),
-        timedOut,
-      ]);
+      await this.withinTimeout(this.queue.add(entryId, { jobId: req.jobId }, { jobId: entryId }));
     } catch (err) {
       this.d.logger.warn({ err, jobId: req.jobId, attempt: req.attempt }, 'Enqueue failed');
       throw new JobQueueUnavailableError({ jobId: req.jobId, attempt: req.attempt });
@@ -66,8 +59,37 @@ export class BullMqJobQueue implements JobQueue {
     return {};
   }
 
+  /** One `addBulk`: BullMQ sends all entries in one Redis transaction, so all are added or none. */
+  async enqueueMany(req: EnqueueManyJobQueueRequest): Promise<EnqueueManyJobQueueResponse> {
+    const entries = req.entries.map((entry) => {
+      const entryId = JobQueueEntryId.encode({ jobId: entry.jobId, attempt: entry.attempt });
+      return { name: entryId, data: { jobId: entry.jobId }, opts: { jobId: entryId } };
+    });
+    try {
+      await this.withinTimeout(this.queue.addBulk(entries));
+    } catch (err) {
+      this.d.logger.warn(
+        { err, jobIds: req.entries.map((entry) => entry.jobId) },
+        'Bulk enqueue failed',
+      );
+      throw new JobQueueUnavailableError({ entries: req.entries });
+    }
+    return {};
+  }
+
   async close(): Promise<CloseClosableResponse> {
     await this.queue.close();
     return {};
+  }
+
+  /** Rejects when `work` has not settled within the configured enqueue timeout. */
+  private async withinTimeout(work: Promise<unknown>): Promise<void> {
+    const timeout = AbortSignal.timeout(this.p.enqueueTimeoutMs);
+    const timedOut = new Promise<never>((_resolve, reject) => {
+      timeout.addEventListener('abort', () => {
+        reject(timeout.reason as Error);
+      });
+    });
+    await Promise.race([work, timedOut]);
   }
 }

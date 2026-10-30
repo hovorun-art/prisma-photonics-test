@@ -14,14 +14,21 @@ import {
 } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 
+import { BulkLimitExceededError } from '../../domain/jobs/errors/bulk-limit-exceeded.error.js';
+import {
+  InvalidJobFieldError,
+  type JobFieldIssue,
+} from '../../domain/jobs/errors/invalid-job-field.error.js';
 import { InvalidJobPayloadError } from '../../domain/jobs/errors/invalid-job-payload.error.js';
 import { InvalidJobResultError } from '../../domain/jobs/errors/invalid-job-result.error.js';
 import { QueryLimitExceededError } from '../../domain/jobs/errors/query-limit-exceeded.error.js';
 import type { JobQueue } from '../../domain/jobs/job-queue.js';
-import type { JobChanges, JobRepository } from '../../domain/jobs/job-repository.js';
+import type { JobChanges, JobRepository, NewJob } from '../../domain/jobs/job-repository.js';
 import type {
   CreateJobServiceRequest,
   CreateJobServiceResponse,
+  CreateManyJobServiceRequest,
+  CreateManyJobServiceResponse,
   DeleteJobServiceRequest,
   DeleteJobServiceResponse,
   GetJobServiceRequest,
@@ -45,6 +52,8 @@ export interface JobServiceImplParams {
   queryDefaultLimit: number;
   /** Largest `limit` a query may ask for. */
   queryMaxLimit: number;
+  /** Most jobs one `createMany` may hold. */
+  bulkMaxJobs: number;
 }
 
 interface FailureChangesRequest {
@@ -68,6 +77,18 @@ interface EnqueueRequest {
   attempt: number;
 }
 
+interface NewPendingJobRequest {
+  job: CreateJobRequest;
+  /** Set for the jobs of a bulk; otherwise the database's clock sets it. */
+  createdAt?: string;
+}
+
+interface DepartureDayIssuesRequest {
+  job: CreateJobRequest;
+  /** The rule at the instant the request is judged by. */
+  departureDay: DepartureDay;
+}
+
 /**
  * The job lifecycle. `update` decides the next state from the stored job and writes it only while
  * the job is still in that state, so a concurrent report loses with a status conflict. A failed
@@ -86,21 +107,39 @@ export class JobServiceImpl implements JobService {
   }
 
   async create(req: CreateJobServiceRequest): Promise<CreateJobServiceResponse> {
-    this.requireDepartureDayNotOver(req.job);
-    const { job } = await this.d.repository.create({
-      job: {
-        ...req.job,
-        status: 'pending',
-        attempts: 0,
-        result: null,
-        error: null,
-        scheduledAt: null,
-        startedAt: null,
-        completedAt: null,
-      },
-    });
+    const issues = this.departureDayIssues({ job: req.job, departureDay: this.departureDay });
+    if (issues.length > 0) throw new InvalidJobPayloadError({ issues });
+    const { job } = await this.d.repository.create({ job: this.newPendingJob({ job: req.job }) });
     await this.enqueue({ jobId: job.id, attempt: 1 });
     return { job };
+  }
+
+  /**
+   * Every item is checked before anything is stored, so a bad item stores nothing. All items are
+   * judged at one instant, the one the jobs are stamped from, so a bulk sent at midnight (UTC) is not
+   * split across two days. The jobs are stamped one millisecond apart, so the newest-first query
+   * keeps the request order.
+   */
+  async createMany(req: CreateManyJobServiceRequest): Promise<CreateManyJobServiceResponse> {
+    if (req.jobs.length > this.p.bulkMaxJobs) {
+      throw new BulkLimitExceededError({ maxJobs: this.p.bulkMaxJobs });
+    }
+    const now = this.d.clock.now().now;
+    const departureDay = new UtcDepartureDay({ clock: { now: () => ({ now }) } });
+    const issues = req.jobs.flatMap((job, index) =>
+      this.departureDayIssues({ job, departureDay }).map((issue) => ({
+        ...issue,
+        path: [index, 'payload', ...issue.path],
+      })),
+    );
+    if (issues.length > 0) throw new InvalidJobFieldError({ field: ['jobs'], issues });
+    const { jobs } = await this.d.repository.createMany({
+      jobs: req.jobs.map((job, index) =>
+        this.newPendingJob({ job, createdAt: new Date(now.getTime() + index).toISOString() }),
+      ),
+    });
+    await this.enqueueFirstAttempts(jobs);
+    return { jobs };
   }
 
   get(req: GetJobServiceRequest): Promise<GetJobServiceResponse> {
@@ -117,6 +156,7 @@ export class JobServiceImpl implements JobService {
       offset: req.offset,
       statuses: req.statuses,
       types: req.types,
+      groupId: req.groupId,
     });
   }
 
@@ -172,21 +212,37 @@ export class JobServiceImpl implements JobService {
       : { status: 'failed', error, completedAt: now };
   }
 
-  /** A flight transit may be submitted until its departure day (in UTC) is over at job-service's time. */
-  private requireDepartureDayNotOver(job: CreateJobRequest): void {
-    if (job.type !== 'flight-transit') return;
-    const { today, over } = this.departureDay.check({ departureDate: job.payload.departureDate });
-    if (over) {
-      throw new InvalidJobPayloadError({
-        issues: [
-          {
-            code: 'custom',
-            path: ['departureDate'],
-            message: `The departure day is over: ${job.payload.departureDate} is before ${today} (UTC)`,
-          },
-        ],
-      });
-    }
+  /** A new job as submitted: pending, nothing run yet, in no group unless the request names one. */
+  private newPendingJob({ job, createdAt }: NewPendingJobRequest): NewJob {
+    return {
+      ...job,
+      status: 'pending',
+      attempts: 0,
+      result: null,
+      error: null,
+      groupId: job.groupId ?? null,
+      scheduledAt: null,
+      startedAt: null,
+      completedAt: null,
+      ...(createdAt === undefined ? {} : { createdAt }),
+    };
+  }
+
+  /**
+   * A flight transit may be submitted until its departure day (in UTC) is over at job-service's
+   * time. The issue paths are relative to the payload.
+   */
+  private departureDayIssues({ job, departureDay }: DepartureDayIssuesRequest): JobFieldIssue[] {
+    if (job.type !== 'flight-transit') return [];
+    const { today, over } = departureDay.check({ departureDate: job.payload.departureDate });
+    if (!over) return [];
+    return [
+      {
+        code: 'custom',
+        path: ['departureDate'],
+        message: `The departure day is over: ${job.payload.departureDate} is before ${today} (UTC)`,
+      },
+    ];
   }
 
   private requireStatus({ current, status }: RequireStatusRequest): void {
@@ -206,6 +262,20 @@ export class JobServiceImpl implements JobService {
       await this.d.queue.enqueue({ jobId, attempt });
     } catch (err) {
       this.d.logger.warn({ err, jobId, attempt }, 'Job stays pending: it could not be queued');
+    }
+  }
+
+  /** Like `enqueue`, for the first attempts of a bulk in one call. */
+  private async enqueueFirstAttempts(jobs: readonly Job[]): Promise<void> {
+    try {
+      await this.d.queue.enqueueMany({
+        entries: jobs.map((job) => ({ jobId: job.id, attempt: 1 })),
+      });
+    } catch (err) {
+      this.d.logger.warn(
+        { err, jobIds: jobs.map((job) => job.id) },
+        'Jobs stay pending: they could not be queued',
+      );
     }
   }
 

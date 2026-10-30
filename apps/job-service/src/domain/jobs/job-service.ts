@@ -7,7 +7,7 @@ import type {
 } from '@job-queue/contracts';
 
 /**
- * Everything job-service does with jobs, in five operations. `update` holds the lifecycle rules
+ * Everything job-service does with jobs: the five operations plus `createMany`, the bulk `create`. `update` holds the lifecycle rules
  * (start, completion, failure with retry or final failure); `delete` only removes finished jobs.
  */
 export interface JobService {
@@ -16,6 +16,12 @@ export interface JobService {
    * `InvalidJobPayloadError` for a flight transit whose departure day (UTC) is over.
    */
   create(req: CreateJobServiceRequest): Promise<CreateJobServiceResponse>;
+  /**
+   * Stores all jobs as `create` would, all or none, and puts their first attempts on the queue in
+   * one call. Throws `BulkLimitExceededError` above the configured maximum number of jobs, or
+   * `InvalidJobFieldError` with each failing item's position when any item breaks a rule of `create`.
+   */
+  createMany(req: CreateManyJobServiceRequest): Promise<CreateManyJobServiceResponse>;
   /** Throws `JobNotFoundError` for an unknown id. */
   get(req: GetJobServiceRequest): Promise<GetJobServiceResponse>;
   /** Throws `QueryLimitExceededError` above the configured maximum page size. */
@@ -34,6 +40,15 @@ export interface CreateJobServiceResponse {
   job: Job;
 }
 
+export interface CreateManyJobServiceRequest {
+  jobs: CreateJobRequest[];
+}
+
+export interface CreateManyJobServiceResponse {
+  /** The stored jobs in the order of the request. */
+  jobs: Job[];
+}
+
 export interface GetJobServiceRequest {
   id: string;
 }
@@ -50,6 +65,8 @@ export interface QueryJobServiceRequest {
   statuses?: JobStatus[] | undefined;
   /** Only jobs of one of these types; every type when omitted. */
   types?: JobType[] | undefined;
+  /** Only jobs of this group; jobs of every group and none when omitted. */
+  groupId?: string | undefined;
 }
 
 export interface QueryJobServiceResponse {

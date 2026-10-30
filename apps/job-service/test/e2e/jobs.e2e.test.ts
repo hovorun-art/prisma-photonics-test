@@ -163,6 +163,137 @@ describe('job-service public job routes', () => {
     });
   });
 
+  describe('submit in bulk', () => {
+    /** A flight transit departing in `days` days (negative for a day that is over). */
+    const transitJob = (days: number) => ({
+      type: 'flight-transit',
+      payload: { origin: 'LHR', destination: 'JFK', departureDate: service.utcDate(days) },
+    });
+
+    /** A bulk rejected for `path`, after which nothing is stored or queued. */
+    const expectBulkRejected = async (jobs: unknown[], path: unknown[]): Promise<void> => {
+      expect(await service.issuePaths(await service.submitBulk({ jobs }))).toContainEqual(path);
+      expect(await service.total()).toBe(0);
+      expect(service.queue.enqueueMany).not.toHaveBeenCalled();
+    };
+
+    it('Mixed job types are created in request order', async () => {
+      const requested = [EMAIL_JOB, WEBHOOK_JOB, transitJob(1)];
+
+      const jobs = await service.submittedBulk(requested);
+
+      expect(jobs.map((job) => [job.type, job.payload, job.status])).toEqual(
+        requested.map((item) => [item.type, item.payload, 'pending']),
+      );
+      expect(new Set(jobs.map((job) => job.id)).size).toBe(3);
+    });
+
+    it('Defaults are applied to each item', async () => {
+      const jobs = await service.submittedBulk([
+        { type: 'email', payload: EMAIL_JOB.payload },
+        { type: 'webhook', payload: WEBHOOK_JOB.payload },
+      ]);
+
+      for (const job of jobs) {
+        expect(job.priority).toBe(JOB_LIMITS.priority.default);
+        expect(job.maxAttempts).toBe(JOB_LIMITS.maxAttempts.default);
+      }
+    });
+
+    it('Bulk-created jobs can be read back', async () => {
+      const jobs = await service.submittedBulk([EMAIL_JOB, WEBHOOK_JOB]);
+
+      for (const job of jobs) {
+        const response = await service.get(job.id);
+        expect(response.status).toBe(200);
+        expect(Job.parse(await response.json())).toEqual(job);
+      }
+    });
+
+    it('Jobs of one bulk keep the request order in the job query', async () => {
+      const jobs = await service.submittedBulk([EMAIL_JOB, WEBHOOK_JOB, EMAIL_JOB]);
+
+      const page = QueryJobsResponse.parse(await (await fetch(service.url(JOBS_ROUTE))).json());
+
+      expect(page.items.map((job) => job.id)).toEqual(jobs.map((job) => job.id).reverse());
+    });
+
+    it('One item with an invalid payload', async () => {
+      const invalid = { ...EMAIL_JOB, payload: { ...EMAIL_JOB.payload, to: 'not-an-email' } };
+
+      await expectBulkRejected([EMAIL_JOB, invalid], ['jobs', 1, 'payload', 'to']);
+    });
+
+    it('One item breaking a job-service rule', async () => {
+      await expectBulkRejected(
+        [EMAIL_JOB, transitJob(-1)],
+        ['jobs', 1, 'payload', 'departureDate'],
+      );
+    });
+
+    it('Unknown job type in one item', async () => {
+      await expectBulkRejected(
+        [EMAIL_JOB, WEBHOOK_JOB, { ...EMAIL_JOB, type: 'sms' }],
+        ['jobs', 2, 'type'],
+      );
+    });
+
+    it('Every bulk job is queued', async () => {
+      service.queue.enqueueMany.mockResolvedValueOnce({});
+
+      const jobs = await service.submittedBulk([EMAIL_JOB, WEBHOOK_JOB]);
+
+      expect(service.queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
+        entries: jobs.map((job) => ({ jobId: job.id, attempt: 1 })),
+      });
+      expect(service.queue.enqueue).not.toHaveBeenCalled();
+    });
+
+    it('Queue unavailable during bulk submit', async () => {
+      service.queue.enqueueMany.mockImplementationOnce(({ entries }) =>
+        Promise.reject(new JobQueueUnavailableError({ entries })),
+      );
+
+      const jobs = await service.submittedBulk([EMAIL_JOB, WEBHOOK_JOB]);
+
+      expect(service.queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
+        entries: jobs.map((job) => ({ jobId: job.id, attempt: 1 })),
+      });
+      expect(jobs.map((job) => job.status)).toEqual(['pending', 'pending']);
+      for (const job of jobs) expect(await service.stored(job.id)).toEqual(job);
+    });
+  });
+
+  describe('group id', () => {
+    const GROUP_ID = randomUUID();
+
+    it('Single job with a group id', async () => {
+      const job = await service.submitted({ ...EMAIL_JOB, groupId: GROUP_ID });
+
+      expect(job.groupId).toBe(GROUP_ID);
+      expect(Job.parse(await (await service.get(job.id)).json()).groupId).toBe(GROUP_ID);
+    });
+
+    it('Bulk items with a group id', async () => {
+      const jobs = await service.submittedBulk([
+        { ...EMAIL_JOB, groupId: GROUP_ID },
+        { ...WEBHOOK_JOB, groupId: GROUP_ID },
+      ]);
+
+      expect(jobs.map((job) => job.groupId)).toEqual([GROUP_ID, GROUP_ID]);
+    });
+
+    it('Job without a group id', async () => {
+      const job = await service.submitted(EMAIL_JOB);
+
+      expect(job.groupId).toBeNull();
+    });
+
+    it('Malformed group id', async () => {
+      await expectRejected({ ...EMAIL_JOB, groupId: 'campaign-1' }, ['groupId']);
+    });
+  });
+
   describe('submit an email job', () => {
     const withPayload = (payload: Record<string, unknown>): unknown => ({
       ...EMAIL_JOB,
@@ -517,6 +648,53 @@ describe('job-service public job routes', () => {
 
         expect(page.items.map((job) => job.id)).toEqual(newestFirst(webhooks));
         expect(page.total).toBe(2);
+      });
+
+      describe('by group', () => {
+        const GROUP_A = randomUUID();
+        const GROUP_B = randomUUID();
+
+        it("Only the group's jobs are returned", async () => {
+          const groupA = await service.submittedBulk([
+            { ...EMAIL_JOB, groupId: GROUP_A },
+            { ...WEBHOOK_JOB, groupId: GROUP_A },
+          ]);
+          await service.submittedBulk([{ ...EMAIL_JOB, groupId: GROUP_B }]);
+          await service.submitted(EMAIL_JOB);
+
+          const page = await filtered([['groupId', GROUP_A]]);
+
+          // Whole jobs, so the query route is seen returning `groupId` too.
+          expect(page.items).toEqual([...groupA].reverse());
+          expect(page.items.map((job) => job.id)).toEqual(newestFirst(groupA));
+          expect(page.total).toBe(2);
+        });
+
+        it('Group filter combines with status and type', async () => {
+          const [, webhook] = await service.submittedBulk([
+            { ...EMAIL_JOB, groupId: GROUP_A },
+            { ...WEBHOOK_JOB, groupId: GROUP_A },
+          ]);
+          await service.submittedBulk([{ ...WEBHOOK_JOB, groupId: GROUP_B }]);
+
+          const page = await filtered([
+            ['groupId', GROUP_A],
+            ['status', 'pending'],
+            ['type', 'webhook'],
+          ]);
+
+          expect(page).toEqual({ items: [webhook], total: 1 });
+        });
+
+        it('Unknown group', async () => {
+          await service.submittedBulk([{ ...EMAIL_JOB, groupId: GROUP_A }]);
+
+          expect(await filtered([['groupId', randomUUID()]])).toEqual({ items: [], total: 0 });
+        });
+
+        it('Malformed group id filter', async () => {
+          expect(await rejectedFields([['groupId', 'campaign-1']])).toEqual(['groupId']);
+        });
       });
 
       it('Unknown status filter', async () => {

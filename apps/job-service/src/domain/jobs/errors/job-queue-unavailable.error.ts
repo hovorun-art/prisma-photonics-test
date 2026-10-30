@@ -1,17 +1,21 @@
 import { DomainError } from '@job-queue/kernel';
 
-export interface JobQueueUnavailableErrorParams {
+/** One attempt that could not be put on the queue. */
+export interface UnqueuedJobAttempt {
   jobId: string;
   attempt: number;
 }
 
-/** A job attempt could not be put on the queue (Redis unreachable or too slow). */
+/** One attempt (`enqueue`) or every attempt of a bulk (`enqueueMany`). */
+export type JobQueueUnavailableErrorParams = UnqueuedJobAttempt | { entries: UnqueuedJobAttempt[] };
+
+/** Job attempts could not be put on the queue (Redis unreachable or too slow). */
 export class JobQueueUnavailableError extends DomainError<'QUEUE_UNAVAILABLE'> {
   constructor(p: JobQueueUnavailableErrorParams) {
     super({
       code: 'QUEUE_UNAVAILABLE',
       message: 'The job queue is unavailable',
-      details: { jobId: p.jobId, attempt: p.attempt },
+      details: 'entries' in p ? { entries: p.entries } : { jobId: p.jobId, attempt: p.attempt },
     });
   }
 }

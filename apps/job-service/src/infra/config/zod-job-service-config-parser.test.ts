@@ -22,19 +22,35 @@ describe('ZodJobServiceConfigParser', () => {
         nodeEnv: 'production',
         logLevel: 'warn',
         port: 3000,
-        bodyLimitBytes: 102400,
+        bodyLimitBytes: 1048576,
         databaseUrl: 'postgresql://jobqueue:jobqueue@localhost:5432/jobqueue',
         redisUrl: 'redis://localhost:6379',
         internalServiceToken: 'a-long-random-token',
         queryDefaultLimit: 20,
         queryMaxLimit: 100,
         enqueueTimeoutMs: 2000,
+        bulkMaxJobs: 100,
         statsRecentWindowMinutes: 1440,
         statsThroughputWindowMinutes: 5,
       },
     });
   });
 
+  it('reads the configured maximum of jobs per bulk', () => {
+    expect(parser.parse({ env: { ...ENV, JOB_SERVICE_BULK_MAX_JOBS: '25' } })).toMatchObject({
+      ok: true,
+      config: { bulkMaxJobs: 25 },
+    });
+  });
+
+  it.each(['0', '-1', '1.5', 'many'])(
+    'rejects a maximum of jobs per bulk that is not a positive integer: %s',
+    (value) => {
+      const result = parser.parse({ env: { ...ENV, JOB_SERVICE_BULK_MAX_JOBS: value } });
+
+      expect(result.ok ? '' : result.problems).toContain('JOB_SERVICE_BULK_MAX_JOBS');
+    },
+  );
   it('reads the configured statistics windows', () => {
     const env = {
       ...ENV,

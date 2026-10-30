@@ -5,7 +5,7 @@ export const JOB_SERVICE_CONFIG = Symbol('JobServiceConfig');
 /** The validated settings of job-service (variable names and initial values in `.env.example`). */
 export interface JobServiceConfig extends BaseConfig {
   readonly databaseUrl: string;
-  /** The largest request body job-service accepts, in bytes. */
+  /** The largest request body job-service accepts on any route (a bulk included), in bytes. */
   readonly bodyLimitBytes: number;
   /** Page size of a job query without `limit`. */
   readonly queryDefaultLimit: number;
@@ -13,6 +13,8 @@ export interface JobServiceConfig extends BaseConfig {
   readonly queryMaxLimit: number;
   /** How long putting a job on the queue may take before the job is left pending. */
   readonly enqueueTimeoutMs: number;
+  /** Most jobs one bulk submission may hold. */
+  readonly bulkMaxJobs: number;
   /** Length of the window in which `GET /v1/stats` counts completed and failed jobs. */
   readonly statsRecentWindowMinutes: number;
   /** Length of the window over which `GET /v1/stats` measures throughput. */

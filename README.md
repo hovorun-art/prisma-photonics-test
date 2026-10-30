@@ -61,6 +61,17 @@ curl -s 'http://localhost:3000/v1/jobs?limit=20&offset=0'
 # Only failed or cancelled webhook jobs (repeat a filter for several values; total counts matches)
 curl -s 'http://localhost:3000/v1/jobs?status=failed&status=cancelled&type=webhook'
 
+# Submit several jobs at once, tied to one group (all are stored, or none if any item is invalid)
+curl -s -X POST http://localhost:3000/v1/jobs/bulk \
+  -H 'content-type: application/json' \
+  -d '{"jobs":[
+    {"type":"email","payload":{"to":"ada@example.com","subject":"Hello","body":"Hi Ada"},"groupId":"6f1c2a52-8d1e-4b7a-9c3f-2e5d8a7b1c40"},
+    {"type":"email","payload":{"to":"alan@example.com","subject":"Hello","body":"Hi Alan"},"groupId":"6f1c2a52-8d1e-4b7a-9c3f-2e5d8a7b1c40"}
+  ]}'
+# {"items":[{"id":"<uuid>","status":"pending",...,"groupId":"6f1c2a52-..."},{...}]}
+
+# The jobs of that group
+curl -s 'http://localhost:3000/v1/jobs?groupId=6f1c2a52-8d1e-4b7a-9c3f-2e5d8a7b1c40'
 # Queue statistics: jobs pending, processing and scheduled now, completed and failed in the last
 # day, and jobs completed per minute over the last 5 minutes (both windows are configurable)
 curl -s http://localhost:3000/v1/stats
@@ -74,8 +85,9 @@ curl -i http://localhost:3000/no-such-route
 
 Every error the API returns has the same body: `code` (from a closed list), `message`, `details`.
 The codes today: `INTERNAL_UNAUTHORIZED` (401), `ROUTE_NOT_FOUND` (404), `VALIDATION_FAILED` (400,
-also for a body that is not valid JSON), `PAYLOAD_TOO_LARGE` (413, the limit is in `details`; set
-with `JOB_SERVICE_BODY_LIMIT_BYTES`) and `INTERNAL_ERROR` (500).
+also for a body that is not valid JSON, an invalid bulk item and more jobs than
+`JOB_SERVICE_BULK_MAX_JOBS`), `PAYLOAD_TOO_LARGE` (413, the limit is in `details`; set with
+`JOB_SERVICE_BODY_LIMIT_BYTES`, default 1 MB) and `INTERNAL_ERROR` (500).
 
 ## Tests
 
