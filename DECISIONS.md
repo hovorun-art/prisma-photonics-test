@@ -575,15 +575,18 @@ queue, no retries). job-service reads the stream through a consumer group and st
 `JOB_LOG_BATCH_SIZE` (1000) entries or what arrived within `JOB_LOG_FLUSH_INTERVAL_MS` (1 s) in one
 insert, and confirms them on the stream only after the insert. While ClickHouse is down the writer
 retries the same batch with a growing wait (`JOB_LOG_STORE_RETRY_DELAY_MS` 500 up to
-`..._MAX_DELAY_MS` 30000) and reads nothing new, so entries wait in Redis; the log route answers 503
+`..._MAX_DELAY_MS` 30000; both the batch retry and the retry of a failed round are `p-retry`
+without a limit, as in job-execution-service, and stopping the writer ends a wait) and reads nothing new, so entries wait in Redis; the log route answers 503
 `LOG_STORE_UNAVAILABLE` meanwhile, and every other route keeps working. A ClickHouse that is down at
 startup delays the log, not the service: the writer creates the table itself, with the same retry,
 and the consumer group starts at the beginning of the stream, so entries written before it existed
 are still stored. Only connection errors and timeouts count as "store unavailable"; an SQL error
-is a bug and surfaces as a logged 500, not a 503. One exception to "errors are handled by class
-or code, never by message": the ClickHouse client raises its request timeout as a plain
-`Error('Timeout error.')` with no class or code, so that exact text (one constant) is what marks
-a timeout as "store unavailable".
+is a bug and surfaces as a logged 500, not a 503. Two exceptions to "errors are handled by class
+or code, never by message", both because the library gives no class or code: the ClickHouse client
+raises its request timeout as a plain `Error('Timeout error.')`, so that exact text (one constant)
+marks a timeout as "store unavailable"; and `RedisJobLogStream` recognises the Redis replies
+`BUSYGROUP` (the group exists) and `NOGROUP` (the group is gone) by the error code word that starts
+the reply, which is Redis's own error code (ioredis exposes no `code` field).
 *No duplicates:* a batch read again after a writer crash is the same rows, and the table is a
 `ReplacingMergeTree` keyed by job, position and entry id, read with `FINAL`, so each entry appears
 once. *Order:* entries are ordered by their stream id, which Redis assigns on arrival, not by the
@@ -594,6 +597,13 @@ when Redis is down while a line is written (the entry is dropped and a warning g
 log), and when the stream is trimmed past entries not stored yet (`JOB_LOG_STREAM_MAX_LENGTH`,
 100000, trimmed approximately). *Scaling path:* several streams sharded by job id, each with its own
 writer, instead of the single lease.
+*Main-thread cost:* writing and storing never wait on I/O (the Redis append is fire and forget; the
+writer's reads, inserts and retry waits are async). The synchronous work is the producer's parse,
+Zod check and stringify of each line inside pino's write (tens of microseconds per job log line, on
+the logging call in both services) and the writer's parse and validation of each batch (a few
+milliseconds per batch of up to 1000, on job-service's thread). At this task's volume that is not
+worth a worker thread; the ways out are pino's worker-thread transport for the producer, or the
+writer in its own process (the separate log service).
 
 ---
 

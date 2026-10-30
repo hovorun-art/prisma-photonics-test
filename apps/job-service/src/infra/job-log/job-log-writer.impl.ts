@@ -1,6 +1,7 @@
 import { JobLogStreamMessage } from '@job-queue/contracts';
-import type { Clock, Sleeper } from '@job-queue/kernel';
+import type { Clock } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
+import pRetry, { type Options as PRetryOptions } from 'p-retry';
 
 import { JobLogStreamGroupMissingError } from '../../domain/job-log/errors/job-log-stream-group-missing.error.js';
 import type {
@@ -17,7 +18,6 @@ export interface JobLogWriterImplDeps {
   store: JobLogStore;
   /** Applied before the first round, and again on each round until it succeeds. */
   schema: JobLogSchema;
-  sleeper: Sleeper;
   clock: Clock;
   logger: Pick<LoggerService, 'warn'>;
 }
@@ -40,12 +40,16 @@ interface ParseRecordsResponse {
   entries: PositionedJobLogEntry[];
 }
 
-interface WaitRequest {
-  ms: number;
+interface RetryOptionsRequest {
+  signal: AbortSignal;
+  /** Called with the error of each failed attempt, before the wait. */
+  onFailed: (error: Error) => void;
+  /** Whether the failed attempt is tried again at all. */
+  retryAllowed: () => boolean;
 }
 
-interface RetryDelayRequest {
-  failures: number;
+interface RetryOptionsResponse {
+  options: PRetryOptions;
 }
 
 /**
@@ -53,13 +57,14 @@ interface RetryDelayRequest {
  * reads, stores, and only then confirms; a store that fails is retried with a growing wait before
  * anything new is read, so entries wait in the stream while the store is down. The stream's group and the store's schema
  * are prepared in the loop too, so a store that is down at startup delays the log, not the service.
+ * Both retries (a failed batch, a failed round) are `p-retry` without a limit: the wait doubles from
+ * the configured delay up to the maximum, and stopping the writer ends a wait.
  */
 export class JobLogWriterImpl implements JobLogWriter {
   private readonly stopping = new AbortController();
   private loop: Promise<void> | undefined;
   private streamPrepared = false;
   private schemaApplied = false;
-  private roundFailures = 0;
 
   constructor(
     private readonly d: JobLogWriterImplDeps,
@@ -80,16 +85,22 @@ export class JobLogWriterImpl implements JobLogWriter {
   private async run(): Promise<void> {
     while (!this.isStopping()) {
       try {
-        await this.round();
-        this.roundFailures = 0;
+        // One call per streak of failures: the next failure after a good round starts at the base wait.
+        await pRetry(
+          () => this.untyped(() => this.round()),
+          this.retryOptions({
+            signal: this.stopping.signal,
+            retryAllowed: () => !this.isStopping(),
+            onFailed: (error) => {
+              if (this.isStopping()) return;
+              // The group is gone (the stream was deleted): it is created again before the next read.
+              if (error instanceof JobLogStreamGroupMissingError) this.streamPrepared = false;
+              this.d.logger.warn(`Job log writer round failed: ${this.describe(error)}`);
+            },
+          }).options,
+        );
       } catch (error) {
-        if (this.isStopping()) return;
-        // The group is gone (the stream was deleted): it is created again before the next read.
-        if (error instanceof JobLogStreamGroupMissingError) this.streamPrepared = false;
-        this.d.logger.warn(`Job log writer round failed: ${this.describe(error)}`);
-        const ms = this.retryDelay({ failures: this.roundFailures });
-        this.roundFailures += 1;
-        if (!(await this.wait({ ms }))) return;
+        if (!this.isStopping()) throw error;
       }
     }
   }
@@ -105,7 +116,7 @@ export class JobLogWriterImpl implements JobLogWriter {
       this.schemaApplied = true;
     }
     if (!(await this.d.stream.lease()).held) {
-      await this.wait({ ms: this.p.flushIntervalMs });
+      await this.idle();
       return;
     }
     const pending = await this.d.stream.read({
@@ -128,9 +139,11 @@ export class JobLogWriterImpl implements JobLogWriter {
       count: this.p.batchSize,
       blockMs: this.p.flushIntervalMs,
     });
-    if (records.length === 0 || records.length >= this.p.batchSize) return records;
+    if (records.length === 0 || records.length >= this.p.batchSize || this.isStopping()) {
+      return records;
+    }
     const startedAt = this.d.clock.now().now.getTime();
-    while (records.length < this.p.batchSize) {
+    while (records.length < this.p.batchSize && !this.isStopping()) {
       const remaining = this.p.flushIntervalMs - (this.d.clock.now().now.getTime() - startedAt);
       if (remaining <= 0) break;
       const more = await this.d.stream.read({
@@ -175,37 +188,87 @@ export class JobLogWriterImpl implements JobLogWriter {
   /**
    * Stores the batch, trying again after a growing wait until it works. False when it was given up
    * (the writer is stopping, or the lease passed on): the batch stays unconfirmed in the stream.
+   * Stopping ends a wait, but a first attempt still runs and a stored batch is still confirmed.
    */
   private async store(entries: PositionedJobLogEntry[]): Promise<boolean> {
-    for (let failures = 0; ; failures += 1) {
-      try {
-        await this.d.store.insert({ entries });
-        return true;
-      } catch (error) {
-        this.d.logger.warn(`Job log batch not stored, will retry: ${this.describe(error)}`);
-        if (!(await this.wait({ ms: this.retryDelay({ failures }) }))) return false;
-        if (!(await this.d.stream.lease()).held) return false;
-      }
+    const waiting = new AbortController();
+    const endWait = (): void => {
+      waiting.abort(this.stopping.signal.reason);
+    };
+    if (!this.isStopping()) this.stopping.signal.addEventListener('abort', endWait, { once: true });
+    let stored = false;
+    try {
+      return await pRetry(
+        (attempt) =>
+          this.untyped(async () => {
+            // Before each retry: the batch is only retried while this instance still holds the lease.
+            if (attempt > 1 && !(await this.d.stream.lease()).held) return false;
+            await this.d.store.insert({ entries });
+            stored = true;
+            return true;
+          }),
+        this.retryOptions({
+          signal: waiting.signal,
+          retryAllowed: () => !this.isStopping(),
+          onFailed: (error) => {
+            if (this.isStopping()) return;
+            this.d.logger.warn(`Job log batch not stored, will retry: ${this.describe(error)}`);
+          },
+        }).options,
+      );
+    } catch (error) {
+      if (this.isStopping()) return stored;
+      throw error;
+    } finally {
+      this.stopping.signal.removeEventListener('abort', endWait);
     }
   }
 
-  /** Sleeps; false when the writer was stopped meanwhile. */
-  private async wait(req: WaitRequest): Promise<boolean> {
+  private retryOptions(req: RetryOptionsRequest): RetryOptionsResponse {
+    return {
+      options: {
+        retries: Infinity,
+        factor: 2,
+        minTimeout: this.p.retryDelayMs,
+        maxTimeout: this.p.retryMaxDelayMs,
+        randomize: false,
+        signal: req.signal,
+        onFailedAttempt: ({ error }) => {
+          req.onFailed(error);
+        },
+        shouldRetry: () => req.retryAllowed(),
+      },
+    };
+  }
+
+  /**
+   * p-retry gives up on a TypeError that is not a network error and on a value that is not an
+   * Error; here every failure is retried, so both are wrapped in a plain Error.
+   */
+  private async untyped<T>(work: () => Promise<T>): Promise<T> {
     try {
-      await this.d.sleeper.sleep({ ms: req.ms, signal: this.stopping.signal });
-      return true;
+      return await work();
     } catch (error) {
-      if (this.isStopping()) return false;
-      throw error;
+      if (error instanceof Error && !(error instanceof TypeError)) throw error;
+      throw new Error(this.describe(error), { cause: error });
     }
+  }
+
+  /** Waits one flush interval before the next round, or until the writer is stopped. */
+  private idle(): Promise<void> {
+    return new Promise((resolve) => {
+      const done = (): void => {
+        clearTimeout(timer);
+        this.stopping.signal.removeEventListener('abort', done);
+        resolve();
+      };
+      const timer = setTimeout(done, this.p.flushIntervalMs);
+      this.stopping.signal.addEventListener('abort', done, { once: true });
+    });
   }
 
   private isStopping(): boolean {
     return this.stopping.signal.aborted;
-  }
-
-  private retryDelay(req: RetryDelayRequest): number {
-    return Math.min(this.p.retryDelayMs * 2 ** req.failures, this.p.retryMaxDelayMs);
   }
 
   private describe(error: unknown): string {

@@ -26,6 +26,7 @@
 - A job id that is not a UUID answers HTTP 400 `VALIDATION_FAILED` and an unknown or deleted job HTTP 404 `JOB_NOT_FOUND` on the log route, as on `GET /v1/jobs/:id`; the route appears in the OpenAPI docs; job-ui polls the log at the job page's polling interval. (user confirmed assumption)
 - Reuse the existing logs: job log entries come from the services' existing pino log calls, not from a second logging API. Every pino line at info or above that carries `jobId` becomes an entry, sent to the Redis Stream through pino's destination (built-in `pino.multistream`: standard output and the stream, no new library). Level from pino (`warn` becomes `warning`), message from `msg`, attempt and instance id from their fields, the remaining fields as metadata after the existing redaction, error stacks dropped. The decided steps get pino lines where they are missing. Messages therefore stay the existing English pino messages. (user)
 - An error on a job log line keeps only its type (class name) and code in the entry's metadata, never its message or stack, since messages can carry internal details such as a host; the full error stays in the service's own log output for operators. (user)
+- The job log writer's retries (a failed batch, a failed round) use `p-retry`, the library the project already chose for retries, instead of a hand-written backoff loop; the stop signal aborts a wait and the lease is checked between tries. (user)
 - Empty Log card: "No log entries yet" with All chosen, "No info entries" / "No warning entries" / "No error entries" with a level chosen; skeleton rows while the first log request loads. (user)
 
 ## Assumed
@@ -56,3 +57,4 @@
 - [x] Maximum length of the log stream.
 - [x] What does the Log card show when it has no entries?
 - [x] What does a job log entry keep of an error on its line?
+- [x] Which retry mechanism does the job log writer use?

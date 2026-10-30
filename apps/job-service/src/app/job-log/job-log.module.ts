@@ -3,11 +3,8 @@ import {
   ConfiguredPageLimit,
   CLOCK,
   type Clock,
-  SLEEPER,
-  type Sleeper,
   SystemClock,
   SystemRandom,
-  SystemSleeper,
 } from '@job-queue/kernel';
 import { Logger, Module } from '@nestjs/common';
 
@@ -43,7 +40,6 @@ const CLICKHOUSE_CLIENT = Symbol('ClickHouseClient');
   controllers: [JobLogController],
   providers: [
     { provide: CLOCK, useClass: SystemClock },
-    { provide: SLEEPER, useClass: SystemSleeper },
     {
       provide: CLICKHOUSE_CLIENT,
       useFactory: (config: JobServiceConfig): ClickHouseClient =>
@@ -79,12 +75,11 @@ const CLICKHOUSE_CLIENT = Symbol('ClickHouseClient');
         stream: JobLogStream,
         store: JobLogStore,
         schema: JobLogSchema,
-        sleeper: Sleeper,
         clock: Clock,
         config: JobServiceConfig,
       ): JobLogWriter =>
         new JobLogWriterImpl(
-          { stream, store, schema, sleeper, clock, logger: new Logger('JobLogWriter') },
+          { stream, store, schema, clock, logger: new Logger('JobLogWriter') },
           {
             batchSize: config.jobLogBatchSize,
             flushIntervalMs: config.jobLogFlushIntervalMs,
@@ -92,7 +87,7 @@ const CLICKHOUSE_CLIENT = Symbol('ClickHouseClient');
             retryMaxDelayMs: config.jobLogStoreRetryMaxDelayMs,
           },
         ),
-      inject: [JOB_LOG_STREAM, JOB_LOG_STORE, JOB_LOG_SCHEMA, SLEEPER, CLOCK, JOB_SERVICE_CONFIG],
+      inject: [JOB_LOG_STREAM, JOB_LOG_STORE, JOB_LOG_SCHEMA, CLOCK, JOB_SERVICE_CONFIG],
     },
     {
       provide: JOB_LOG_SERVICE,

@@ -102,7 +102,7 @@ entry, no batch reads).
 3. Validate each message with the contract schema (the edge); a malformed message is logged and
    acknowledged, never retried forever.
 4. Insert the batch into ClickHouse in one `INSERT ... FORMAT JSONEachRow`; on failure wait with
-   capped exponential backoff (`Sleeper` port, configured min/max) and retry the same batch; the
+   capped exponential backoff through `p-retry` (decisions.md: the library the project already uses for retries; unlimited retries, configured min/max delay, the stop signal aborts a wait, the lease checked between tries) and retry the same batch; the
    loop reads nothing new until it succeeds, so entries wait in Redis while ClickHouse is down.
 5. `XACK` the batch only after the insert succeeded.
 6. On shutdown, finish or abandon the current batch (unacknowledged entries are read again).

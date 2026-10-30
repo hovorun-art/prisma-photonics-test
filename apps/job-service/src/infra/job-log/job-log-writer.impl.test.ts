@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { JobLogStreamMessage } from '@job-queue/contracts';
-import type { Clock, Sleeper } from '@job-queue/kernel';
+import type { Clock } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type DeepMockProxy, mockDeep } from 'vitest-mock-extended';
@@ -23,7 +23,6 @@ describe('JobLogWriterImpl', () => {
   let stream: DeepMockProxy<JobLogStream>;
   let store: DeepMockProxy<JobLogStore>;
   let schema: DeepMockProxy<JobLogSchema>;
-  let sleeper: DeepMockProxy<Sleeper>;
   let clock: DeepMockProxy<Clock>;
   let logger: DeepMockProxy<Pick<LoggerService, 'warn'>>;
   let writer: JobLogWriterImpl;
@@ -46,39 +45,35 @@ describe('JobLogWriterImpl', () => {
     entry,
   });
 
-  /** A sleep that lasts until the writer is stopped: ends a scenario without further rounds. */
-  const parkOnSleep = (): void => {
-    sleeper.sleep.mockImplementationOnce(
-      ({ signal }) =>
-        new Promise((_resolve, reject) => {
-          signal?.addEventListener('abort', () => {
-            reject(new Error('stopped'));
-          });
-        }),
-    );
-  };
-  /** The round after the scenario: no lease, then parked in the wait for the next round. */
+  /** The round after the scenario: no lease, so the writer idles for a flush interval. */
   const endWithIdleRound = (): void => {
     stream.lease.mockResolvedValueOnce({ held: false });
-    parkOnSleep();
   };
-  const startAndWaitUntilParked = async (sleeps: number): Promise<void> => {
+  /** Lets everything that does not wait on a timer run. */
+  const settle = async (): Promise<void> => {
+    await vi.advanceTimersByTimeAsync(0);
+  };
+  const startAndSettle = async (): Promise<void> => {
     writer.start();
-    await vi.waitFor(() => {
-      expect(sleeper.sleep).toHaveBeenCalledTimes(sleeps);
-    });
+    await settle();
   };
-  const sleepDelays = (): number[] => sleeper.sleep.mock.calls.map(([req]) => req.ms);
+  /** Asserts `before` before `ms` has passed and `after` once it has. */
+  const afterWait = async (ms: number, before: () => void, after: () => void): Promise<void> => {
+    await vi.advanceTimersByTimeAsync(ms - 1);
+    before();
+    await vi.advanceTimersByTimeAsync(1);
+    after();
+  };
 
   beforeEach(() => {
+    vi.useFakeTimers();
     stream = mockDeep<JobLogStream>();
     store = mockDeep<JobLogStore>();
     schema = mockDeep<JobLogSchema>();
-    sleeper = mockDeep<Sleeper>();
     clock = mockDeep<Clock>();
     logger = mockDeep<Pick<LoggerService, 'warn'>>();
     writer = new JobLogWriterImpl(
-      { stream, store, schema, sleeper, clock, logger },
+      { stream, store, schema, clock, logger },
       {
         batchSize: BATCH_SIZE,
         flushIntervalMs: FLUSH_INTERVAL_MS,
@@ -91,6 +86,7 @@ describe('JobLogWriterImpl', () => {
   });
   afterEach(async () => {
     await writer.stop();
+    vi.useRealTimers();
   });
 
   it('stores a full batch at once and confirms it', async () => {
@@ -102,7 +98,7 @@ describe('JobLogWriterImpl', () => {
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
 
     expect(store.insert).toHaveBeenCalledExactlyOnceWith({
       entries: entries.map((e, i) => positionedOf(i, e)),
@@ -115,7 +111,6 @@ describe('JobLogWriterImpl', () => {
       count: BATCH_SIZE,
       blockMs: FLUSH_INTERVAL_MS,
     });
-    expect(sleepDelays()).toEqual([FLUSH_INTERVAL_MS]);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -132,7 +127,7 @@ describe('JobLogWriterImpl', () => {
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
 
     expect(stream.read).toHaveBeenNthCalledWith(3, {
       pending: false,
@@ -141,7 +136,6 @@ describe('JobLogWriterImpl', () => {
     });
     expect(store.insert).toHaveBeenCalledExactlyOnceWith({ entries: [positionedOf(1, entry)] });
     expect(stream.ack).toHaveBeenCalledExactlyOnceWith({ positions: ['1001-0'] });
-    expect(sleepDelays()).toEqual([FLUSH_INTERVAL_MS]);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -160,7 +154,7 @@ describe('JobLogWriterImpl', () => {
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
 
     expect(stream.read).toHaveBeenNthCalledWith(3, {
       pending: false,
@@ -173,7 +167,6 @@ describe('JobLogWriterImpl', () => {
     expect(stream.ack).toHaveBeenCalledExactlyOnceWith({
       positions: ['1001-0', '1002-0', '1003-0'],
     });
-    expect(sleepDelays()).toEqual([FLUSH_INTERVAL_MS]);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -191,7 +184,7 @@ describe('JobLogWriterImpl', () => {
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
 
     expect(stream.read).toHaveBeenCalledTimes(4);
     expect(stream.read).toHaveBeenNthCalledWith(3, {
@@ -207,7 +200,6 @@ describe('JobLogWriterImpl', () => {
     expect(store.insert).toHaveBeenCalledExactlyOnceWith({
       entries: [positionedOf(1, first), positionedOf(2, second), positionedOf(3, third)],
     });
-    expect(sleepDelays()).toEqual([FLUSH_INTERVAL_MS]);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -221,12 +213,11 @@ describe('JobLogWriterImpl', () => {
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
 
     const insertOrder = store.insert.mock.invocationCallOrder[0] ?? Infinity;
     const ackOrder = stream.ack.mock.invocationCallOrder[0] ?? 0;
     expect(insertOrder).toBeLessThan(ackOrder);
-    expect(sleepDelays()).toEqual([FLUSH_INTERVAL_MS]);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -238,7 +229,7 @@ describe('JobLogWriterImpl', () => {
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
 
     expect(stream.read).toHaveBeenCalledExactlyOnceWith({
       pending: true,
@@ -247,7 +238,6 @@ describe('JobLogWriterImpl', () => {
     });
     expect(store.insert).toHaveBeenCalledExactlyOnceWith({ entries: [positionedOf(1, entry)] });
     expect(stream.ack).toHaveBeenCalledExactlyOnceWith({ positions: ['1001-0'] });
-    expect(sleepDelays()).toEqual([FLUSH_INTERVAL_MS]);
     expect(logger.warn).not.toHaveBeenCalled();
   });
 
@@ -258,16 +248,26 @@ describe('JobLogWriterImpl', () => {
     stream.read.mockResolvedValueOnce({ records: [] });
     stream.read.mockResolvedValueOnce({ records });
     store.insert.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'insert' }));
-    sleeper.sleep.mockResolvedValueOnce({});
     stream.lease.mockResolvedValueOnce({ held: true });
     store.insert.mockResolvedValueOnce({});
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(2);
+    await startAndSettle();
+    expect(store.insert).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
 
-    expect(sleepDelays()[0]).toBe(RETRY_DELAY_MS);
-    expect(store.insert).toHaveBeenCalledTimes(2);
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(store.insert).toHaveBeenCalledTimes(1);
+        expect(stream.ack).not.toHaveBeenCalled();
+      },
+      () => {
+        expect(store.insert).toHaveBeenCalledTimes(2);
+      },
+    );
+
     expect(store.insert).toHaveBeenNthCalledWith(1, {
       entries: entries.map((e, i) => positionedOf(i, e)),
     });
@@ -291,16 +291,29 @@ describe('JobLogWriterImpl', () => {
     clock.now.mockReturnValueOnce({ now: new Date(T0.getTime() + FLUSH_INTERVAL_MS) });
     for (let i = 0; i < 4; i += 1) {
       store.insert.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'insert' }));
-      sleeper.sleep.mockResolvedValueOnce({});
       stream.lease.mockResolvedValueOnce({ held: true });
     }
     store.insert.mockResolvedValueOnce({});
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(5);
+    await startAndSettle();
 
-    expect(sleepDelays().slice(0, 4)).toEqual([100, 200, 350, 350]);
+    let inserts = 1;
+    for (const delay of [100, 200, 350, 350]) {
+      const expected = inserts;
+      await afterWait(
+        delay,
+        () => {
+          expect(store.insert).toHaveBeenCalledTimes(expected);
+        },
+        () => {
+          expect(store.insert).toHaveBeenCalledTimes(expected + 1);
+        },
+      );
+      inserts += 1;
+    }
+    expect(stream.ack).toHaveBeenCalledOnce();
   });
 
   it('starts the wait over for the next batch after a store succeeded', async () => {
@@ -310,7 +323,6 @@ describe('JobLogWriterImpl', () => {
       records: [recordOf(1, message(1)), recordOf(2, message(2)), recordOf(3, message(3))],
     });
     store.insert.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'insert' }));
-    sleeper.sleep.mockResolvedValueOnce({});
     stream.lease.mockResolvedValueOnce({ held: true });
     store.insert.mockResolvedValueOnce({});
     stream.ack.mockResolvedValueOnce({});
@@ -320,15 +332,25 @@ describe('JobLogWriterImpl', () => {
       records: [recordOf(4, message(4)), recordOf(5, message(5)), recordOf(6, message(6))],
     });
     store.insert.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'insert' }));
-    sleeper.sleep.mockResolvedValueOnce({});
     stream.lease.mockResolvedValueOnce({ held: true });
     store.insert.mockResolvedValueOnce({});
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(3);
+    await startAndSettle();
+    await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS);
+    expect(store.insert).toHaveBeenCalledTimes(3);
 
-    expect(sleepDelays().slice(0, 2)).toEqual([RETRY_DELAY_MS, RETRY_DELAY_MS]);
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(store.insert).toHaveBeenCalledTimes(3);
+      },
+      () => {
+        expect(store.insert).toHaveBeenCalledTimes(4);
+      },
+    );
+    expect(stream.ack).toHaveBeenCalledTimes(2);
   });
 
   it('logs a malformed message and confirms it with the rest of the batch without storing it', async () => {
@@ -341,7 +363,7 @@ describe('JobLogWriterImpl', () => {
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
 
     expect(store.insert).toHaveBeenCalledExactlyOnceWith({ entries: [positionedOf(3, valid)] });
     expect(stream.ack).toHaveBeenCalledExactlyOnceWith({
@@ -350,7 +372,6 @@ describe('JobLogWriterImpl', () => {
     expect(logger.warn).toHaveBeenCalledTimes(2);
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1001-0'));
     expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('1002-0'));
-    expect(sleepDelays()).toEqual([FLUSH_INTERVAL_MS]);
   });
 
   it('confirms a batch that holds only malformed messages without calling the store', async () => {
@@ -359,22 +380,31 @@ describe('JobLogWriterImpl', () => {
     stream.ack.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
 
     expect(store.insert).not.toHaveBeenCalled();
     expect(stream.ack).toHaveBeenCalledExactlyOnceWith({ positions: ['1001-0'] });
     expect(logger.warn).toHaveBeenCalledTimes(1);
-    expect(sleepDelays()).toEqual([FLUSH_INTERVAL_MS]);
   });
 
-  it('reads nothing while another instance holds the lease', async () => {
+  it('reads nothing while another instance holds the lease, and asks again after a flush interval', async () => {
     stream.lease.mockResolvedValueOnce({ held: false });
-    parkOnSleep();
+    stream.lease.mockResolvedValueOnce({ held: false });
 
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
+    expect(stream.lease).toHaveBeenCalledTimes(1);
 
-    expect(sleepDelays()).toEqual([FLUSH_INTERVAL_MS]);
+    await afterWait(
+      FLUSH_INTERVAL_MS,
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(1);
+      },
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(2);
+      },
+    );
     expect(stream.read).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
   });
 
   it('abandons a batch it can no longer retry safely when the lease passed to another instance', async () => {
@@ -384,39 +414,49 @@ describe('JobLogWriterImpl', () => {
       records: [recordOf(1, message(1)), recordOf(2, message(2)), recordOf(3, message(3))],
     });
     store.insert.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'insert' }));
-    sleeper.sleep.mockResolvedValueOnce({});
     stream.lease.mockResolvedValueOnce({ held: false });
     endWithIdleRound();
 
-    await startAndWaitUntilParked(2);
+    await startAndSettle();
+    await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS);
 
     expect(store.insert).toHaveBeenCalledTimes(1);
     expect(stream.ack).not.toHaveBeenCalled();
+    expect(stream.lease).toHaveBeenCalledTimes(3);
   });
 
   it('creates the consumer group again on the next round when it could not be created', async () => {
     stream.prepare.mockReset();
     stream.prepare.mockRejectedValueOnce(new Error('redis down'));
-    sleeper.sleep.mockResolvedValueOnce({});
     stream.prepare.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(2);
+    await startAndSettle();
+    expect(stream.prepare).toHaveBeenCalledTimes(1);
+    expect(logger.warn).toHaveBeenCalledTimes(1);
 
-    expect(stream.prepare).toHaveBeenCalledTimes(2);
-    expect(sleepDelays()[0]).toBe(RETRY_DELAY_MS);
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(stream.prepare).toHaveBeenCalledTimes(1);
+      },
+      () => {
+        expect(stream.prepare).toHaveBeenCalledTimes(2);
+      },
+    );
     expect(logger.warn).toHaveBeenCalledTimes(1);
   });
 
   it('prepares the stream before it applies the store schema, so entries wait in the stream while the store is down', async () => {
     schema.apply.mockReset();
     schema.apply.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'schema' }));
-    sleeper.sleep.mockResolvedValueOnce({});
     schema.apply.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(2);
+    await startAndSettle();
+    await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS);
 
+    expect(schema.apply).toHaveBeenCalledTimes(2);
     expect(stream.prepare).toHaveBeenCalledOnce();
     expect(stream.prepare.mock.invocationCallOrder[0]).toBeLessThan(
       schema.apply.mock.invocationCallOrder[0] ?? 0,
@@ -426,17 +466,24 @@ describe('JobLogWriterImpl', () => {
   it('creates the consumer group again on the next round after a read finds it missing', async () => {
     stream.lease.mockResolvedValueOnce({ held: true });
     stream.read.mockRejectedValueOnce(new JobLogStreamGroupMissingError());
-    sleeper.sleep.mockResolvedValueOnce({});
     stream.prepare.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(2);
+    await startAndSettle();
+    expect(stream.prepare).toHaveBeenCalledTimes(1);
 
-    expect(stream.prepare).toHaveBeenCalledTimes(2);
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(stream.prepare).toHaveBeenCalledTimes(1);
+      },
+      () => {
+        expect(stream.prepare).toHaveBeenCalledTimes(2);
+      },
+    );
     expect(stream.prepare.mock.invocationCallOrder[1]).toBeGreaterThan(
       stream.read.mock.invocationCallOrder[0] ?? Infinity,
     );
-    expect(sleepDelays()[0]).toBe(RETRY_DELAY_MS);
     expect(stream.lease).toHaveBeenCalledTimes(2);
     expect(schema.apply).toHaveBeenCalledOnce();
   });
@@ -444,97 +491,265 @@ describe('JobLogWriterImpl', () => {
   it('does not create the consumer group again after a round that failed for another reason', async () => {
     stream.lease.mockResolvedValueOnce({ held: true });
     stream.read.mockRejectedValueOnce(new Error('redis down'));
-    sleeper.sleep.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(2);
+    await startAndSettle();
+    await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS);
 
+    expect(stream.lease).toHaveBeenCalledTimes(2);
     expect(stream.prepare).toHaveBeenCalledOnce();
-  });
-
-  it('applies the store schema before it reads anything', async () => {
-    endWithIdleRound();
-
-    await startAndWaitUntilParked(1);
-
-    expect(schema.apply).toHaveBeenCalledOnce();
-    expect(schema.apply.mock.invocationCallOrder[0]).toBeLessThan(
-      stream.lease.mock.invocationCallOrder[0] ?? 0,
-    );
   });
 
   it('Job log store down at startup: applies the schema again on the next round and reads nothing meanwhile', async () => {
     schema.apply.mockReset();
     schema.apply.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'schema' }));
-    sleeper.sleep.mockResolvedValueOnce({});
     schema.apply.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(2);
-
-    expect(schema.apply).toHaveBeenCalledTimes(2);
-    expect(sleepDelays()[0]).toBe(RETRY_DELAY_MS);
-    expect(stream.lease).toHaveBeenCalledOnce();
+    await startAndSettle();
+    expect(schema.apply).toHaveBeenCalledTimes(1);
+    expect(stream.lease).not.toHaveBeenCalled();
     expect(stream.read).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledTimes(1);
-  });
 
-  it('waits and goes on when reading the stream fails', async () => {
-    stream.lease.mockResolvedValueOnce({ held: true });
-    stream.read.mockRejectedValueOnce(new Error('redis down'));
-    sleeper.sleep.mockResolvedValueOnce({});
-    endWithIdleRound();
-
-    await startAndWaitUntilParked(2);
-
-    expect(sleepDelays()).toEqual([RETRY_DELAY_MS, FLUSH_INTERVAL_MS]);
-    expect(stream.lease).toHaveBeenCalledTimes(2);
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(schema.apply).toHaveBeenCalledTimes(1);
+      },
+      () => {
+        expect(schema.apply).toHaveBeenCalledTimes(2);
+      },
+    );
+    expect(stream.lease).toHaveBeenCalledOnce();
+    expect(schema.apply.mock.invocationCallOrder[1]).toBeLessThan(
+      stream.lease.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(stream.read).not.toHaveBeenCalled();
     expect(logger.warn).toHaveBeenCalledTimes(1);
-  });
-
-  it('doubles the wait between rounds that keep failing', async () => {
-    schema.apply.mockReset();
-    schema.apply.mockRejectedValueOnce(new Error('store down'));
-    sleeper.sleep.mockResolvedValueOnce({});
-    schema.apply.mockRejectedValueOnce(new Error('store down'));
-    sleeper.sleep.mockResolvedValueOnce({});
-    schema.apply.mockResolvedValueOnce({});
-    endWithIdleRound();
-
-    await startAndWaitUntilParked(3);
-
-    expect(sleepDelays()).toEqual([RETRY_DELAY_MS, 2 * RETRY_DELAY_MS, FLUSH_INTERVAL_MS]);
   });
 
   it('doubles the wait between rounds that keep failing to read the stream', async () => {
     stream.lease.mockResolvedValueOnce({ held: true });
     stream.read.mockRejectedValueOnce(new Error('redis down'));
-    sleeper.sleep.mockResolvedValueOnce({});
     stream.lease.mockResolvedValueOnce({ held: true });
     stream.read.mockRejectedValueOnce(new Error('redis down'));
-    sleeper.sleep.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(3);
-
-    expect(sleepDelays()).toEqual([RETRY_DELAY_MS, 2 * RETRY_DELAY_MS, FLUSH_INTERVAL_MS]);
+    await startAndSettle();
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(1);
+      },
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(2);
+      },
+    );
+    await afterWait(
+      2 * RETRY_DELAY_MS,
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(2);
+      },
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(3);
+      },
+    );
+    expect(logger.warn).toHaveBeenCalledTimes(2);
   });
 
   it('starts the round wait over after a round that worked', async () => {
     stream.lease.mockResolvedValueOnce({ held: true });
     stream.read.mockRejectedValueOnce(new Error('redis down'));
-    sleeper.sleep.mockResolvedValueOnce({});
     stream.lease.mockResolvedValueOnce({ held: true });
     stream.read.mockResolvedValueOnce({ records: [] });
     stream.read.mockResolvedValueOnce({ records: [] });
     stream.lease.mockResolvedValueOnce({ held: true });
     stream.read.mockRejectedValueOnce(new Error('redis down'));
-    sleeper.sleep.mockResolvedValueOnce({});
     endWithIdleRound();
 
-    await startAndWaitUntilParked(3);
+    await startAndSettle();
+    await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS);
+    expect(stream.lease).toHaveBeenCalledTimes(3);
 
-    expect(sleepDelays()).toEqual([RETRY_DELAY_MS, RETRY_DELAY_MS, FLUSH_INTERVAL_MS]);
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(3);
+      },
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(4);
+      },
+    );
+  });
+
+  it.each([
+    ['a TypeError', () => new TypeError('x')],
+    ['a value that is not an Error', () => 'boom'],
+  ])('retries a batch whose store fails with %s', async (_name, failure) => {
+    const entry = message(1);
+    const records = [recordOf(1, entry)];
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockResolvedValueOnce({ records });
+    store.insert.mockRejectedValueOnce(failure());
+    stream.lease.mockResolvedValueOnce({ held: true });
+    store.insert.mockResolvedValueOnce({});
+    stream.ack.mockResolvedValueOnce({});
+    endWithIdleRound();
+
+    await startAndSettle();
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(store.insert).toHaveBeenCalledTimes(1);
+      },
+      () => {
+        expect(store.insert).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    expect(store.insert).toHaveBeenNthCalledWith(2, { entries: [positionedOf(1, entry)] });
+    expect(stream.ack).toHaveBeenCalledExactlyOnceWith({ positions: ['1001-0'] });
+    await expect(writer.stop()).resolves.toEqual({});
+  });
+
+  it.each([
+    ['a TypeError', () => new TypeError('x')],
+    ['a value that is not an Error', () => 'boom'],
+  ])('goes on to the next round when reading the stream fails with %s', async (_name, failure) => {
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockRejectedValueOnce(failure());
+    endWithIdleRound();
+
+    await startAndSettle();
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(1);
+      },
+      () => {
+        expect(stream.lease).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    await expect(writer.stop()).resolves.toEqual({});
+  });
+
+  it('counts a failed lease check before a retry as a failed attempt and retries after the doubled wait', async () => {
+    const records = [recordOf(1, message(1))];
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockResolvedValueOnce({ records });
+    store.insert.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'insert' }));
+    stream.lease.mockRejectedValueOnce(new Error('redis down'));
+    stream.lease.mockResolvedValueOnce({ held: true });
+    store.insert.mockResolvedValueOnce({});
+    stream.ack.mockResolvedValueOnce({});
+    endWithIdleRound();
+
+    await startAndSettle();
+    await vi.advanceTimersByTimeAsync(RETRY_DELAY_MS);
+    expect(logger.warn).toHaveBeenCalledTimes(2);
+    expect(store.insert).toHaveBeenCalledTimes(1);
+
+    await afterWait(
+      2 * RETRY_DELAY_MS,
+      () => {
+        expect(store.insert).toHaveBeenCalledTimes(1);
+        expect(stream.ack).not.toHaveBeenCalled();
+      },
+      () => {
+        expect(store.insert).toHaveBeenCalledTimes(2);
+      },
+    );
+    expect(stream.ack).toHaveBeenCalledExactlyOnceWith({ positions: ['1001-0'] });
+    expect(stream.read).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops quietly when an insert that is in flight fails after the writer was asked to stop', async () => {
+    let fail: (error: Error) => void = () => undefined;
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockResolvedValueOnce({ records: [recordOf(1, message(1))] });
+    store.insert.mockImplementationOnce(
+      () =>
+        new Promise((_resolve, reject) => {
+          fail = reject;
+        }),
+    );
+    await startAndSettle();
+    expect(store.insert).toHaveBeenCalledTimes(1);
+
+    const stopped = writer.stop();
+    fail(new LogStoreUnavailableError({ operation: 'insert' }));
+    await expect(stopped).resolves.toEqual({});
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_DELAY_MS);
+
+    expect(store.insert).toHaveBeenCalledTimes(1);
+    expect(stream.ack).not.toHaveBeenCalled();
+    expect(logger.warn).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('reads the same records again and stores them once more when confirming them fails', async () => {
+    const entry = message(1);
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockResolvedValueOnce({ records: [recordOf(1, entry)] });
+    store.insert.mockResolvedValueOnce({});
+    stream.ack.mockRejectedValueOnce(new Error('redis down'));
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockResolvedValueOnce({ records: [recordOf(1, entry)] });
+    store.insert.mockResolvedValueOnce({});
+    stream.ack.mockResolvedValueOnce({});
+    endWithIdleRound();
+
+    await startAndSettle();
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+    await afterWait(
+      RETRY_DELAY_MS,
+      () => {
+        expect(stream.read).toHaveBeenCalledTimes(1);
+      },
+      () => {
+        expect(stream.read).toHaveBeenCalledTimes(2);
+      },
+    );
+
+    expect(stream.read).toHaveBeenNthCalledWith(2, {
+      pending: true,
+      count: BATCH_SIZE,
+      blockMs: 0,
+    });
+    expect(store.insert).toHaveBeenCalledTimes(2);
+    expect(store.insert).toHaveBeenNthCalledWith(2, { entries: [positionedOf(1, entry)] });
+    expect(stream.ack).toHaveBeenCalledTimes(2);
+    expect(stream.ack).toHaveBeenNthCalledWith(2, { positions: ['1001-0'] });
+    expect(logger.warn).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores what it has without topping up when the writer is asked to stop during the first read', async () => {
+    const entry = message(1);
+    let deliver: (reply: { records: JobLogStreamRecord[] }) => void = () => undefined;
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockResolvedValueOnce({ records: [] });
+    stream.read.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          deliver = resolve;
+        }),
+    );
+    store.insert.mockResolvedValueOnce({});
+    stream.ack.mockResolvedValueOnce({});
+    await startAndSettle();
+    expect(stream.read).toHaveBeenCalledTimes(2);
+
+    const stopped = writer.stop();
+    deliver({ records: [recordOf(1, entry)] });
+    await expect(stopped).resolves.toEqual({});
+
+    expect(stream.read).toHaveBeenCalledTimes(2);
+    expect(store.insert).toHaveBeenCalledExactlyOnceWith({ entries: [positionedOf(1, entry)] });
+    expect(stream.ack).toHaveBeenCalledExactlyOnceWith({ positions: ['1001-0'] });
+    expect(stream.lease).toHaveBeenCalledOnce();
   });
 
   it('runs one loop when started twice', async () => {
@@ -542,9 +757,7 @@ describe('JobLogWriterImpl', () => {
 
     writer.start();
     writer.start();
-    await vi.waitFor(() => {
-      expect(sleeper.sleep).toHaveBeenCalledTimes(1);
-    });
+    await settle();
 
     expect(schema.apply).toHaveBeenCalledOnce();
     expect(stream.lease).toHaveBeenCalledOnce();
@@ -563,10 +776,8 @@ describe('JobLogWriterImpl', () => {
     );
     store.insert.mockResolvedValueOnce({});
     stream.ack.mockResolvedValueOnce({});
-    writer.start();
-    await vi.waitFor(() => {
-      expect(stream.read).toHaveBeenCalledTimes(2);
-    });
+    await startAndSettle();
+    expect(stream.read).toHaveBeenCalledTimes(2);
 
     const stopped = writer.stop();
     deliver({ records: entries.map((e, i) => recordOf(i, e)) });
@@ -592,30 +803,54 @@ describe('JobLogWriterImpl', () => {
           fail = reject;
         }),
     );
-    writer.start();
-    await vi.waitFor(() => {
-      expect(stream.read).toHaveBeenCalledTimes(2);
-    });
+    await startAndSettle();
+    expect(stream.read).toHaveBeenCalledTimes(2);
 
     const stopped = writer.stop();
     fail(new Error('connection closed'));
     await expect(stopped).resolves.toEqual({});
 
     expect(logger.warn).not.toHaveBeenCalled();
-    expect(sleeper.sleep).not.toHaveBeenCalled();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('stops during a wait between failed rounds without trying again', async () => {
+    stream.lease.mockResolvedValueOnce({ held: true });
+    stream.read.mockRejectedValueOnce(new Error('redis down'));
+    await startAndSettle();
+    expect(vi.getTimerCount()).toBe(1);
+
+    await expect(writer.stop()).resolves.toEqual({});
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_DELAY_MS);
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(stream.lease).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops during the idle wait without another round', async () => {
+    endWithIdleRound();
+    await startAndSettle();
+    expect(vi.getTimerCount()).toBe(1);
+
+    await expect(writer.stop()).resolves.toEqual({});
+
+    expect(vi.getTimerCount()).toBe(0);
+    expect(stream.lease).toHaveBeenCalledTimes(1);
   });
 
   it('stops without confirming a batch that is not stored yet', async () => {
     stream.lease.mockResolvedValueOnce({ held: true });
     stream.read.mockResolvedValueOnce({ records: [recordOf(1, message(1))] });
     store.insert.mockRejectedValueOnce(new LogStoreUnavailableError({ operation: 'insert' }));
-    parkOnSleep();
-    await startAndWaitUntilParked(1);
+    await startAndSettle();
+    expect(store.insert).toHaveBeenCalledTimes(1);
 
     await expect(writer.stop()).resolves.toEqual({});
+    await vi.advanceTimersByTimeAsync(RETRY_MAX_DELAY_MS);
 
     expect(stream.ack).not.toHaveBeenCalled();
     expect(store.insert).toHaveBeenCalledTimes(1);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('stops a writer that was never started', async () => {
