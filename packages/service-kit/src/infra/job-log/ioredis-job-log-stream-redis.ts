@@ -7,6 +7,7 @@ import type {
   JobLogStreamRedis,
 } from '../../domain/job-log/job-log-stream-redis.js';
 import { IoRedisClient } from '../redis/ioredis-client.js';
+import { JobLogStreamUnavailableError } from '../../domain/job-log/errors/job-log-stream-unavailable.error.js';
 
 export interface IoRedisJobLogStreamRedisParams {
   redisUrl: string;
@@ -36,7 +37,7 @@ export class IoRedisJobLogStreamRedis implements JobLogStreamRedis {
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.client.redis.off('ready', onReady);
-        reject(new Error(`Job log Redis connection not ready within ${this.p.openTimeoutMs} ms`));
+        reject(new JobLogStreamUnavailableError({ openTimeoutMs: this.p.openTimeoutMs }));
       }, this.p.openTimeoutMs);
       const onReady = (): void => {
         clearTimeout(timer);

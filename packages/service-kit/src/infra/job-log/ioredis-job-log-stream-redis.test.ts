@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { JobLogStreamUnavailableError } from '../../domain/job-log/errors/job-log-stream-unavailable.error.js';
 import { IoRedisJobLogStreamRedis } from './ioredis-job-log-stream-redis.js';
 
 const client = vi.hoisted(() => ({
@@ -34,7 +35,9 @@ describe('IoRedisJobLogStreamRedis', () => {
 
   it('open rejects when the connection is not ready in time, and stops listening for it', async () => {
     const opening = create().open();
-    const rejection = expect(opening).rejects.toThrow('not ready within 50 ms');
+    const rejection = expect(opening).rejects.toEqual(
+      new JobLogStreamUnavailableError({ openTimeoutMs: 50 }),
+    );
 
     await vi.advanceTimersByTimeAsync(50);
 

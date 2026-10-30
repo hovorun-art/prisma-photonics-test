@@ -51,6 +51,10 @@ export {
   type JobLogDestinationFactory,
   type OpenJobLogDestinationResponse,
 } from './domain/job-log/job-log-destination.js';
+export {
+  JobLogStreamUnavailableError,
+  type JobLogStreamUnavailableErrorParams,
+} from './domain/job-log/errors/job-log-stream-unavailable.error.js';
 export { JobLogStreamDestinationFactory } from './infra/job-log/job-log-stream-destination.factory.js';
 export { JobLogDestinationHook } from './app/job-log/job-log-destination.hook.js';
 export { IoRedisClient, type IoRedisClientParams } from './infra/redis/ioredis-client.js';
