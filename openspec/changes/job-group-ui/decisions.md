@@ -21,6 +21,9 @@
   group's child jobs however many pages of `GET /v1/jobs?groupId=` that takes (user)
 - A cell shows the job's short id and status on hover and focus, and opens the job's page on click
   (user)
+- When the group loads but the first request for its jobs fails, the group, its counts and details
+  stay; where the cells go the page shows "Could not load the jobs", with "Connection lost,
+  retrying" by the live indicator, and the cells appear once a poll succeeds (user)
 - Cells use the design's three colours: completed blue, failed or cancelled red, every other status
   grey (user)
 - Created and Finished are shown as on the job pages: local time of day in the groups list, date
@@ -49,3 +52,4 @@
 
 - [x] How are Created and Finished shown in the groups list and the group's Details card? → as on the job pages: the list shows the local time of day (like the jobs list's Created), the Details card the date and time (like the job page's Details)
 - [x] What does the groups list's Finished column show while a group is still running? → "—", as the job page shows a time not reached yet
+- [x] When the group loads but the first request for its jobs fails, what does the group page show where the cells go? → the group, its counts and details stay; where the cells go the page shows "Could not load the jobs", with "Connection lost, retrying" by the live indicator; the cells appear once a poll succeeds

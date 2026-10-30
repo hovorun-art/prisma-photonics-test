@@ -166,6 +166,7 @@ export const en = {
     },
     jobsRange: (count: number) => `Jobs 1–${count}`,
     noJobs: 'No jobs in this group yet',
+    jobsFailed: 'Could not load the jobs',
     cell: (shortId: string, status: string) => `${shortId} · ${status}`,
     details: 'Details',
     fields: {

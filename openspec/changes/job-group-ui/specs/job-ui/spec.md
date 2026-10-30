@@ -202,6 +202,14 @@ SHALL continue, and the note SHALL go away after the next successful poll.
 - **WHEN** a poll of a group page fails after the group was shown
 - **THEN** the group and its cells stay on screen and "Connection lost, retrying" is shown next to the live indicator
 
+#### Scenario: Group jobs fail to load
+- **WHEN** a user opens a group page, the group loads and the first request for its jobs fails
+- **THEN** the group, its counts and details are shown, "Could not load the jobs" is shown where the cells go, and "Connection lost, retrying" is shown next to the live indicator
+
+#### Scenario: Group jobs load after a failed first load
+- **WHEN** a poll for the group's jobs succeeds after the first request for them failed
+- **THEN** the cells are shown and "Could not load the jobs" is no longer shown
+
 #### Scenario: Group API back again
 - **WHEN** a poll of a group page succeeds after a failed one
 - **THEN** the "Connection lost, retrying" note is no longer shown

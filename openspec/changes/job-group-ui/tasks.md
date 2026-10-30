@@ -77,25 +77,27 @@ Owns: `src/features/groups/details/*`, `src/features/groups/hooks/use-group.ts`,
 `src/features/groups/hooks/use-group-jobs.ts`, `src/features/groups/hooks/use-group-jobs.test.tsx`
 · Depends on: 1 · Parallel with: 2
 
-- [ ] 3.1 Write failing `use-group-jobs.test.tsx` (MSW): "One cell per job" (a group of more jobs
+- [x] 3.1 Write failing `use-group-jobs.test.tsx` (MSW): "One cell per job" (a group of more jobs
   than `groupJobsPageSize` loads every page and returns them oldest first); a job that shows up on
   two pages is returned once
-- [ ] 3.2 Implement `useGroupJobs` (page loop with `groupId` and `limit`, de-duplicated, reversed,
+- [x] 3.2 Implement `useGroupJobs` (page loop with `groupId` and `limit`, de-duplicated, reversed,
   polled, keeps the last data); verify 3.1 passes
-- [ ] 3.3 Write failing `group-page.test.tsx` for "Group page header", "Back to the groups list
+- [x] 3.3 Write failing `group-page.test.tsx` for "Group page header", "Back to the groups list
   from the breadcrumb", "Group details", "Group not checked or finished yet", "Progress of a
   running group", "Group without jobs", "No timing estimates", "No jobs in the group"
-- [ ] 3.4 Implement `useGroup`, `GroupPage`, `GroupHeader`, `GroupProgressCard` and
+- [x] 3.4 Implement `useGroup`, `GroupPage`, `GroupHeader`, `GroupProgressCard` and
   `GroupDetailsList` per `ui.md`; verify 3.3 passes
-- [ ] 3.5 Write failing `group-job-cells.test.tsx` for "One cell per job" (header "Jobs 1–n"),
+- [x] 3.5 Write failing `group-job-cells.test.tsx` for "One cell per job" (header "Jobs 1–n"),
   "Cell colours", "Cell tooltip" and "Open a job from its cell"
-- [ ] 3.6 Implement `GroupJobCells` (25-column grid of links with the tooltip); verify 3.5 passes
-- [ ] 3.7 Write failing tests for "Loading a group", "Unknown group id", "Malformed group id" (no
+- [x] 3.6 Implement `GroupJobCells` (25-column grid of links with the tooltip); verify 3.5 passes
+- [x] 3.7 Write failing tests for "Loading a group", "Unknown group id", "Malformed group id" (no
   request made), "Group page fails to load", "Reload a group after a failed load", "Progress
   appears on the group page", "API unreachable while polling a group" and "Group API back again"
-- [ ] 3.8 Implement skeleton cards, `GroupNotFound` (UUID check with `JobGroupIdParams` before any
+- [x] 3.8 Implement skeleton cards, `GroupNotFound` (UUID check with `JobGroupIdParams` before any
   request) and the error and polling states; verify 3.7 passes
-- [ ] 3.9 Run the `test-case-reviewer` subagent on job-ui component tests `group-page.test.tsx`,
+- [x] 3.10 Write failing tests for "Group jobs fail to load" and "Group jobs load after a failed
+  first load", then show "Could not load the jobs" where the cells go; verify they pass
+- [x] 3.9 Run the `test-case-reviewer` subagent on job-ui component tests `group-page.test.tsx`,
   `group-job-cells.test.tsx` and `use-group-jobs.test.tsx`; add the missing cases it reports or
   note why they belong elsewhere
 
