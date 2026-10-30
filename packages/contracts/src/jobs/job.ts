@@ -248,12 +248,23 @@ export const JobIdParams = z.object({ id: z.uuid() });
 export type JobIdParams = z.infer<typeof JobIdParams>;
 
 /**
+ * A query parameter that may be repeated (`?status=a&status=b`): the query parser gives a string
+ * for one occurrence and an array for several, so both become one list without duplicates. As a
+ * leading transform it leaves the docs to the list schema piped after it.
+ */
+const RepeatedQueryParam = z.transform((value: unknown) => [...new Set([value].flat())]);
+
+/**
  * Query string of `GET /v1/jobs`. Without `limit` job-service uses its configured default page
- * size; the configured maximum is checked by job-service, since it is runtime config.
+ * size; the configured maximum is checked by job-service, since it is runtime config. `status` and
+ * `type` filters combine with AND, the values of one filter with OR; without a filter it is not
+ * applied.
  */
 export const QueryJobsRequest = z.object({
   limit: z.coerce.number().int().positive().optional(),
   offset: z.coerce.number().int().min(0).default(0),
+  status: RepeatedQueryParam.pipe(z.array(JobStatus).min(1)).optional(),
+  type: RepeatedQueryParam.pipe(z.array(JobType).min(1)).optional(),
 });
 export type QueryJobsRequest = z.infer<typeof QueryJobsRequest>;
 

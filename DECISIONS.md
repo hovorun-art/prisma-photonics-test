@@ -134,6 +134,19 @@ maximum page size are configuration; a larger `limit` is a 400, not silently cla
 *Trade-off:* offset paging gets slower on deep pages and can repeat or skip rows while jobs are
 being inserted; keyset (cursor) paging fixes both but makes a numbered table in the UI harder.
 
+**Query filters: repeated parameters, `total` over the matches.** `GET /v1/jobs` filters by
+`status` and `type`; several values repeat the parameter (`?status=failed&status=cancelled`), the
+form OpenAPI describes for query arrays and `URLSearchParams` builds. The two filters combine with
+AND, the values of one with OR, and `total` counts the matching jobs, so paging works over the
+filtered list. An unknown or empty value is a 400 naming the field rather than an empty page, so a
+typo is visible. The shared Zod schema turns one value or several into a list without duplicates,
+and the generated docs list the allowed values. *Alternatives:* comma-separated values (custom
+parsing, weaker docs); an empty page for unknown values (hides client bugs). *Trade-off:* the
+existing indexes serve one value per filter well; several values or both filters together read
+the matches and sort them, and `COUNT` reads every match. Fine at this task's volume; no new index
+was added, the demo seed's volume mode measures it, and sort order and cursor paging are planned
+as optional polish changes that will redesign the indexes around the sort key.
+
 **Limits in the shared contract, page sizes in config.** Priority and max-attempts ranges and
 defaults and the email field lengths are constants in the shared Zod schemas, so the API and the
 UI form validate with the same rules. Values that operators tune (page sizes, enqueue timeout) are

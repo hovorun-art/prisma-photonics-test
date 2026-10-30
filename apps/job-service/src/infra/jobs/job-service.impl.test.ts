@@ -165,19 +165,44 @@ describe('JobServiceImpl', () => {
         items: [storedJob()],
         total: 1,
       });
-      expect(repository.query).toHaveBeenCalledWith({ limit: 2, offset: 1 });
+      expect(repository.query).toHaveBeenCalledExactlyOnceWith({ limit: 2, offset: 1 });
+    });
+
+    it('passes the status and type filters through with the resolved page', async () => {
+      await service.query({ offset: 3, statuses: ['failed', 'cancelled'], types: ['webhook'] });
+
+      expect(repository.query).toHaveBeenCalledExactlyOnceWith({
+        limit: PARAMS.queryDefaultLimit,
+        offset: 3,
+        statuses: ['failed', 'cancelled'],
+        types: ['webhook'],
+      });
     });
 
     it('Default page size', async () => {
       await service.query({ offset: 0 });
 
-      expect(repository.query).toHaveBeenCalledWith({ limit: PARAMS.queryDefaultLimit, offset: 0 });
+      expect(repository.query).toHaveBeenCalledExactlyOnceWith({
+        limit: PARAMS.queryDefaultLimit,
+        offset: 0,
+      });
+    });
+
+    it('accepts a limit exactly at the maximum', async () => {
+      await service.query({ limit: PARAMS.queryMaxLimit, offset: 0 });
+
+      expect(repository.query).toHaveBeenCalledExactlyOnceWith({
+        limit: PARAMS.queryMaxLimit,
+        offset: 0,
+      });
     });
 
     it('Limit above maximum', async () => {
-      await expect(
-        service.query({ limit: PARAMS.queryMaxLimit + 1, offset: 0 }),
-      ).rejects.toBeInstanceOf(QueryLimitExceededError);
+      await expect(service.query({ limit: PARAMS.queryMaxLimit + 1, offset: 0 })).rejects.toSatisfy(
+        (error) =>
+          error instanceof QueryLimitExceededError &&
+          JSON.stringify(error.details).includes(`"maximum":${PARAMS.queryMaxLimit}`),
+      );
       expect(repository.query).not.toHaveBeenCalled();
     });
   });

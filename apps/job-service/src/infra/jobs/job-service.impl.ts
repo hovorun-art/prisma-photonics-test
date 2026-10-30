@@ -105,7 +105,12 @@ export class JobServiceImpl implements JobService {
     if (limit > this.p.queryMaxLimit) {
       throw new QueryLimitExceededError({ maxLimit: this.p.queryMaxLimit });
     }
-    return this.d.repository.query({ limit, offset: req.offset });
+    return this.d.repository.query({
+      limit,
+      offset: req.offset,
+      statuses: req.statuses,
+      types: req.types,
+    });
   }
 
   async update(req: UpdateJobServiceRequest): Promise<UpdateJobServiceResponse> {

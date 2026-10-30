@@ -64,11 +64,24 @@ export class JobsController {
   }
 
   @Get()
-  @ApiOperation({ summary: 'Query jobs a page at a time, newest first' })
+  @ApiOperation({
+    summary: 'Query jobs a page at a time, newest first, optionally filtered by status and type',
+    description:
+      'Repeat `status` or `type` for several values (`?status=failed&status=cancelled`). The two ' +
+      'filters combine with AND, the values of one filter with OR; `total` counts the matching jobs.',
+  })
   @ApiOkResponse({ type: QueryJobsResponseDto })
-  @ApiBadRequestResponse({ description: 'VALIDATION_FAILED (also for a limit above the maximum)' })
+  @ApiBadRequestResponse({
+    description:
+      'VALIDATION_FAILED (also for a limit above the maximum or an unknown filter value)',
+  })
   query(@Query() query: QueryJobsDto): Promise<QueryJobsResponse> {
-    return this.jobs.query({ limit: query.limit, offset: query.offset });
+    return this.jobs.query({
+      limit: query.limit,
+      offset: query.offset,
+      statuses: query.status,
+      types: query.type,
+    });
   }
 
   @Delete(':id')

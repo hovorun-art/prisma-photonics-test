@@ -1,4 +1,4 @@
-import type { Job, JobError, JobStatus } from '@job-queue/contracts';
+import type { Job, JobError, JobStatus, JobType } from '@job-queue/contracts';
 
 /**
  * Job storage, in the same five operations as `JobService`. `update` and `delete` are conditional:
@@ -9,7 +9,7 @@ export interface JobRepository {
   create(req: CreateJobRepositoryRequest): Promise<CreateJobRepositoryResponse>;
   /** Throws `JobNotFoundError` for an unknown id. */
   get(req: GetJobRepositoryRequest): Promise<GetJobRepositoryResponse>;
-  /** Newest first (ties broken by id), with the number of all jobs. */
+  /** Newest first (ties broken by id), with the number of jobs that match the filters. */
   query(req: QueryJobRepositoryRequest): Promise<QueryJobRepositoryResponse>;
   /**
    * Applies `changes` only while the job's status and attempts equal `expected`. Throws
@@ -50,6 +50,10 @@ export interface GetJobRepositoryResponse {
 export interface QueryJobRepositoryRequest {
   limit: number;
   offset: number;
+  /** Only jobs in one of these statuses; every status when omitted. */
+  statuses?: JobStatus[] | undefined;
+  /** Only jobs of one of these types; every type when omitted. */
+  types?: JobType[] | undefined;
 }
 
 export interface QueryJobRepositoryResponse {
