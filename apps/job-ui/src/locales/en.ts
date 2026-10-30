@@ -9,6 +9,10 @@ export const en = {
     apiStatus: 'API status —',
   },
   comingSoon: 'Coming soon',
+  pageError: {
+    title: 'Something went wrong',
+    reload: 'Reload',
+  },
   copy: {
     copy: 'Copy',
     copied: 'Copied',
@@ -76,7 +80,6 @@ export const en = {
     showing: (from: number, to: number, total: number) => `Showing ${from}–${to} of ${total}`,
     previous: 'Previous',
     next: 'Next',
-    loadFailed: 'Could not load jobs.',
   },
   details: {
     emailWaiting: (to: string, subject: string) => `to ${to} · “${subject}”`,
@@ -112,7 +115,6 @@ export const en = {
     deleteDescription: 'The job and its result are removed for good.',
     deleteConfirm: 'Delete',
     deleteCancel: 'Keep job',
-    deleteFailed: 'Could not delete the job.',
   },
   submit: {
     breadcrumbNew: 'New job',
@@ -147,7 +149,6 @@ export const en = {
     cancel: 'Cancel',
     submit: 'Submit job',
     submitting: 'Submitting…',
-    submitFailed: 'Could not submit the job.',
     request: 'Request',
     response: 'Response',
     example: 'Example',

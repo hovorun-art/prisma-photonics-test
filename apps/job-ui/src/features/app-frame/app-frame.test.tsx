@@ -1,7 +1,7 @@
 import { render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { API_BASE_PATH } from '@/config';
 import { en } from '@/locales';
@@ -65,5 +65,51 @@ describe('AppFrame', () => {
     expect(link).toHaveAttribute('href', `${API_BASE_PATH}/docs`);
     expect(link).toHaveAttribute('target', '_blank');
     expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+  });
+
+  describe('an unexpected error on a page', () => {
+    let failing = true;
+    function FlakyPage() {
+      if (failing) throw new Error('render failed');
+      return <p>recovered page</p>;
+    }
+    function renderFlaky() {
+      return render(
+        <MemoryRouter initialEntries={['/jobs']}>
+          <Routes>
+            <Route element={<AppFrame />}>
+              <Route path="/jobs" element={<FlakyPage />} />
+              <Route path="/jobs/new" element={<p>submit page</p>} />
+            </Route>
+          </Routes>
+        </MemoryRouter>,
+      );
+    }
+
+    beforeEach(() => {
+      failing = true;
+    });
+
+    it('Unexpected error on a page: only the page shows the error, the header still works', async () => {
+      const user = userEvent.setup();
+      renderFlaky();
+
+      expect(screen.getByText(en.pageError.title)).toBeVisible();
+      expect(screen.getByRole('button', { name: en.pageError.reload })).toBeVisible();
+      await user.click(
+        within(screen.getByRole('banner')).getByRole('link', { name: en.frame.newJob }),
+      );
+      expect(screen.getByText('submit page')).toBeVisible();
+    });
+
+    it('Reload after an unexpected error: the page is shown again', async () => {
+      const user = userEvent.setup();
+      renderFlaky();
+      failing = false;
+
+      await user.click(screen.getByRole('button', { name: en.pageError.reload }));
+
+      expect(screen.getByText('recovered page')).toBeVisible();
+    });
   });
 });

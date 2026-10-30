@@ -7,6 +7,7 @@ import { cn } from '@/lib/class-names';
 import { en } from '@/locales';
 
 import { ComingSoon } from './coming-soon';
+import { PageErrorBoundary } from './page-error-boundary';
 
 const NAV_LINK =
   'rounded-md px-3 py-2 font-medium text-muted-foreground no-underline hover:text-foreground';
@@ -65,7 +66,9 @@ export function AppFrame() {
         </div>
       </header>
       <main className="mx-auto flex max-w-[1280px] flex-col gap-6 px-6 pt-8 pb-14">
-        <Outlet />
+        <PageErrorBoundary>
+          <Outlet />
+        </PageErrorBoundary>
       </main>
     </div>
   );
