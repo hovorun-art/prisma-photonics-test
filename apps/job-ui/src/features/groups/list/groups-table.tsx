@@ -6,7 +6,7 @@ import { en } from '@/locales';
 import { useJobPresenter } from '../../jobs/hooks/use-job-presenter';
 import { LIST_CELL as CELL, ListTable } from '../../jobs/list/list-table';
 import { StatusBadge } from '../../jobs/list/status-badge';
-import { GroupProgressImpl } from '../model/group-progress.impl';
+import { GroupProgressBar } from '../details/group-progress-bar';
 
 const COLUMNS = [
   en.groups.columns.id,
@@ -15,7 +15,6 @@ const COLUMNS = [
   en.groups.columns.created,
   en.groups.columns.finished,
 ];
-const progress = new GroupProgressImpl();
 
 /** The groups table, styled like the jobs table (design "Main"); scrolls on narrow screens. */
 export function GroupsTable({ groups }: { groups: readonly JobGroup[] | undefined }) {
@@ -33,7 +32,6 @@ export function GroupsTable({ groups }: { groups: readonly JobGroup[] | undefine
 
 function GroupRow({ group }: { group: JobGroup }) {
   const presenter = useJobPresenter();
-  const { percent } = progress.summary({ group });
   const { completed, failed, total } = group;
   return (
     <tr className="h-14 border-t border-border-soft align-middle">
@@ -50,19 +48,13 @@ function GroupRow({ group }: { group: JobGroup }) {
       </td>
       <td className={CELL}>
         <div className="flex items-center gap-3">
-          <div
-            role="progressbar"
-            aria-label={en.groups.progressLabel(completed, failed, total)}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={percent}
-            className="h-1.5 w-24 overflow-hidden rounded-full bg-status-processing-bg"
-          >
-            <div
-              className="h-full rounded-full bg-status-processing"
-              style={{ width: `${percent}%` }}
-            />
-          </div>
+          <GroupProgressBar
+            completed={completed}
+            failed={failed}
+            total={total}
+            label={en.groups.progressLabel(completed, failed, total)}
+            className="h-1.5 w-24 rounded-full"
+          />
           <span className="font-mono text-[13px] text-subtle-foreground">
             {en.groups.progressText(completed, failed, total)}
           </span>
