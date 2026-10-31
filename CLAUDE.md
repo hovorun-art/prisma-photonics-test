@@ -129,8 +129,9 @@ Keep in sync with `CHECK_CMDS` in `.claude/flow.conf`. Root scripts run across a
 ## Purpose and decisions
 
 A take-home assessment, built to production-like standards but scoped to the task. The full list
-of planning decisions is in `docs/concept.md` ("Decided during planning"); design trade-offs for the
-reviewers go into `DECISIONS.md` as they are made, not at the end.
+of planning decisions is in `docs/concept.md` ("Decided during planning"). `DECISIONS.md` is for the
+reviewers and kept short: the task's sections 1–5 and a brief list of the major trade-offs, the
+tricky parts first; library numbers, UI details and code rules do not go there.
 
 - Node 26, TypeScript, npm workspaces monorepo.
 - Backend: NestJS, two apps (`job-service`, `job-execution-service`). Database: Postgres via Prisma (raw SQL via `$queryRaw` where
@@ -314,8 +315,8 @@ types from `packages/contracts`.
 - Libraries: when a library could do something (retries, parsing, scheduling...), do not hand-write
   it and do not pick one yourself. Collect the candidates with their usage and fit (weekly npm
   downloads, latest version and its date, TypeScript types, ESM/CJS, the features the task needs)
-  and let the user choose through AskUserQuestion. Record the choice in `decisions.md` and, with the
-  numbers and the reason, in `DECISIONS.md`.
+  and let the user choose through AskUserQuestion. Record the choice, with the numbers and the
+  reason, in the change's `decisions.md`.
 - Next steps: when a step ends and the next one is a command (`/apply <change>`,
   `/archive <change>`, a commit...), offer the likely next steps as options instead of
   telling the user to type them, and run the one they pick yourself (skills through the Skill tool).
