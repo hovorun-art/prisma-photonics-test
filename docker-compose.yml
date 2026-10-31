@@ -1,6 +1,8 @@
 # The whole stack: `docker compose up --build`; several workers:
 # `docker compose up --build --scale job-execution-service=3`.
 # Variables come from `.env` (copy .env.example); the defaults below match .env.example.
+# The databases are reached inside the compose network only; `npm run dev` publishes their ports
+# on the host through docker-compose.dev.yml.
 name: ${COMPOSE_PROJECT_NAME:-job-queue}
 
 x-node-healthcheck: &node-healthcheck
@@ -16,8 +18,6 @@ services:
       POSTGRES_USER: ${POSTGRES_USER:-jobqueue}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jobqueue}
       POSTGRES_DB: ${POSTGRES_DB:-jobqueue}
-    ports:
-      - '${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
@@ -28,8 +28,6 @@ services:
 
   redis:
     image: redis:8-alpine
-    ports:
-      - '${REDIS_PORT:-6379}:6379'
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 3s
@@ -44,8 +42,6 @@ services:
       CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:-jobqueue}
       CLICKHOUSE_DB: ${CLICKHOUSE_DB:-jobqueue}
       CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 0
-    ports:
-      - '${CLICKHOUSE_HTTP_PORT:-8123}:8123'
     volumes:
       - clickhouse-data:/var/lib/clickhouse
     ulimits:
