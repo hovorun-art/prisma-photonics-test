@@ -793,6 +793,10 @@ describe('PrismaJobRepository against Postgres', () => {
         status: 'scheduled',
         scheduledAt: minutesBefore(1).toISOString(),
       });
+      const scheduledAtTheInstant = await storeUpdatedAt(minutesBefore(3), {
+        status: 'scheduled',
+        scheduledAt: BEFORE.toISOString(),
+      });
       const atTheInstant = await storeUpdatedAt(BEFORE, { status: 'pending' });
       await storeUpdatedAt(new Date(BEFORE.getTime() + 1), { status: 'pending' });
       await storeUpdatedAt(minutesBefore(5), {
@@ -804,7 +808,7 @@ describe('PrismaJobRepository against Postgres', () => {
 
       const { jobs } = await repository.findWaitingSince({ before: BEFORE, limit: 10 });
 
-      expect(ids(jobs)).toEqual([oldPending, dueScheduled, atTheInstant]);
+      expect(ids(jobs)).toEqual([oldPending, dueScheduled, scheduledAtTheInstant, atTheInstant]);
     });
 
     it('findWaitingSince returns the stored run with each job and at most limit, oldest first', async () => {
@@ -825,14 +829,14 @@ describe('PrismaJobRepository against Postgres', () => {
     it('findProcessingSince returns processing jobs not changed since before, oldest first, at most limit', async () => {
       const older = await storeUpdatedAt(minutesBefore(20), { status: 'processing', attempts: 1 });
       const old = await storeUpdatedAt(minutesBefore(10), { status: 'processing', attempts: 1 });
-      await storeUpdatedAt(minutesBefore(5), { status: 'processing', attempts: 1 });
+      const newest = await storeUpdatedAt(minutesBefore(5), { status: 'processing', attempts: 1 });
       await storeUpdatedAt(new Date(BEFORE.getTime() + 1), { status: 'processing', attempts: 1 });
       await storeUpdatedAt(minutesBefore(30), { status: 'pending' });
 
       const all = await repository.findProcessingSince({ before: BEFORE, limit: 10 });
       const limited = await repository.findProcessingSince({ before: BEFORE, limit: 2 });
 
-      expect(ids(all.jobs)).toHaveLength(3);
+      expect(ids(all.jobs)).toEqual([older, old, newest]);
       expect(ids(limited.jobs)).toEqual([older, old]);
     });
   });

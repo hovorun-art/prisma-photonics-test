@@ -725,25 +725,16 @@ describe('JobServiceImpl', () => {
     });
 
     it('Start for a stale attempt', async () => {
+      const scheduledAt = '2026-10-29T11:30:00.000Z';
+      // The scheduled job has made attempt 1, so only attempt 2 may start: 1 is behind, 3 is ahead.
       for (const attempt of [1, 3]) {
         repository.get.mockResolvedValueOnce(
-          inStore(storedJob({ status: 'pending', attempts: 1 })),
-        );
-        repository.get.mockResolvedValueOnce(
-          inStore(storedJob({ status: 'processing', attempts: 2 })),
+          inStore(storedJob({ status: 'scheduled', attempts: 1, scheduledAt })),
         );
 
-        const fromWaiting = service.update({ id: JOB_ID, update: start(attempt) });
-        const fromRunning = service.update({ id: JOB_ID, update: start(attempt) });
-
-        await expect(fromWaiting).rejects.toMatchObject({
+        await expect(service.update({ id: JOB_ID, update: start(attempt) })).rejects.toMatchObject({
           code: 'JOB_STATUS_CONFLICT',
-          details: { status: 'pending' },
-        });
-        // The running job is on attempt 2: attempt 1 is behind it, attempt 3 is not startable.
-        await expect(fromRunning).rejects.toMatchObject({
-          code: 'JOB_STATUS_CONFLICT',
-          details: { status: 'processing' },
+          details: { status: 'scheduled' },
         });
       }
       expect(repository.update).not.toHaveBeenCalled();

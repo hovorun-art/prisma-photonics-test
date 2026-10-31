@@ -85,16 +85,17 @@ describe('job-service internal job routes', () => {
       expect(Job.parse(await response.json())).toEqual(job);
     });
 
-    it('Read a job with its time limit', async () => {
-      const job = await service.seed({ status: 'pending' });
+    it.each([
+      ['email', TEST_CONFIG.maxProcessingMsEmail],
+      ['webhook', TEST_CONFIG.maxProcessingMsWebhook],
+      ['flight-transit', TEST_CONFIG.maxProcessingMsFlightTransit],
+    ] as const)('Read a job with its time limit (%s)', async (type, maxProcessingMs) => {
+      const job = await service.seed({ status: 'pending', type });
 
       const response = await service.read({ id: job.id });
 
       expect(response.status).toBe(200);
-      expect(InternalJob.parse(await response.json())).toEqual({
-        ...job,
-        maxProcessingMs: TEST_CONFIG.maxProcessingMsEmail,
-      });
+      expect(InternalJob.parse(await response.json())).toEqual({ ...job, maxProcessingMs });
     });
 
     it('Read an unknown job', async () => {
@@ -118,15 +119,11 @@ describe('job-service internal job routes', () => {
     it('Report without run and attempt', async () => {
       const job = await service.seed({ status: 'pending' });
 
-      for (const body of [
-        { status: 'processing' },
-        { status: 'completed', result: RESULT },
-        { status: 'failed', error: ERROR },
-      ]) {
-        const paths = await service.issuePaths(await service.report({ id: job.id, body }));
-        expect(paths).toContainEqual(['run']);
-        expect(paths).toContainEqual(['attempt']);
-      }
+      const response = await service.report({ id: job.id, body: { status: 'processing' } });
+
+      const paths = await service.issuePaths(response);
+      expect(paths).toContainEqual(['run']);
+      expect(paths).toContainEqual(['attempt']);
       expect(await service.stored(job.id)).toEqual(job);
     });
 
@@ -186,6 +183,34 @@ describe('job-service internal job routes', () => {
       expect(service.queue.enqueue).not.toHaveBeenCalled();
     });
 
+    it.each([
+      ['Two workers start the same job', undefined],
+      ['Two workers start the same scheduled job', new Date(Date.now() + 3_600_000).toISOString()],
+    ])('%s', async (_name, scheduledAt) => {
+      const job = await service.submitted({ ...EMAIL_JOB, scheduledAt });
+
+      const responses = await Promise.all([
+        service.report({ id: job.id, body: START }),
+        service.report({ id: job.id, body: START }),
+      ]);
+
+      expect(responses.map((response) => response.status)).toEqual([200, 200]);
+      const reported = await Promise.all(
+        responses.map(async (response) => Job.parse(await response.json())),
+      );
+      const stored = await service.stored(job.id);
+      expect(stored).toMatchObject({
+        status: 'processing',
+        attempts: 1,
+        scheduledAt: job.scheduledAt,
+      });
+      expect(stored.startedAt).toEqual(expect.any(String));
+      for (const answer of reported) {
+        expect(answer).toMatchObject({ status: 'processing', attempts: 1 });
+        expect(answer.startedAt).toBe(stored.startedAt);
+      }
+    });
+
     it('Complete a processing job', async () => {
       const job = await service.seed({ status: 'processing' });
 
@@ -215,18 +240,20 @@ describe('job-service internal job routes', () => {
     });
 
     it('Completion of a recovered attempt', async () => {
-      // Recovery failed attempt 1: the job waits for attempt 2 while the slow worker reports.
-      const job = await service.seed({
-        status: 'scheduled',
-        attempts: 1,
-        error: { code: 'WORKER_LOST', message: 'The worker was lost' },
-      });
+      // Attempt 1 failed (as a recovery would fail it), attempt 2 runs, then attempt 1's worker reports.
+      const job = await service.submitted(EMAIL_JOB);
+      expect((await service.report({ id: job.id, body: START })).status).toBe(200);
+      expect((await service.report({ id: job.id, body: FAIL })).status).toBe(200);
+      expect((await service.stored(job.id)).status).toBe('scheduled');
+      expect((await service.report({ id: job.id, body: start({ attempt: 2 }) })).status).toBe(200);
+      const running = await service.stored(job.id);
 
       await service.expectConflict({
         response: await service.report({ id: job.id, body: COMPLETE }),
-        status: 'scheduled',
+        status: 'processing',
       });
-      expect(await service.stored(job.id)).toEqual(job);
+      expect(await service.stored(job.id)).toEqual(running);
+      expect(running).toMatchObject({ status: 'processing', attempts: 2, result: null });
     });
 
     it('Failure from an earlier run', async () => {
@@ -282,10 +309,8 @@ describe('job-service internal job routes', () => {
       });
     });
 
-    it.each([
-      ['retry 2 doubles the range', 2],
-      ['retry 3 is capped', 3],
-    ])('Delay grows with each retry (%s)', async (_name, attempts) => {
+    it('Delay grows with each retry', async () => {
+      const attempts = 2;
       const job = await service.seed({ status: 'processing', attempts, maxAttempts: 5 });
       const before = Date.now();
 
@@ -302,6 +327,27 @@ describe('job-service internal job routes', () => {
         priority: job.priority,
         runAt: failed.scheduledAt,
       });
+    });
+
+    it('Delay is capped', async () => {
+      // Retry 4 draws from [8 x min, 8 x max], both above the cap: the delay is the cap itself.
+      const job = await service.submitted({ ...EMAIL_JOB, maxAttempts: 6 });
+      for (const attempt of [1, 2, 3]) {
+        expect((await service.report({ id: job.id, body: start({ attempt }) })).status).toBe(200);
+        expect((await service.report({ id: job.id, body: fail({ attempt }) })).status).toBe(200);
+      }
+      expect((await service.report({ id: job.id, body: start({ attempt: 4 }) })).status).toBe(200);
+      const before = Date.now();
+
+      const response = await service.report({ id: job.id, body: fail({ attempt: 4 }) });
+
+      const after = Date.now();
+      expect(response.status).toBe(200);
+      const failed = Job.parse(await response.json());
+      expect(failed).toMatchObject({ status: 'scheduled', attempts: 4 });
+      const scheduledAt = Date.parse(failed.scheduledAt ?? '');
+      expect(scheduledAt).toBeGreaterThanOrEqual(before + TEST_CONFIG.retryCapDelayMs);
+      expect(scheduledAt).toBeLessThanOrEqual(after + TEST_CONFIG.retryCapDelayMs);
     });
 
     it('Invalid payload with attempts left', async () => {

@@ -73,8 +73,10 @@ export const TEST_CONFIG = {
   retryMinDelayMs: 1_000,
   retryMaxDelayMs: 2_000,
   retryCapDelayMs: 5_000,
-  /** Not the default, so the tests show the configured limit reaches the internal job read. */
+  /** Not the defaults (and apart from each other), so each type's own limit reaches the internal job read. */
   maxProcessingMsEmail: 12_345,
+  maxProcessingMsWebhook: 23_456,
+  maxProcessingMsFlightTransit: 34_567,
 } as const;
 
 export const AUTHORIZATION = `${SERVICE_TOKEN_SCHEME} ${TEST_CONFIG.serviceToken}`;
@@ -149,11 +151,6 @@ export interface SeedRequest {
 export interface SeedKeyedRequest {
   /** The submission as the contract parses it (defaults applied), with its `idempotencyKey`. */
   request: CreateJobRequest;
-  status: JobStatus;
-  /** Attempts used so far. */
-  attempts: number;
-  /** The error of the last failed attempt; defaults to none. */
-  error?: JobError;
 }
 
 export interface ChangeStatusRequest {
@@ -284,6 +281,10 @@ export class JobServiceUnderTest implements Closable {
         JOB_SERVICE_RETRY_MAX_DELAY_MS: String(TEST_CONFIG.retryMaxDelayMs),
         JOB_SERVICE_RETRY_CAP_DELAY_MS: String(TEST_CONFIG.retryCapDelayMs),
         JOB_SERVICE_MAX_PROCESSING_MS_EMAIL: String(TEST_CONFIG.maxProcessingMsEmail),
+        JOB_SERVICE_MAX_PROCESSING_MS_WEBHOOK: String(TEST_CONFIG.maxProcessingMsWebhook),
+        JOB_SERVICE_MAX_PROCESSING_MS_FLIGHT_TRANSIT: String(
+          TEST_CONFIG.maxProcessingMsFlightTransit,
+        ),
       },
     });
     if (!parsed.ok) throw new Error(parsed.problems);
@@ -520,26 +521,26 @@ export class JobServiceUnderTest implements Closable {
   }
 
   /**
-   * Stores a job as submitted with `request` (its key and fingerprint included, the fingerprint
-   * from the app's own port), in a state no route can create it in at once: a transit whose
-   * departure day is over, or a job waiting for its retry.
+   * Stores a `pending` job as submitted with `request` (its key and fingerprint included, the
+   * fingerprint from the app's own port), as an earlier submission left it: a transit whose
+   * departure day is over now, which no route accepts any more.
    */
-  async seedKeyed({ request, status, attempts, error }: SeedKeyedRequest): Promise<Job> {
+  async seedKeyed({ request }: SeedKeyedRequest): Promise<Job> {
     const { fingerprint } = this.app
       .get<JobRequestFingerprint>(JOB_REQUEST_FINGERPRINT)
       .of({ job: request });
     const { job } = await this.app.get<JobRepository>(JOB_REPOSITORY).create({
       job: {
         ...request,
-        status,
-        attempts,
+        status: 'pending',
+        attempts: 0,
         result: null,
-        error: error ?? null,
+        error: null,
         groupId: request.groupId ?? null,
         idempotencyKey: request.idempotencyKey ?? null,
         requestFingerprint: fingerprint,
         scheduledAt: request.scheduledAt ?? null,
-        startedAt: attempts === 0 ? null : new Date().toISOString(),
+        startedAt: null,
         completedAt: null,
       },
     });

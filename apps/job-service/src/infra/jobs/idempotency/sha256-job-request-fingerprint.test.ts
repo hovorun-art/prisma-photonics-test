@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 
 import type { CreateJobRequest } from '@job-queue/contracts';
 import { describe, expect, it } from 'vitest';
@@ -34,7 +34,7 @@ describe('Sha256JobRequestFingerprint', () => {
     expect(of(reordered)).toBe(of(email));
   });
 
-  it('Replay spelling out the defaults: omitted and spelled-out group and schedule are equal', () => {
+  it('an absent group and schedule give the same fingerprint as an undefined one', () => {
     const spelledOut = { ...email, groupId: undefined, scheduledAt: undefined };
 
     expect(of(spelledOut)).toBe(of(email));
@@ -56,7 +56,7 @@ describe('Sha256JobRequestFingerprint', () => {
     ['payload', { ...email, payload: { ...email.payload, subject: 'Other' } }],
     ['priority', { ...email, priority: 6 }],
     ['max attempts', { ...email, maxAttempts: 4 }],
-    ['group', { ...email, groupId: '3f1d8a52-6c57-4e3c-9f0e-0a1b2c3d4e5f' }],
+    ['group', { ...email, groupId: randomUUID() }],
     ['scheduled time', { ...email, scheduledAt: '2026-11-01T10:00:00.000Z' }],
     [
       'type',

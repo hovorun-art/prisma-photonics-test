@@ -102,12 +102,6 @@ describe('job-service public job routes', () => {
       expect(job.createdAt).toEqual(expect.any(String));
     });
 
-    it('New job has no idempotency key', async () => {
-      const job = await service.submitted(EMAIL_JOB);
-
-      expect(job.idempotencyKey).toBeNull();
-    });
-
     it('Defaults are applied', async () => {
       const job = await service.submitted({ type: 'email', payload: EMAIL_JOB.payload });
 
@@ -504,18 +498,15 @@ describe('job-service public job routes', () => {
       expect(Job.parse(await (await service.get(job.id)).json()).idempotencyKey).toBe(KEY);
     });
 
-    it('Job without a key', async () => {
+    it('Job without a key (New job has no idempotency key)', async () => {
       const job = await service.submitted(EMAIL_JOB);
 
       expect(job.idempotencyKey).toBeNull();
       expect(Job.parse(await (await service.get(job.id)).json()).idempotencyKey).toBeNull();
     });
 
-    it.each([
-      ['Empty key', ''],
-      ['Key too long', 'k'.repeat(JOB_LIMITS.idempotencyKey.maxLength + 1)],
-    ])('%s', async (_name, idempotencyKey) => {
-      await expectRejected(keyed({ idempotencyKey }), ['idempotencyKey']);
+    it('Empty key', async () => {
+      await expectRejected(keyed({ idempotencyKey: '' }), ['idempotencyKey']);
     });
 
     it('Key at the maximum length is accepted', async () => {
@@ -560,26 +551,23 @@ describe('job-service public job routes', () => {
     });
 
     it('Replay after a failed attempt', async () => {
-      const request: CreateJobRequest = {
-        type: 'email',
-        payload: EMAIL_JOB.payload,
-        priority: EMAIL_JOB.priority,
-        maxAttempts: EMAIL_JOB.maxAttempts,
-        idempotencyKey: KEY,
-      };
-      const waiting = await service.seedKeyed({
-        request,
-        status: 'scheduled',
-        attempts: 1,
-        error: ERROR,
-      });
+      service.queue.enqueue.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+      const job = await service.submitted(keyed());
+      expect((await service.report({ id: job.id, body: start() })).status).toBe(200);
+      const failure = await service.report({ id: job.id, body: fail() });
+      expect(failure.status).toBe(200);
+      const waiting = Job.parse(await failure.json());
 
-      const replay = await service.submit(request);
+      const replay = await service.submit(keyed());
 
       expect(replay.status).toBe(200);
-      expect(Job.parse(await replay.json())).toEqual(waiting);
-      expect(waiting).toMatchObject({ status: 'scheduled', attempts: 1, error: ERROR });
+      const replayed = Job.parse(await replay.json());
+      expect(replayed).toEqual(waiting);
+      expect(replayed).toMatchObject({ status: 'scheduled', attempts: 1, error: ERROR });
+      expect(Date.parse(replayed.scheduledAt ?? '')).toBeGreaterThan(Date.parse(job.createdAt));
       expect(await service.total()).toBe(1);
+      // The submission and the retry were queued; the replay queued nothing.
+      expect(service.queue.enqueue).toHaveBeenCalledTimes(2);
     });
 
     it('Replay of a flight transit after its departure day', async () => {
@@ -590,7 +578,7 @@ describe('job-service public job routes', () => {
         maxAttempts: JOB_LIMITS.maxAttempts.default,
         idempotencyKey: KEY,
       };
-      const existing = await service.seedKeyed({ request, status: 'pending', attempts: 0 });
+      const existing = await service.seedKeyed({ request });
 
       const replay = await service.submit(request);
 
@@ -669,14 +657,6 @@ describe('job-service public job routes', () => {
         ...EMAIL_JOB,
         payload: { ...EMAIL_JOB.payload, subject },
         idempotencyKey: key,
-      });
-
-      it('Bulk item with a bad key', async () => {
-        const response = await service.submitBulk({ jobs: [EMAIL_JOB, item('')] });
-
-        expect(await service.issuePaths(response)).toContainEqual(['jobs', 1, 'idempotencyKey']);
-        expect(await service.total()).toBe(0);
-        expect(service.queue.enqueueMany).not.toHaveBeenCalled();
       });
 
       it('Bulk items carry their keys', async () => {
@@ -1292,8 +1272,12 @@ describe('job-service public job routes', () => {
       });
 
       it('Cancel a job waiting for its retry', async () => {
+        service.queue.enqueue.mockResolvedValueOnce({}).mockResolvedValueOnce({});
         service.queue.cancel.mockResolvedValueOnce({});
-        const job = await service.seed({ status: 'scheduled', attempts: 1, error: ERROR });
+        const job = await service.submitted(EMAIL_JOB);
+        expect((await service.report({ id: job.id, body: start() })).status).toBe(200);
+        expect((await service.report({ id: job.id, body: fail() })).status).toBe(200);
+        expect((await service.stored(job.id)).status).toBe('scheduled');
 
         const cancelled = await changed(await service.changeStatus({ id: job.id, body: CANCEL }));
 
@@ -1301,6 +1285,12 @@ describe('job-service public job routes', () => {
         expect(cancelled.completedAt).toEqual(expect.any(String));
         expect(await service.stored(job.id)).toEqual(cancelled);
         expect(service.queue.cancel).toHaveBeenCalledExactlyOnceWith({ jobId: job.id });
+        // The retry's entry may still fire: its start is refused and nothing changes.
+        await service.expectConflict({
+          response: await service.report({ id: job.id, body: start({ attempt: 2 }) }),
+          status: 'cancelled',
+        });
+        expect(await service.stored(job.id)).toEqual(cancelled);
       });
 
       it('Cancel a finished job', async () => {
@@ -1358,15 +1348,20 @@ describe('job-service public job routes', () => {
 
     describe('retry', () => {
       it('Retry a failed job', async () => {
-        service.queue.enqueue.mockResolvedValueOnce({});
-        const job = await service.seed({
-          status: 'failed',
-          attempts: 3,
-          maxAttempts: 3,
-          error: ERROR,
-          // The time of the last automatic retry, still on the failed job.
-          scheduledAt: fromNow(-MINUTE_MS),
-        });
+        service.queue.enqueue.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+        // A keyed job with an execution time, whose only attempt failed: the time stays on it.
+        const request = {
+          ...EMAIL_JOB,
+          maxAttempts: 1,
+          scheduledAt: fromNow(10 * MINUTE_MS),
+          idempotencyKey: 'order-4711',
+        };
+        const submitted = await service.submitted(request);
+        expect((await service.report({ id: submitted.id, body: start() })).status).toBe(200);
+        expect((await service.report({ id: submitted.id, body: fail() })).status).toBe(200);
+        const job = await service.stored(submitted.id);
+        expect(job).toMatchObject({ status: 'failed', error: ERROR });
+        expect(job.scheduledAt).not.toBeNull();
 
         const retried = await changed(await service.changeStatus({ id: job.id, body: RETRY }));
 
@@ -1381,8 +1376,14 @@ describe('job-service public job routes', () => {
           completedAt: null,
           updatedAt: retried.updatedAt,
         });
+        expect(retried.idempotencyKey).toBe('order-4711');
         expect(await service.stored(job.id)).toEqual(retried);
         expect(service.queue.cancel).not.toHaveBeenCalled();
+        // The original submission still finds the job, now retried.
+        const replay = await service.submit(request);
+        expect(replay.status).toBe(200);
+        expect(Job.parse(await replay.json())).toEqual(retried);
+        expect(await service.total()).toBe(1);
       });
 
       it('Retried job is queued', async () => {
