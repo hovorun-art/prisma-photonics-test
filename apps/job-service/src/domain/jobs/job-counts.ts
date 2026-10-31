@@ -4,7 +4,9 @@ import type { JobStatus, JobType } from '@job-queue/contracts';
 export interface JobCounts {
   count(req: CountJobCountsRequest): Promise<CountJobCountsResponse>;
   /** Every stored job, whenever it was created or finished, counted per status and type pair. */
-  countByStatusAndType(): Promise<CountByStatusAndTypeJobCountsResponse>;
+  countByStatusAndType(
+    req: CountByStatusAndTypeJobCountsRequest,
+  ): Promise<CountByStatusAndTypeJobCountsResponse>;
 }
 
 export interface CountJobCountsRequest {
@@ -24,6 +26,11 @@ export interface CountJobCountsResponse {
   recentFailed: number;
   /** Jobs in status completed that finished at or after `throughputSince`. */
   throughputCompleted: number;
+}
+
+export interface CountByStatusAndTypeJobCountsRequest {
+  /** Only jobs of this group, or (`null`) only jobs without one; every job when omitted. */
+  groupId?: string | null | undefined;
 }
 
 /** One cell per status and type pair that has jobs; pairs without jobs are left out. */

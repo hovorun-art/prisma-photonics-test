@@ -138,6 +138,15 @@ describe('JobStatisticsImpl', () => {
     });
   });
 
+  it('counts the status and type pairs of the requested group only', async () => {
+    counts.count.mockResolvedValueOnce(ZERO_COUNTS);
+    counts.countByStatusAndType.mockResolvedValueOnce(CELLS);
+
+    await statistics.get({ groupId: null });
+
+    expect(counts.countByStatusAndType).toHaveBeenCalledExactlyOnceWith({ groupId: null });
+  });
+
   it('Status counts under a type filter: only jobs of that type, type counts unfiltered', async () => {
     counts.count.mockResolvedValueOnce(ZERO_COUNTS);
     counts.countByStatusAndType.mockResolvedValueOnce(CELLS);

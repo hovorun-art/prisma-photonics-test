@@ -862,6 +862,17 @@ describe('job-service public job routes', () => {
           expect(page.total).toBe(2);
         });
 
+        it('Only the jobs without a group are returned for groupId=null', async () => {
+          await service.submittedBulk([{ ...EMAIL_JOB, groupId: GROUP_A }]);
+          const ungrouped = [await service.submitted(EMAIL_JOB), await service.submitted(WEBHOOK_JOB)];
+          await service.submittedBulk([{ ...WEBHOOK_JOB, groupId: GROUP_B }]);
+
+          const page = await filtered([['groupId', 'null']]);
+
+          expect(page.items.map((job) => job.id)).toEqual(newestFirst(ungrouped));
+          expect(page.total).toBe(2);
+        });
+
         it('Group filter combines with status and type', async () => {
           const [, webhook] = await service.submittedBulk([
             { ...EMAIL_JOB, groupId: GROUP_A },

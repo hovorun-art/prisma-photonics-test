@@ -254,6 +254,16 @@ describe('CreateJobRequest for a webhook job', () => {
 });
 
 describe('QueryJobsRequest', () => {
+  it('reads groupId=null as only the jobs without a group', () => {
+    expect(QueryJobsRequest.parse({ groupId: 'null' }).groupId).toBeNull();
+  });
+
+  it('rejects a groupId that is neither a UUID nor null', () => {
+    const result = QueryJobsRequest.safeParse({ groupId: 'none' });
+
+    expect(result.error?.issues.map((issue) => issue.path)).toContainEqual(['groupId']);
+  });
+
   it('coerces query-string numbers and defaults the offset to zero', () => {
     expect(QueryJobsRequest.parse({ limit: '2' })).toEqual({ limit: 2, offset: 0 });
   });

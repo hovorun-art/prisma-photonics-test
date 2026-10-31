@@ -76,8 +76,8 @@ export interface QueryJobServiceRequest {
   statuses?: JobStatus[] | undefined;
   /** Only jobs of one of these types; every type when omitted. */
   types?: JobType[] | undefined;
-  /** Only jobs of this group; jobs of every group and none when omitted. */
-  groupId?: string | undefined;
+  /** Only jobs of this group, or (`null`) only jobs without one; every job when omitted. */
+  groupId?: string | null | undefined;
 }
 
 export interface QueryJobServiceResponse {

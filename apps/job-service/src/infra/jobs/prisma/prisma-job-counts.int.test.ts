@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
 import type { JobStatus } from '@job-queue/contracts';
@@ -40,6 +41,7 @@ describe('PrismaJobCounts against Postgres', () => {
     status: JobStatus;
     completedAt?: string;
     type?: JobRowType;
+    groupId?: string;
   }): Promise<void> => {
     await database.job.create({
       data: {
@@ -50,6 +52,7 @@ describe('PrismaJobCounts against Postgres', () => {
         attempts: 1,
         maxAttempts: 3,
         completedAt: req.completedAt === undefined ? null : new Date(req.completedAt),
+        groupId: req.groupId ?? null,
       },
     });
   };
@@ -161,12 +164,31 @@ describe('PrismaJobCounts against Postgres', () => {
   describe('countByStatusAndType', () => {
     /** Cells in a stable order, since `GROUP BY` returns rows in no defined order. */
     const sortedCells = async () =>
-      (await counts.countByStatusAndType()).cells.toSorted((a, b) =>
+      (await counts.countByStatusAndType({})).cells.toSorted((a, b) =>
         `${a.status}|${a.type}`.localeCompare(`${b.status}|${b.type}`),
       );
 
+    it('counts only the jobs without a group for groupId null, and one group for its id', async () => {
+      const group = randomUUID();
+      await store({ status: 'pending' });
+      await store({ status: 'pending', groupId: group });
+      await store({ status: 'failed', type: 'webhook', groupId: group });
+
+      expect((await counts.countByStatusAndType({ groupId: null })).cells).toEqual([
+        { status: 'pending', type: 'email', count: 1 },
+      ]);
+      expect(
+        (await counts.countByStatusAndType({ groupId: group })).cells.toSorted((a, b) =>
+          a.status.localeCompare(b.status),
+        ),
+      ).toEqual([
+        { status: 'failed', type: 'webhook', count: 1 },
+        { status: 'pending', type: 'email', count: 1 },
+      ]);
+    });
+
     it('has no cells for an empty table', async () => {
-      expect(await counts.countByStatusAndType()).toEqual({ cells: [] });
+      expect(await counts.countByStatusAndType({})).toEqual({ cells: [] });
     });
 
     it('Counts without filters: one cell per status and type pair that has jobs', async () => {

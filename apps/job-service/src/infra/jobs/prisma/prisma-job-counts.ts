@@ -1,12 +1,13 @@
 import type { JobStatus, JobType } from '@job-queue/contracts';
 
 import type {
+  CountByStatusAndTypeJobCountsRequest,
   CountByStatusAndTypeJobCountsResponse,
   CountJobCountsRequest,
   CountJobCountsResponse,
   JobCounts,
 } from '../../../domain/jobs/job-counts.js';
-import type { PrismaClient } from '../../prisma/generated/client.js';
+import { Prisma, type PrismaClient } from '../../prisma/generated/client.js';
 
 export interface PrismaJobCountsDeps {
   /** job-service's one connection pool (`PrismaDatabase`). */
@@ -51,12 +52,21 @@ export class PrismaJobCounts implements JobCounts {
     return counts;
   }
 
-  async countByStatusAndType(): Promise<CountByStatusAndTypeJobCountsResponse> {
+  async countByStatusAndType(
+    req: CountByStatusAndTypeJobCountsRequest,
+  ): Promise<CountByStatusAndTypeJobCountsResponse> {
+    const group =
+      req.groupId === undefined
+        ? Prisma.empty
+        : req.groupId === null
+          ? Prisma.sql`WHERE group_id IS NULL`
+          : Prisma.sql`WHERE group_id = ${req.groupId}::uuid`;
     const cells = await this.d.prisma.$queryRaw<
       { status: JobStatus; type: JobType; count: number }[]
     >`
       SELECT status::text AS "status", type::text AS "type", count(*)::int AS "count"
       FROM jobs
+      ${group}
       GROUP BY status, type`;
     return { cells };
   }

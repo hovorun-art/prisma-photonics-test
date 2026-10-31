@@ -19,8 +19,8 @@ export interface JobListFilters {
 
 export interface QueryJobsApiRequest extends JobListFilters {
   readonly offset: number;
-  /** Only the jobs of this group. */
-  readonly groupId?: string;
+  /** Only the jobs of this group, or (`null`) only the jobs submitted without one. */
+  readonly groupId?: string | null;
   /** Page size; left out means job-service's default. */
   readonly limit?: number;
 }
@@ -74,7 +74,10 @@ export interface LogsJobsApiRequest {
 }
 export type LogsJobsApiResponse = QueryJobLogResponse;
 
-export type StatsJobsApiRequest = JobListFilters;
+export interface StatsJobsApiRequest extends JobListFilters {
+  /** Counts only this group's jobs, or (`null`) only the jobs submitted without one. */
+  readonly groupId?: string | null;
+}
 
 export interface StatsJobsApiResponse {
   readonly stats: QueueStats;

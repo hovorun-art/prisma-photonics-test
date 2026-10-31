@@ -18,7 +18,8 @@ export function useQueueStats() {
   const { filters } = useJobFilters();
   return useQuery({
     queryKey: ['stats', filters],
-    queryFn: async () => (await api.stats(filters)).stats,
+    // The counts match the jobs list, which shows only the jobs without a group.
+    queryFn: async () => (await api.stats({ ...filters, groupId: null })).stats,
     refetchInterval: pollIntervalMs,
     placeholderData: keepPreviousData,
   });

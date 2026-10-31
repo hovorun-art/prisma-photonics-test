@@ -48,7 +48,7 @@ export class FetchJobsApi implements JobsApi {
       path: `${JOBS_ROUTE}?${this.search({
         offset: String(req.offset),
         ...this.filters(req),
-        ...(req.groupId === undefined ? {} : { groupId: req.groupId }),
+        ...this.group(req.groupId),
         ...(req.limit === undefined ? {} : { limit: String(req.limit) }),
       })}`,
       init: { method: 'GET' },
@@ -117,7 +117,7 @@ export class FetchJobsApi implements JobsApi {
   }
 
   async stats(req: StatsJobsApiRequest): Promise<StatsJobsApiResponse> {
-    const search = this.search(this.filters(req));
+    const search = this.search({ ...this.filters(req), ...this.group(req.groupId) });
     const response = await this.send({
       path: search === '' ? STATS_ROUTE : `${STATS_ROUTE}?${search}`,
       init: { method: 'GET' },
@@ -131,6 +131,12 @@ export class FetchJobsApi implements JobsApi {
       ...(req.status === undefined ? {} : { status: req.status }),
       ...(req.type === undefined ? {} : { type: req.type }),
     };
+  }
+
+  /** The `groupId` filter: a group's id, or `null` (sent as the word) for the jobs without one. */
+  private group(groupId: string | null | undefined): Record<string, string> {
+    if (groupId === undefined) return {};
+    return { groupId: groupId ?? 'null' };
   }
 
   private search(params: Record<string, string>): string {

@@ -93,6 +93,20 @@ describe('FetchJobsApi', () => {
     });
   });
 
+  it('query sends groupId=null for the jobs without a group', async () => {
+    let search = '';
+    server.use(
+      http.get(`${BASE}/v1/jobs`, ({ request }) => {
+        search = new URL(request.url).search;
+        return HttpResponse.json({ items: [], total: 0 });
+      }),
+    );
+
+    await api.query({ offset: 0, groupId: null });
+
+    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({ offset: '0', groupId: 'null' });
+  });
+
   it('get returns the job of the id', async () => {
     const job = jobFixtures.build();
     server.use(http.get(`${BASE}/v1/jobs/${job.id}`, () => HttpResponse.json(job)));
