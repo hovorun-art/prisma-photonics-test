@@ -104,7 +104,10 @@ describe('FetchJobsApi', () => {
 
     await api.query({ offset: 0, groupId: null });
 
-    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({ offset: '0', groupId: 'null' });
+    expect(Object.fromEntries(new URLSearchParams(search))).toEqual({
+      offset: '0',
+      groupId: 'null',
+    });
   });
 
   it('get returns the job of the id', async () => {

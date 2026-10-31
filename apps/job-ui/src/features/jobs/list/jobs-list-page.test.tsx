@@ -520,7 +520,9 @@ describe('JobsListPage', () => {
 
       expect(await screen.findByText(en.list.showing(1, 2, 2))).toBeVisible();
       expect(shownIds()).toEqual(shortIds(ungrouped));
-      expect(await within(statusGroup()).findByRole('button', { name: /^Pending 1$/ })).toBeVisible();
+      expect(
+        await within(statusGroup()).findByRole('button', { name: /^Pending 1$/ }),
+      ).toBeVisible();
       expect(jobQueries.every((params) => params.get('groupId') === 'null')).toBe(true);
       expect(statsQueries.every((params) => params.get('groupId') === 'null')).toBe(true);
     });

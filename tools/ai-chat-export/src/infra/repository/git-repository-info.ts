@@ -16,7 +16,11 @@ const run = promisify(execFile);
 export class GitRepositoryInfo implements RepositoryInfo {
   /** The common git dir is the main checkout's `.git`, also when run from a worktree. */
   async mainRoot(): Promise<MainRootRepositoryInfoResponse> {
-    const { stdout } = await run('git', ['rev-parse', '--path-format=absolute', '--git-common-dir']);
+    const { stdout } = await run('git', [
+      'rev-parse',
+      '--path-format=absolute',
+      '--git-common-dir',
+    ]);
     return { path: dirname(stdout.trim()) };
   }
 

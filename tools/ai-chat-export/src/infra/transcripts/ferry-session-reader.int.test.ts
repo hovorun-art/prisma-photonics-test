@@ -348,7 +348,10 @@ describe('FerrySessionReader', () => {
       transcript()
         .prompt('plan it')
         .toolCall({ id, name: 'AskUserQuestion', input: askUserQuestion([question]) })
-        .toolResult({ toolUseId: id, content: "The user doesn't want to proceed with this tool use." }),
+        .toolResult({
+          toolUseId: id,
+          content: "The user doesn't want to proceed with this tool use.",
+        }),
     );
 
     expect(session?.turns[1]).toEqual({ kind: 'questions', items: [{ question, answer: '' }] });
@@ -357,7 +360,10 @@ describe('FerrySessionReader', () => {
   it('Subagent conversation in a collapsed block', async () => {
     const id = `toolu_${randomUUID()}`;
     const subagentFile = await save(
-      transcript(true).prompt('Review the tests of job-ui').thinking('reading').reply('Verdict: OK'),
+      transcript(true)
+        .prompt('Review the tests of job-ui')
+        .thinking('reading')
+        .reply('Verdict: OK'),
     );
 
     const session = await read(
@@ -401,7 +407,11 @@ describe('FerrySessionReader', () => {
     const subagentFile = await save(
       transcript(true)
         .prompt('Review the tests of job-ui')
-        .toolCall({ id: handback, name: 'SubagentHandback', input: { message: '**Verdict:** GAPS' } })
+        .toolCall({
+          id: handback,
+          name: 'SubagentHandback',
+          input: { message: '**Verdict:** GAPS' },
+        })
         .toolResult({ toolUseId: handback, content: 'Delivered.' }),
     );
 
@@ -409,7 +419,14 @@ describe('FerrySessionReader', () => {
       transcript()
         .prompt('review it')
         .toolCall({ id, name: 'Agent', input: { description: 'Review tests' } }),
-      [{ file: subagentFile, agentType: 'test-case-reviewer', description: 'Review tests', startedBy: id }],
+      [
+        {
+          file: subagentFile,
+          agentType: 'test-case-reviewer',
+          description: 'Review tests',
+          startedBy: id,
+        },
+      ],
     );
 
     expect(session?.turns[1]).toEqual({

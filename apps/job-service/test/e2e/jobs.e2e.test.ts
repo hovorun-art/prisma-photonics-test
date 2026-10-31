@@ -864,7 +864,10 @@ describe('job-service public job routes', () => {
 
         it('Only the jobs without a group are returned for groupId=null', async () => {
           await service.submittedBulk([{ ...EMAIL_JOB, groupId: GROUP_A }]);
-          const ungrouped = [await service.submitted(EMAIL_JOB), await service.submitted(WEBHOOK_JOB)];
+          const ungrouped = [
+            await service.submitted(EMAIL_JOB),
+            await service.submitted(WEBHOOK_JOB),
+          ];
           await service.submittedBulk([{ ...WEBHOOK_JOB, groupId: GROUP_B }]);
 
           const page = await filtered([['groupId', 'null']]);
