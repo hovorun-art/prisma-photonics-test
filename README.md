@@ -153,6 +153,14 @@ integration and e2e tests of the backends share one set of helpers in `tests/sup
 Redis and Postgres connections, migrates test databases); it is test-only and never part of an
 image.
 
+## AI chat export
+
+`AI_CHAT.md` holds the Claude Code sessions of this repository (main checkout, every worktree and
+their subagents), conversation only, with the home path, the git email and secret-shaped text
+masked. Regenerate it with `npm run export:chats` (reads `~/.claude/projects`; another folder with
+`npm run export:chats -- --transcripts <dir>`). It picks every transcript folder whose name
+extends the repository path's, so worktrees that were removed are included.
+
 ## Architecture
 
 ```

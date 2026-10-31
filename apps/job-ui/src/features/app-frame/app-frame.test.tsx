@@ -41,6 +41,7 @@ function renderAt(path: string) {
           <Route path="/jobs/new" element={<p>submit page</p>} />
           <Route path="/jobs/:id" element={<p>job page</p>} />
           <Route path="/groups" element={<p>groups list page</p>} />
+          <Route path="/groups/new" element={<p>new group page</p>} />
           <Route path="/groups/:id" element={<p>group page</p>} />
         </Route>
       </Routes>
@@ -55,7 +56,8 @@ describe('AppFrame', () => {
     [`/jobs/${JOB_ID}`, 'job page'],
     ['/groups', 'groups list page'],
     [`/groups/${GROUP_ID}`, 'group page'],
-  ])('Header on every page: %s shows the mark, navigation and New job', (path, page) => {
+    ['/groups/new', 'new group page'],
+  ])('Header on every page: %s shows the mark, navigation, New group and New job', (path, page) => {
     renderAt(path);
 
     const header = screen.getByRole('banner');
@@ -65,6 +67,7 @@ describe('AppFrame', () => {
     expect(within(nav).getByRole('link', { name: en.frame.groups })).toBeVisible();
     expect(within(nav).getByRole('link', { name: en.frame.apiDocs })).toBeVisible();
     expect(within(header).getByRole('link', { name: en.frame.newJob })).toBeVisible();
+    expect(within(header).getByRole('link', { name: en.frame.newGroup })).toBeVisible();
     expect(screen.getByText(page)).toBeVisible();
   });
 
@@ -82,6 +85,15 @@ describe('AppFrame', () => {
     await user.click(screen.getByRole('link', { name: en.frame.newJob }));
 
     expect(screen.getByText('submit page')).toBeVisible();
+  });
+
+  it('New group from the header: opens the new group page', async () => {
+    const user = userEvent.setup();
+    renderAt('/jobs');
+
+    await user.click(screen.getByRole('link', { name: en.frame.newGroup }));
+
+    expect(screen.getByText('new group page')).toBeVisible();
   });
 
   it('Jobs in the navigation opens the jobs list', async () => {

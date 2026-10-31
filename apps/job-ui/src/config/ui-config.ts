@@ -11,6 +11,11 @@ export interface UiConfig {
    * (`JOB_SERVICE_QUERY_MAX_LIMIT`, default 100) or less.
    */
   readonly groupJobsPageSize: number;
+  /**
+   * Most jobs the new group page lets a group have; job-service's bulk maximum
+   * (`JOB_SERVICE_BULK_MAX_JOBS`, default 100) or less.
+   */
+  readonly maxGroupJobs: number;
   /** Map tile URL template of the transit report (`{z}`, `{x}`, `{y}`). */
   readonly mapTileUrl: string;
   /** Attribution the tile server requires, as HTML. */
@@ -22,6 +27,7 @@ export const UI_CONFIG: UiConfig = {
   copiedFeedbackMs: 1500,
   shortIdLength: 8,
   groupJobsPageSize: 100,
+  maxGroupJobs: 100,
   mapTileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
   mapTileAttribution:
     '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',

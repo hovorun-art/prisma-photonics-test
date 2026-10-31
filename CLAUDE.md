@@ -140,8 +140,9 @@ reviewers go into `DECISIONS.md` as they are made, not at the end.
 - API docs: Swagger/OpenAPI generated from the Zod schemas.
 - Tests: Vitest in every workspace; integration tests run against real Postgres and Redis.
 - Aircraft data: generated from a bundled static airport list, no external API.
-- Submission files: `README.md`, `DECISIONS.md`, `AI_USAGE.md`, `docs/ai-chats/` (Markdown exported
-  from Claude Code sessions by a script at the end), `Dockerfile`, `docker-compose.yml`.
+- Submission files: `README.md`, `DECISIONS.md`, `AI_USAGE.md`, `AI_CHAT.md` (one Markdown file
+  exported from the Claude Code sessions by `npm run export:chats`, `tools/ai-chat-export`),
+  `Dockerfile`, `docker-compose.yml`.
 
 Specs must describe user-visible behaviour, not implementation details, so they stay reusable if
 the stack changes.
@@ -172,7 +173,9 @@ apps/job-group-service      Job Group context: groups of jobs a client follows a
                             (GroupChildJobs) and sets its status. Own Postgres schema `job_groups`
                             (JOB_GROUP_SERVICE_DATABASE_URL), no Redis, no service token; one instance.
                             src/{domain,infra,app}/ + main.ts; prisma/ (schema, migrations)
-apps/job-ui                 React + Vite UI (today: the started page), src/features/<feature>/
+apps/job-ui                 React + Vite UI: jobs list, job page, submit page, groups list, group
+                            page and the new group page (one tab per job; creates the group, then
+                            bulk-submits its jobs), src/features/<feature>/
 packages/kernel             framework-free: Clock, Random, Sleeper ports, DomainError + ERROR_CODES,
                             SignalGracefulShutdown, ProcessFatalErrorHandler, the job errors shared by
                             the backends (JobNotFoundError, JobStatusConflictError,

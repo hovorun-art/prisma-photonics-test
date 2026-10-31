@@ -12,7 +12,8 @@
   "workspaces": [
     "packages/*",
     "apps/*",
-    "tests/*"
+    "tests/*",
+    "tools/*"
   ],
   "scripts": {
     "build:packages": "npm run build -w @job-queue/kernel -w @job-queue/contracts -w @job-queue/service-kit",
@@ -24,6 +25,7 @@
     "test:unit": "vitest run --passWithNoTests --project '*:unit)'",
     "test:integration": "vitest run --passWithNoTests --project '*:integration)'",
     "test:e2e": "npm run build:packages && npm run test:e2e -w @job-queue/job-ui && npm run test:e2e -w @job-queue/system-e2e",
+    "export:chats": "npm run build -w @job-queue/ai-chat-export --silent && node tools/ai-chat-export/dist/main.js",
     "format": "prettier --write .",
     "format:check": "prettier --check ."
   },

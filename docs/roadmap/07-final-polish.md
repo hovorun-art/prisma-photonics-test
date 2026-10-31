@@ -7,7 +7,7 @@ reviewer can follow, honest `DECISIONS.md` and `AI_USAGE.md`, and the AI chat tr
 
 | Change | Intent | Depends on |
 |---|---|---|
-| `ai-chat-export` | Script that converts Claude Code sessions into Markdown under `docs/ai-chats/`. Collects the transcripts of every worktree's project folder, not only the main checkout's. Done early, so no session is lost before the end | - |
+| `ai-chat-export` | Script that converts Claude Code sessions into one Markdown file, `AI_CHAT.md`. Collects the transcripts of every worktree's project folder, not only the main checkout's. Done early, so no session is lost before the end | - |
 | `ai-usage-notes` | Not a change but a running log, started now: concrete cases for `AI_USAGE.md` (what helped, what had to be fixed, especially around concurrency, what AI struggled with), written down as they happen | - |
 | `concurrency-proof` | System-level stress and chaos test: several workers, a few hundred jobs of mixed priority, workers killed mid-job (`docker kill`) and stopped (`docker stop`); asserts every job finishes and none runs twice. Its numbers back `DECISIONS.md` sections 1 and 2 | milestone 5 |
 | `test-review` | Review the per-app and system e2e suites against the testing rules (one file per spec area, coverage, flakiness) and check across all merged changes that every spec scenario has a test named after it; fix the gaps | all earlier milestones |

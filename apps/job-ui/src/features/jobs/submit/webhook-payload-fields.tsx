@@ -7,7 +7,7 @@ import { cn } from '@/lib/class-names';
 import { en } from '@/locales';
 
 import type { WebhookFormField } from '../model/webhook-form-values';
-import { FormField, type JobFormFields } from './job-form';
+import { FormField, type JobFormFields } from './job-form-sections';
 
 /**
  * "2. Payload" of a webhook job (design "SubmitWebhook"): Method and URL on one row, the JSON

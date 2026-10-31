@@ -1,3 +1,4 @@
+import { useContext } from 'react';
 import { useController, useFormContext } from 'react-hook-form';
 
 import { Input } from '@/components/ui/input';
@@ -6,7 +7,8 @@ import { en } from '@/locales';
 
 import { useRunSchedule } from '../hooks/use-run-schedule';
 import type { JobRun, RunScheduleValues } from '../model/run-schedule';
-import { FormField } from './job-form';
+import { FieldIdPrefixContext } from './field-id-prefix-context';
+import { FormField } from './job-form-sections';
 
 const CHOICES: readonly { run: JobRun; label: string }[] = [
   { run: 'now', label: en.submit.runNow },
@@ -29,6 +31,7 @@ export function RunChoice({
   const { control } = useFormContext<RunScheduleValues>();
   const { field } = useController({ control, name: 'run' });
   const { timeZone } = useRunSchedule().timeZone();
+  const id = `${useContext(FieldIdPrefixContext)}-${FIELD}`;
   return (
     <>
       <div className="flex flex-col gap-2">
@@ -68,7 +71,7 @@ export function RunChoice({
             className="self-start font-mono"
             {...input}
             // The hint names the time zone the time is read in, so it describes the input too.
-            aria-describedby={error ? `field-${FIELD}-error` : `field-${FIELD}-hint`}
+            aria-describedby={error ? `${id}-error` : `${id}-hint`}
           />
         </FormField>
       )}
