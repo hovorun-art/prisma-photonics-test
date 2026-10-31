@@ -60,7 +60,7 @@ model Job {
 
   /// The query's order (newest first, id breaks ties so offset paging is stable).
   @@index([createdAt(sort: Desc), id(sort: Desc)], map: "jobs_created_at_id_idx")
-  /// Status filters and the sweep of pending jobs.
+  /// Status filters.
   @@index([status, createdAt(sort: Desc)], map: "jobs_status_created_at_idx")
   /// Type filters.
   @@index([type, createdAt(sort: Desc)], map: "jobs_type_created_at_idx")

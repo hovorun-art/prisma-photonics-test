@@ -713,6 +713,20 @@ describe('JobServiceImpl', () => {
       expect(repository.update).not.toHaveBeenCalled();
     });
 
+    it('Start a job that is not pending: a processing job refuses a start for another attempt', async () => {
+      for (const attempt of [1, 3]) {
+        repository.get.mockResolvedValueOnce(
+          inStore(storedJob({ status: 'processing', attempts: 2 })),
+        );
+
+        const update = service.update({ id: JOB_ID, update: start(attempt) });
+
+        await expect(update).rejects.toBeInstanceOf(JobStatusConflictError);
+        await expect(update).rejects.toMatchObject({ details: { status: 'processing' } });
+      }
+      expect(repository.update).not.toHaveBeenCalled();
+    });
+
     it('Repeated start of the same attempt', async () => {
       const running = storedJob({ status: 'processing', attempts: 2 });
       repository.get.mockResolvedValueOnce(inStore(running, 3));

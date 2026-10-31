@@ -509,6 +509,12 @@ describe('job-service public job routes', () => {
       await expectRejected(keyed({ idempotencyKey: '' }), ['idempotencyKey']);
     });
 
+    it('Key too long', async () => {
+      const idempotencyKey = 'k'.repeat(JOB_LIMITS.idempotencyKey.maxLength + 1);
+
+      await expectRejected(keyed({ idempotencyKey }), ['idempotencyKey']);
+    });
+
     it('Key at the maximum length is accepted', async () => {
       const idempotencyKey = 'k'.repeat(JOB_LIMITS.idempotencyKey.maxLength);
 
@@ -714,6 +720,14 @@ describe('job-service public job routes', () => {
         });
         expect(body.details).toEqual({ idempotencyKey: 'k-2', existingJobId: existing.id });
         expect(await service.total()).toBe(1);
+        expect(service.queue.enqueueMany).not.toHaveBeenCalled();
+      });
+
+      it('Bulk item with a bad key', async () => {
+        const response = await service.submitBulk({ jobs: [item('k-1'), item('')] });
+
+        expect(await service.issuePaths(response)).toContainEqual(['jobs', 1, 'idempotencyKey']);
+        expect(await service.total()).toBe(0);
         expect(service.queue.enqueueMany).not.toHaveBeenCalled();
       });
 

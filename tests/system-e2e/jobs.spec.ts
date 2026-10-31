@@ -315,7 +315,6 @@ test.describe('reliability', () => {
     payload: { to: 'ada@example.com', subject: `${subject} ${index}`, body: 'Hi Ada' },
   });
 
-  /** job-service's log lines, parsed. */
   test('Bulk retried after a lost answer on the full system: the same jobs answer 200, and exist once', async ({
     request,
   }) => {

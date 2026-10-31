@@ -685,7 +685,7 @@ export class JobServiceImpl implements JobService {
     if (!parsed.success) throw new InvalidJobResultError({ issues: parsed.error.issues });
   }
 
-  /** The job keeps its status when this fails; the sweep in `crash-recovery` queues it later. */
+  /** The job keeps its status when this fails; the recovery pass (`JobRecovery`) queues it later. */
   private async enqueue({ jobId, run, attempt, priority, runAt }: EnqueueRequest): Promise<void> {
     try {
       await this.d.queue.enqueue({ jobId, run, attempt, priority, runAt });
