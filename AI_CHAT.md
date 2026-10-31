@@ -51,6 +51,7 @@ Claude Code sessions of this repository (main checkout and every worktree), olde
 - 2026-10-30 21:36 UTC · reliability · [Job reliability](#session-f62ad488-103b-400d-902f-e28764c3e24c)
 - 2026-10-30 22:37 UTC · reliability · [Reliability double-check of change](#session-e2bd4975-3cae-4663-8280-5e9ddcc0e224)
 - 2026-10-30 23:16 UTC · main · [Job page logs](#session-cb803044-c49e-4230-8da2-751ff4467e71)
+- 2026-10-31 00:24 UTC · main · [Job-group-tracker completed statistic](#session-d71f5123-0c48-48e2-afae-866065c74ca3)
 
 <a id="session-b37952d5-840b-4f1e-b96f-b2d2c1b6b355"></a>
 
@@ -27978,6 +27979,85 @@ The new implementation files in this area were written together with their tests
 
 Now the implementation.
 
+**Verdict: GAPS**
+
+Most of the new behaviour has real tests: backoff, run/attempt checks, the idempotent start and the idempotency flows at unit level, the key column and the recovery queries at integration level, and the replay and conflict routes at e2e level. The gaps:
+- The e2e race tests for two workers starting the same job were deleted in this change and not replaced.
+- Some e2e tests seed states that the routes can create. Because of that, they would pass even if the behaviour they are named after were broken.
+- One cap test passes or fails by chance.
+- A few e2e tests repeat what the schema tests already cover.
+
+Task 2.7 in `tasks.md` is ticked, but five e2e tests it lists do not exist in `internal-jobs.e2e.test.ts`. Three of them ("Start a job that is not pending", "Two workers start the same job", "Two workers start the same scheduled job") were removed by `git diff master..HEAD`.
+
+**Corner cases**
+
+*Unit: `apps/job-service/src/infra/jobs/job-service.impl.test.ts`*
+- ✅ Start a pending job / Start a scheduled job / Start a job that is not pending (:673, :687, :704)
+- ✅ Repeated start of the same attempt: 200, no write, no log (:716)
+- ✅ Start from another run (:752); Failure from an earlier run (:872)
+- ✅ Two workers start the same job: a lost write is re-read and the winner is returned (:764); a lost start stays a conflict for a cancelled job, another run or another attempt (:784)
+- ✅ Completion of a recovered attempt, both the scheduled and the processing-attempt-2 variants (:852)
+- ✅ Failure with attempts left: exact changes, `scheduledAt` = now + delay, enqueue with `runAt` (:891); Delay grows: retry number = attempts (:918); current run (:934); priority kept (:953)
+- ✅ Retry survives an unavailable queue (:980); Invalid payload with attempts left (:1006); Failure on the last attempt (:1024); Fail a job that is not processing (:1042)
+- ✅ Retry a failed job clears `scheduledAt`, new run (:1551, :1584)
+- ✅ Idempotency, single: key stored and looked up; no key means no lookup; identical replay stores, queues and logs nothing; conflict carries the existing id; key matched before the departure-day rule; a new key does not bypass the rule; lost race re-reads once; lost race against another request is a conflict; no second retry (:1083 to :1219)
+- ✅ Idempotency, bulk: one lookup for all keys; existing item kept at its position and only new jobs queued; every item existing gives `created: false` (repository order reversed); one conflict stores nothing; a new item breaking a rule next to an existing one is refused; a lost key restarts the insert; bounded tries, then rethrow and an error log (:1272 to :1435)
+- ⚠️ Start for a stale attempt (:727): the spec's WHEN is a `scheduled` job, but the test uses `pending` (attempts 1). Seed `scheduled` with attempts 1 and send attempts 1 and 3.
+
+*Unit: retry delay and fingerprint*
+- ✅ First retry draws in [min, max] and the drawn value is returned (`exponential-jitter-retry-delay.test.ts:18`); retries 2 and 3 double the bounds (:27); both bounds stop at the cap (:38)
+- ✅ Fingerprint: pinned canonical string (`sha256-job-request-fingerprint.test.ts:19`), payload key order (:28), offset notation (:43), key excluded (:50), payload / priority / maxAttempts / group / scheduledAt / type each change it (:55)
+
+*Integration: `prisma-job-repository.int.test.ts`*
+- ✅ Key and fingerprint stored and read back (:662); jobs without a key never collide (:677); taken key on `create` gives `IdempotencyKeyTakenError` and nothing is stored (:685); on `createMany` too (:695); key free again after delete (:710); `findByIdempotencyKeys` (:723) and with an empty key list (:737); `update` stores and clears `scheduledAt` (:744)
+- ✅ `findWaitingSince`: pending, due scheduled, `updatedAt` at the cut-off instant included, young / not-due / other statuses left out (:790); run, limit and order (:810)
+- ⚠️ `findProcessingSince` (:825): the unlimited call only asserts a count of 3. Assert the three ids.
+- ❌ `findWaitingSince` with a scheduled job whose `scheduledAt` equals `before` (the edge of the `lte`): it should be returned.
+
+*E2e: `jobs.e2e.test.ts`*
+- ✅ Job with a key (:500); Job without a key (:507); Empty key (:514); key at max length fits the column (:521); Identical replay: 201 then 200, total 1, one enqueue (:529); Replay spelling out the defaults (:543); flight transit replay after its departure day (:585, seeding is legitimate here); scheduled replay with an offset (:602); same key with different payload / priority / group (:613); Two submissions at the same time (:630); Key reused after delete (:644); Key taken by a finished job (:656); Bulk items carry their keys (:682); One item already exists (:688); Every item already exists (:712); One item conflicts (:723); Duplicate key within the bulk (:740)
+- ⚠️ Replay after a failed attempt (:562): `seedKeyed` stores a `scheduled` job with `scheduledAt: null`, the same as the request. An implementation that compares stored fields instead of the fingerprint (the alternative rejected in design D2) would still pass. The routes can create this state, so drive it through them: submit with the key, internal start with run 1 / attempt 1, internal fail. Then replay and assert 200 with the job in `scheduled`, carrying the backoff `scheduledAt` and the error, total 1, and no new enqueue.
+- ⚠️ Cancel a job waiting for its retry (:1294): the job is seeded although the routes can create the state (submit, start, fail). The test also does not check the job-service half of "its queued next attempt never runs". Add a `processing` report with run 1 / attempt 2 after the cancel, expecting 409 `cancelled` with stored attempts still 1.
+- ⚠️ Retry a failed job (:1360): the seeded job's `idempotencyKey` is `null`, so "keeps its idempotency key" cannot fail. Use a keyed job that failed its last attempt through the routes, assert the key is kept, and check that a replay after the retry still answers 200 (the fingerprint survived).
+
+*E2e: `internal-jobs.e2e.test.ts`*
+- ✅ Read a job with its time limit (:88); Report without run and attempt (:118); Start a pending / scheduled job (:159, :172); Failure from an earlier run, driven through the routes (:232); Failure with attempts left: `scheduledAt` within the configured range and enqueue `runAt` = `scheduledAt` (:260); Delay grows, retry 2 (:285); Invalid payload with attempts left (:307); Retry survives an unavailable queue (:361); Retries count attempts through the routes (:402); last attempt (:456); start / complete / fail after a cancel (:476 to :515)
+- ❌ Two workers start the same job: two simultaneous `processing` reports (run 1, attempt 1) for a `pending` job. Expect both 200 with the same `processing` job, stored attempts 1 and one `startedAt`. This is the only level where the real conditional write and the re-read meet.
+- ❌ Two workers start the same scheduled job: the same race on a `scheduled` job. Expect both 200, attempts 1, `scheduledAt` unchanged.
+- ⚠️ Completion of a recovered attempt (:217): it uses the `scheduled` variant, which the status check alone refuses, so the attempt check is never exercised through the routes. Follow the spec's WHEN: start, fail, start attempt 2, then report `completed` for attempt 1. Expect 409 with `processing` in `details`, and the stored job unchanged (attempts 2, result `null`).
+- ⚠️ Delay grows, "retry 3 is capped" (:285): with the test config the draw range is [4000, 8000], capped at 5000. If the cap were not wired, the test would still pass about a quarter of the time. Use retry 4 (attempts 4, maxAttempts 6): both bounds are then above the cap, so `scheduledAt` must lie in [before + 5000, after + 5000]. Without the cap it is always at least before + 8000.
+- ❌ `maxProcessingMs` per type: read a webhook or flight-transit job and expect its own configured value. Today a controller that always returned the email value would pass. Either set a distinct `JOB_SERVICE_MAX_PROCESSING_MS_WEBHOOK` in `TEST_CONFIG`, or expect the default 30000.
+
+*E2e: stats, service, errors*
+- ✅ Failed attempt that will be retried is counted as scheduled (`stats.e2e.test.ts:83`); error and service tests updated with run and attempt.
+- ❌ Docs list the job routes (`service.e2e.test.ts`): only the bulk route's 200 and 409 are asserted. Add the single `POST /v1/jobs` responses `['200', '201', '400', '409', ...]` and `idempotencyKey` in its request schema.
+
+**Duplicates**
+- `jobs.e2e.test.ts:514` "Key too long" repeats `packages/contracts/src/jobs/job.test.ts:206`. Delete it; "Empty key" is enough to prove the wiring.
+- `jobs.e2e.test.ts:674` "Bulk item with a bad key" repeats `job.test.ts:1109`. The bulk-route validation wiring is already shown by :418 and :740. Delete it.
+- `jobs.e2e.test.ts:105` "New job has no idempotency key" is the same case as `jobs.e2e.test.ts:507` "Job without a key". Merge them into one test named after both scenarios.
+- `internal-jobs.e2e.test.ts:118` loops over all three report variants, which `job.test.ts:470` already covers. Keep one variant.
+
+**Belongs elsewhere**
+- The second THEN of "Cancel a job waiting for its retry" ("after its `scheduledAt` has passed the job is still `cancelled`") needs the full system. No level covers it: the system e2e only has "Cancelled waiting job never runs" for a `pending` job, and group 6 does not list it. Add it to group 6, or rely on the e2e refusal check suggested above.
+
+**Rule violations**
+- `sha256-job-request-fingerprint.test.ts:59`: hardcoded UUID literal. Use `randomUUID()`.
+- `sha256-job-request-fingerprint.test.ts:37`: named "Replay spelling out the defaults" but it compares an absent `groupId` / `scheduledAt` with an `undefined` one. The real scenario (default priority and maxAttempts, applied by Zod) is in e2e at `jobs.e2e.test.ts:543`. Rename it so the scenario trace is not misleading.
+- `jobs.e2e.test.ts:570` and `:1296`: they seed through the repository states the routes can create. `seedKeyed` (`job-service-under-test.ts:527`) also stores a `scheduled` job with `scheduledAt: null`, a state the app never produces.
+- `tasks.md` 2.7 is ticked although these e2e tests it lists are missing: Repeated start of the same attempt, Start for a stale attempt, Start a job that is not pending, Two workers start the same job / the same scheduled job. The two race tests are needed (see above). The other three are covered by unit tests and need not be added at e2e, but the task text should say so.
+
+**Test run** (from `~/Dev/prisma-photonics-test-reliability/apps/job-service`; the same command from the repository root finds no projects):
+`npx vitest related --run --project job-service:unit --project job-service:integration src/infra/jobs/job-service.impl.ts src/infra/jobs/retry/exponential-jitter-retry-delay.ts src/infra/jobs/idempotency/sha256-job-request-fingerprint.ts src/infra/jobs/prisma/prisma-job-repository.ts`
+Result: Test Files 4 passed (4), Tests 161 passed (161), Duration 4.78s. No flaky or slow tests seen.
+
+E2e files for you to run (I did not run them):
+- `apps/job-service/test/e2e/jobs.e2e.test.ts`
+- `apps/job-service/test/e2e/internal-jobs.e2e.test.ts`
+- `apps/job-service/test/e2e/stats.e2e.test.ts`
+- `apps/job-service/test/e2e/errors.e2e.test.ts`
+- `apps/job-service/test/e2e/service.e2e.test.ts`
+
 </details>
 
 ### Claude
@@ -28005,6 +28085,829 @@ All 21 recovery tests pass and lint is clean. Task 3.3 is the timer. The design 
 ### Claude
 
 Sharing it, then. Checking service-kit's layout and dependencies so the new class lands in the right layer.
+
+They fail because the class doesn't exist yet. Implementing it from `JobGroupPoll`'s logic.
+
+The kernel package simply hasn't been built in this checkout (`packages/kernel/dist` is missing), and service-kit typechecks against it. Building the shared packages.
+
+<details>
+
+<summary>Subagent general-purpose: Fix group 2 test review gaps</summary>
+
+#### User
+
+Your git worktree is `~/Dev/prisma-photonics-test-reliability/.claude/worktrees/reliability-group2-review` (branch `reliability-group2-review`, at 37b085e, the commit of group 2 of the OpenSpec change `reliability`). Work ONLY there: start every Bash command with `cd ~/Dev/prisma-photonics-test-reliability/.claude/worktrees/reliability-group2-review && ...` and give Read/Edit/Write absolute paths under it. Never touch `~/Dev/prisma-photonics-test-reliability` itself. Run `npm install` there first if `node_modules` is missing, then `npm run build:packages`.
+
+Task: act on an independent test review of group 2 (job-service). Read CLAUDE.md ("Testing", especially the per-app e2e rules: drive the app through its HTTP API, seed through the repository only for states no route can create, `...Once` stubs, `randomUUID()` for ids, test names = spec scenario names) and openspec/changes/reliability/ (specs, design, tasks). Then make these changes, test first where a test is new:
+
+Unit, `apps/job-service/src/infra/jobs/job-service.impl.test.ts`:
+1. "Start for a stale attempt": the spec's WHEN is a `scheduled` job; seed `scheduled` with attempts 1 and send attempt 1 and attempt 3 (both 409, attempts unchanged).
+
+Unit, `apps/job-service/src/infra/jobs/idempotency/sha256-job-request-fingerprint.test.ts`:
+2. Replace the hardcoded UUID literal (around line 59) with `randomUUID()` from `node:crypto`.
+3. The test named "Replay spelling out the defaults" (around line 37) compares absent vs `undefined` groupId/scheduledAt, not the defaults; rename it to say what it checks (the real scenario is the e2e one).
+
+Integration, `apps/job-service/src/infra/jobs/prisma/prisma-job-repository.int.test.ts`:
+4. `findProcessingSince`: the unlimited call asserts only a count of 3; assert the three ids (and order).
+5. `findWaitingSince`: add a scheduled job whose `scheduledAt` equals `before` exactly; it must be returned.
+
+Per-app e2e, `apps/job-service/test/e2e/internal-jobs.e2e.test.ts`:
+6. Add "Two workers start the same job": two simultaneous `processing` reports (run 1, attempt 1) for a `pending` job submitted through the API; both 200 with the job `processing`; the stored job (read back) has attempts 1 and one `startedAt`. Add "Two workers start the same scheduled job": the same race on a job submitted with a future `scheduledAt`; both 200, attempts 1, `scheduledAt` unchanged. These are the only level where the real conditional write and the re-read meet.
+7. "Completion of a recovered attempt": follow the spec's WHEN through the routes: submit, start attempt 1, fail attempt 1 (job becomes scheduled), start attempt 2, then report `completed` for attempt 1; expect 409 with `processing` in `details`, and the stored job unchanged (attempts 2, result null).
+8. "Delay is capped": the current capped case can pass by chance (range [4000, 8000] capped at 5000). Use a retry whose both bounds are above the cap (e.g. attempts 4 of maxAttempts 6 with the test config's min/max/cap), driven so the failure is retry 4, and assert `scheduledAt` lies in [before + cap, after + cap].
+9. `maxProcessingMs` per type: set a distinct `JOB_SERVICE_MAX_PROCESSING_MS_WEBHOOK` (and flight transit) in the test config and add a read of a webhook job expecting its own value, so a controller always returning the email value fails.
+10. "Report without run and attempt": the loop over all three variants repeats the contract test; keep one variant.
+
+Per-app e2e, `apps/job-service/test/e2e/jobs.e2e.test.ts`:
+11. "Replay after a failed attempt": drive it through the routes (submit with the key, internal start run 1 attempt 1, internal fail), then replay; assert 200 with the job `scheduled`, carrying the backoff `scheduledAt` and the error, total 1, and no new enqueue for the replay.
+12. "Cancel a job waiting for its retry": create the state through the routes (submit, start, fail), cancel, assert 200 `cancelled` with error and attempts kept; then a `processing` report for run 1 attempt 2 answers 409 with `cancelled` and attempts stay 1.
+13. "Retry a failed job": use a keyed job that failed its last attempt through the routes; assert the key is kept after the retry and that a replay of the original submission after the retry still answers 200.
+14. Delete "Key too long" (repeats the contract test) and "Bulk item with a bad key" (repeats the contract test; the bulk route's validation wiring is shown elsewhere). Merge "New job has no idempotency key" and "Job without a key" into one test whose name carries both scenario names.
+15. If `seedKeyed` in `job-service-under-test.ts` is still needed (the flight-transit replay after its departure day legitimately needs it), make it store a state the app can produce; remove what is no longer used.
+
+Per-app e2e, `apps/job-service/test/e2e/service.e2e.test.ts`:
+16. "Docs list the job routes": also assert the single `POST /v1/jobs` documents 200, 201, 400 and 409, and that its request schema has `idempotencyKey`.
+
+`openspec/changes/reliability/tasks.md`:
+17. Task 2.7's text lists e2e tests "Repeated start of the same attempt", "Start for a stale attempt", "Start a job that is not pending" that are covered at unit level: say so in the text (keep the box checked). Task 6.2: add to its list a system e2e "Cancel a job waiting for its retry on the full system" (a job whose attempt fails, cancelled while it waits for its retry; after its `scheduledAt` has passed it is still `cancelled` with the same attempts). Do not tick or untick anything else.
+
+If a new test shows a real bug in job-service, fix the code (not the test) and say so in your report. You MAY and SHOULD run job-service's per-app e2e tests in this worktree for this task (`npx vitest run --hookTimeout 120000 apps/job-service/test/e2e/<file>` from the worktree root; one file at a time is fine); no other subagent is running e2e right now. Also run `npx vitest related --run` for the unit and integration files you change (run it from `apps/job-service`, projects `job-service:unit` and `job-service:integration`), `npx tsc --noEmit -p apps/job-service/tsconfig.json`, ESLint with `--max-warnings 0` and Prettier on the changed files. Note: `BullMqJobQueue` does not implement `state`/`requeue` on this branch yet (another group adds them), so typecheck shows two known errors there; nothing else may fail.
+
+When done, commit in your worktree: one commit `test(job-service): act on the test review of group 2` with a body listing what changed, ending with the line `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Report the commit hash, the files changed, any code fix, and the test results.
+
+#### Claude
+
+Start with the small unit/integration pieces.
+
+Now find the relevant jobs.e2e tests.
+
+Now jobs.e2e edits.
+
+Zsh does not word-split; use an array.
+
+All 17 review items are done and committed in the worktree as `291ff24`, "test(job-service): act on the test review of group 2". No new test found a bug, so there is no code fix. The only non-test file changed is `tasks.md`.
+
+**Files changed** (8, all under the worktree `~/Dev/prisma-photonics-test-reliability/.claude/worktrees/reliability-group2-review`):
+- `apps/job-service/src/infra/jobs/job-service.impl.test.ts`
+- `apps/job-service/src/infra/jobs/idempotency/sha256-job-request-fingerprint.test.ts`
+- `apps/job-service/src/infra/jobs/prisma/prisma-job-repository.int.test.ts`
+- `apps/job-service/test/e2e/internal-jobs.e2e.test.ts`
+- `apps/job-service/test/e2e/jobs.e2e.test.ts`
+- `apps/job-service/test/e2e/service.e2e.test.ts`
+- `apps/job-service/test/e2e/job-service-under-test.ts`
+- `openspec/changes/reliability/tasks.md`
+
+**Tests run**
+- Unit and integration: `npx vitest related --run` from `apps/job-service` on the three changed unit/integration files, 3 files and 158 tests, all green.
+- Per-app e2e: `internal-jobs.e2e.test.ts` 45 passed; `jobs.e2e.test.ts` and `service.e2e.test.ts` together 128 passed.
+- ESLint `--max-warnings 0` and Prettier are clean on all changed code files.
+- `tsc` shows only the two known `BullMqJobQueue` errors (missing `state` and `requeue`).
+
+**What changed, by item**
+1. "Start for a stale attempt" now seeds a `scheduled` job with attempts 1 and sends attempts 1 and 3. Both give 409 with status `scheduled`, and there is no repository update.
+2. The hardcoded UUID in the fingerprint test is now `randomUUID()`.
+3. The "Replay spelling out the defaults" fingerprint test is renamed "an absent group and schedule give the same fingerprint as an undefined one".
+4. `findProcessingSince` asserts the three ids in order.
+5. `findWaitingSince` has a new scheduled job with `scheduledAt` equal to `before`; it is returned.
+6. "Two workers start the same job" and "Two workers start the same scheduled job" are one `it.each`:
+   - The job is submitted through the API and two starts run via `Promise.all`.
+   - Both answers are 200 `processing` with the same `startedAt` as the stored job, and stored attempts are 1.
+   - For the scheduled variant, `scheduledAt` is also unchanged.
+7. "Completion of a recovered attempt" is driven through the routes: submit, start 1, fail 1, start 2, then complete attempt 1. That gives 409 with `processing`, and the stored job is unchanged (attempts 2, result null).
+8. "Delay is capped" is a new test: it drives the job through the routes to retry 4 of 6, where both bounds are above the cap. It asserts `scheduledAt` lies in [before + cap, after + cap]. The old "retry 3 is capped" case is removed from the delay-growth `it.each`, which is now one case, "Delay grows with each retry".
+9. `TEST_CONFIG` has distinct `maxProcessingMsWebhook` (23456) and `maxProcessingMsFlightTransit` (34567), passed through the env. "Read a job with its time limit" is an `it.each` over email, webhook and flight-transit.
+10. "Report without run and attempt" keeps only the `processing` variant.
+11. "Replay after a failed attempt" is driven through the routes: submit with the key, start, fail, replay. It asserts 200 with the same `scheduled` job (backoff `scheduledAt`, error kept), total 1, and exactly 2 enqueues, so the replay queued nothing.
+12. "Cancel a job waiting for its retry" is driven through the routes: submit, start, fail, cancel. It asserts `cancelled` with attempts 1 and the error kept. A later start report for attempt 2 answers 409 with `cancelled`, and the stored job is unchanged.
+13. "Retry a failed job" now uses a keyed job with a future `scheduledAt` and `maxAttempts` 1, failed through the routes. After the retry the key is kept and `scheduledAt` is cleared. A replay of the original submission after the retry answers 200 with the retried job.
+14. "Key too long" and "Bulk item with a bad key" are deleted, leaving "Empty key" as a plain test. "New job has no idempotency key" is merged into "Job without a key (New job has no idempotency key)".
+15. `seedKeyed` now takes only `{ request }` and stores a `pending`, attempts-0 keyed job (the flight transit past its departure day, which no route accepts any more). The unused `status`, `attempts` and `error` options are removed.
+16. "Docs list the job routes" now also asserts `POST /v1/jobs` documents exactly 200, 201, 400 and 409, with a schema for 200. It also asserts that the request schema, followed through its `$ref`s, contains `idempotencyKey`.
+17. `tasks.md`:
+    - Task 2.7 says "Repeated start of the same attempt", "Start for a stale attempt" and "Start a job that is not pending" are covered at unit level only, and drops them from the e2e list. Its "Read a job with its time limit" text now says the configured value of the job's type.
+    - Task 6.2 adds the system e2e "Cancel a job waiting for its retry on the full system".
+    - No boxes were ticked or unticked.
+
+I did not run the `test-case-reviewer` again on the changed areas.
+
+</details>
+
+### Claude
+
+While that agent works on job-service's tests, I'm continuing with task 3.3: `JobRecoverySchedule`, tests first.
+
+`JobRecoverySchedule` passes its 3 tests. Wiring `JOB_RECOVERY` and the schedule into `JobsModule`. I'm also checking where `ScheduleModule.forRoot()` belongs in job-service.
+
+It boots and shuts down cleanly (7 passed). Recording the shared timer in the plan, as agreed: design D5 and group 3's file list and task 3.3.
+
+All groups so far are on `reliability`; group 3 is half done and not yet committed. An agent is fixing the gaps found in group 2's test review, and the rest of group 3 waits for it.
+
+**Groups 4 and 5 (worker and job-ui)**
+- Group 4 is on `reliability` with its review fixes (`3803862`, `b80d96d`), and its e2e files pass (27 tests).
+- The review's main gap was that no test checked the lock duration actually reaching BullMQ; a new test now does.
+- That test exposed a hang: if a check failed while an entry was still held, shutting down the consumer waited forever. It now releases the entry in all cases.
+- Two e2e tests that only repeated unit tests are removed.
+- Group 5 was already done.
+
+**Group 2 (job-service backoff and idempotency)**
+- It is on `reliability` (`37b085e`). All six job-service e2e files pass (233 tests), and so do the unit and integration levels (409).
+- Its agent wrote the code and the tests together, not test first.
+- The review found real gaps:
+  - The e2e race tests "Two workers start the same job" were deleted and not replaced. That's the core proof of no double runs, the only level where the real database write meets the re-read.
+  - Several tests can't fail. They seed states the API can create, so a broken implementation would still pass.
+  - The cap test passes or fails by chance.
+  - The webhook time limit is never read back.
+- An agent is fixing all of it in its own worktree and may fix code if a new test exposes a bug.
+
+**Group 3 (recovery), work so far**
+- 3.1: the queue now reports each entry's state and can replace a finished entry. 37 integration tests pass.
+- 3.2: the recovery pass is written. 21 unit tests pass, and they caught one real slip in it: it passed the whole entry, priority and time included, where only the job id, run and attempt belonged. It's fixed.
+- 3.3: the timer logic now lives once in service-kit, as you chose. job-group-service's poll uses it, and so does the new recovery timer. job-group-service's e2e tests still pass (43), and job-service still starts and shuts down cleanly.
+- 3.4 (recovery e2e) needs the same test harness the review agent is editing, so I'll start it once that agent is done.
+
+**Commits.** Groups 4 and 5 each have a second commit for the review fixes, and group 2 will too, because squashing means an amend, which needs your approval.
+
+That reminder is out of date. Group 1's test review was acted on and the group was committed long ago (`e3705c6`, with the review fixes in it). Since then:
+
+- Groups 4 and 5 are done and on `reliability`.
+- Group 2 is on `reliability`, and an agent is still closing the gaps its test review found. It hasn't reported yet.
+- Group 3 is half done and uncommitted: tasks 3.1–3.3 are written and passing. Task 3.4 (recovery e2e) waits for that agent, because both touch job-service's e2e test harness.
+
+Nothing new needs doing until the agent reports. Then I'll bring its commit onto `reliability`, rerun job-service's e2e tests, and finish group 3.
+
+Group 2's review fixes are in (`291ff24`). No new test found a bug, and the race tests "Two workers start the same job" are back. Bringing the commit in takes care: my uncommitted group 3 work also edits `tasks.md`. I'll stage exactly that commit's changes, keep my group 3 edits out of it, and reuse the commit's message.
+
+Staged the same 8 files. Before committing I'm checking that the staged change is byte-for-byte the review commit, and that the working tree's `tasks.md` holds both its edits and mine.
+
+Group 2's review fixes are committed as `55031ba`, and my group 3 work stays uncommitted. Ticking 2.9 in its own small commit, using the same index-only approach so group 3's ticks stay out.
+
+Group 2 is now complete. Removing its two worktrees, which are clean, then on to task 3.4.
+
+Task 3.4 is the recovery e2e. Reading the shared harness and a short existing e2e file so the new one follows their pattern.
+
+The recovery e2e needs jobs whose last change lies in the past, a state no route can create. Checking how the harness can reach the database for that.
+
+Writing the failing recovery e2e tests (task 3.4). Each drives its job into the stuck state through the API where a route can do that, ages it, and runs one pass.
+
+Every job-service level passes: 39 files, 687 tests. Lint and typecheck are clean. Ticking 3.4 and starting group 3's independent test review (task 3.5), which also covers the new shared timer.
+
+<details>
+
+<summary>Subagent test-case-reviewer: Review group 3 test cases</summary>
+
+#### User
+
+Review these test areas of the OpenSpec change `reliability` (openspec/changes/reliability/), in the checkout ~/Dev/prisma-photonics-test-reliability (the files are not committed yet; read them from the working tree):
+- job-service unit: apps/job-service/src/infra/jobs/recovery/job-recovery.impl.test.ts, apps/job-service/src/app/jobs/job-recovery-schedule.test.ts
+- job-service integration: apps/job-service/src/infra/jobs/queue/bullmq-job-queue.int.test.ts (the `state and requeue` part)
+- job-service per-app e2e: apps/job-service/test/e2e/recovery.e2e.test.ts
+- service-kit unit: packages/service-kit/src/infra/schedule/scheduler-interval-task.test.ts
+- job-group-service unit: apps/job-group-service/src/app/groups/job-group-poll.test.ts
+
+The recovery e2e tests were written after the code they cover, so also judge whether each would fail if the behaviour it names were broken.
+
+#### Claude
+
+**Verdict:** GAPS
+
+The unit, integration and service-kit/job-group-service tests are mostly solid. The weak points are a few gaps in recovery-specific logic and three recovery e2e tests that would still pass if the behaviour they name were broken.
+
+**Corner cases**
+
+*JobRecoveryImpl (unit, `apps/job-service/src/infra/jobs/recovery/job-recovery.impl.test.ts`)*
+- ✅ Young jobs, `before` = now − min age, `limit` = batch size: `:91`
+- ✅ Pending + `missing` → `enqueue` of attempt 1 with the job's priority and `runAt: null`; no requeue, no update: `:109`
+- ✅ Due scheduled job → `runAt` = `scheduledAt`, uses the stored run and attempts + 1: `:129`
+- ✅ Live entry (`waiting`/`delayed`/`active`) left alone, no warn: `:148`
+- ✅ Finished entry → `requeue`, not `enqueue`: `:166`
+- ✅ Lost worker for `waiting`/`finished`/`delayed`, with the stored run and current attempt in both `state` and `update`: `:186`
+- ✅ `active` left alone `:222`; `missing` left to the time limit `:231`
+- ✅ Timeout one ms past the limit + interval, `state` not called, `details.maxProcessingMs`: `:240`; exactly at the limit is not timed out: `:262`
+- ✅ Worker report lands first / job deleted → info log, counted as nothing: `:274`; unexpected error ends the pass: `:295`
+- ✅ Recovery is logged (all three warn lines, in order, exact fields): `:304`
+- ✅ `state` rejecting with `JobQueueUnavailableError` stops the pass with one warn line: `:333`; work done before the outage is kept: `:349`
+- ❌ Each type's own time limit. Every test uses an email job and the limits for email and webhook are equal, so code that read `maxProcessingMs.email` for every type would pass. WHEN a `flight-transit` processing job started longer ago than the email limit + interval but less than its own limit (60 s) + interval, entry `active` → THEN no `update`. And WHEN it is past its own limit → THEN `JOB_TIMEOUT` with `details.maxProcessingMs: 60_000`.
+- ❌ `enqueue` or `requeue` rejecting with `JobQueueUnavailableError` (design D5 names all three calls; only `state` is tested). WHEN a pending job's `state` is `missing` and `enqueue` rejects → THEN the pass resolves with `requeued: 0`, there is exactly one warn line (the "stopped" line, not "queued again"), and `findProcessingSince` is not called.
+
+*JobRecoverySchedule (unit, `apps/job-service/src/app/jobs/job-recovery-schedule.test.ts`)*
+- ✅ The configured interval is wired (nothing at interval − 1, one run at the interval, two after another interval), registered under its name: `:33`
+- ✅ A failed pass is logged with "Recovery pass failed": `:47`
+- ✅ `onModuleDestroy` removes the interval and awaits the pass in flight: `:61`
+
+*SchedulerIntervalTask (unit, `packages/service-kit/src/infra/schedule/scheduler-interval-task.test.ts`)*
+- ✅ Runs once per interval under its name `:33`; skips ticks while a run is in flight and resumes after it `:48`; logs a failure and runs the next tick `:69`; stop awaits the run in flight and nothing runs afterwards `:84`; stop when idle `:110`; stop while the run in flight rejects `:120`; stop when never started `:142`
+
+*JobGroupPoll (unit, `apps/job-group-service/src/app/groups/job-group-poll.test.ts`)*
+- ✅ The interval wiring is exact enough (half or double the interval would fail), plus the name `:34`; the failure message `:45`; destroy awaits the check in flight `:59`. The shared logic moved to the service-kit test without being lost.
+
+*BullMqJobQueue state/requeue (integration, `apps/job-service/src/infra/jobs/queue/bullmq-job-queue.int.test.ts`)*
+- ✅ `waiting` (BullMQ `prioritized`) `:377`, `delayed` `:383`, `active` `:390`, `finished` for both completed and failed `:397`, `missing` `:408`
+- ✅ A finished entry is replaced: one entry, taken once: `:414`; requeue with no entry adds it `:425`; it keeps a future `runAt` `:431`; it adds nothing while a worker holds the entry `:439`; it leaves a waiting entry alone `:449`; unreachable Redis → `JobQueueUnavailableError` from both `:457`
+- ❌ The requeued entry keeps the job's priority (spec: "with the job's priority"). `requeue` has its own `add` call, and no test checks its priority. WHEN a low-priority entry is waiting and a high-priority finished entry is requeued → THEN `takeAll(2)` returns the requeued job first.
+- ⚠️ (minor) Requeue while Redis stalls (`pauseWrites`) is not tested. `requeue` wraps a multi-step async block in the timeout, so the block can still add the entry after the timeout has fired. Optional: assert that it rejects within the timeout, like the enqueue tests do.
+
+*Recovery pass (per-app e2e, `apps/job-service/test/e2e/recovery.e2e.test.ts`)*. For each test: would it fail if the behaviour it names were broken?
+- ⚠️ Pending job whose queueing failed is queued again `:47`: **would not fail if recovery queued nothing**. The submission's own `enqueue` call has exactly the same arguments (`jobId`, run 1, attempt 1, priority 8, `runAt: null`; `job-service.impl.ts:558`), so `toHaveBeenLastCalledWith` (`:67`) is met by the submission call alone. `requeued: 1` is a count the code reports about itself. Fix: assert `service.queue.enqueue.mock.calls` equals two identical calls (or `toHaveBeenCalledTimes(2)` plus the arguments).
+- ✅ Due scheduled job with no entry `:77`: the seed does not enqueue, so `toHaveBeenCalledExactlyOnceWith` proves the recovery's call; the status is kept.
+- ✅ Scheduled job not yet due `:96`: a broken due filter would call the unstubbed `state`, so the pass would reject.
+- ⚠️ Lost worker with attempts left `:110`: `scheduledAt > before` (`:126`) compares with an instant taken **before** the pass, so a missing retry delay (`scheduledAt` = now) would still pass. Fix: take `after = Date.now()` after `recover()` and assert `scheduledAt >= after + TEST_CONFIG.retryMinDelayMs - <small slack>`, or `> after`. The status, error code, attempts and the enqueue of attempt 2 with `runAt: scheduledAt` are asserted well.
+- ✅ Lost worker on the last attempt `:132`: `failed`, `WORKER_LOST`, `completedAt`, no new entry.
+- ✅ Processing job whose entry is missing is left to the time limit `:149`: the whole stored job is compared before and after.
+- ✅ Timed-out job on the last attempt `:164`: also proves the configured email limit reaches `details`, and that `state` is not called ("whatever its entry").
+- ⚠️ Two recovery passes at the same time `:186`: it passes in any interleaving, including the one where the second pass reads the job after the first one wrote and never sees it as `processing`. So it does not show that the race happened. Fix: make the two `state` stubs wait on a shared barrier (each resolves only once both were called), so both passes read the job as `processing` before either writes, and assert `service.queue.state` was called twice. The existing assertions (`[0, 1]`, one stored error, one enqueue) then prove "written once".
+- ✅ Worker report lands first `:206`: the report is sent from inside the `state` stub, so it lands after the read and before the write. An unconditional write or an uncaught conflict would fail the test. (It shows JobService refusing on its re-read; the repository's conditional write itself belongs to the repository's int tests.)
+- ❌ Young jobs are left alone, as the min-age wiring check. Every e2e test ages its jobs far past the minimum, so wiring `minAgeMs` as 0 in `jobs.module.ts` would pass them all (the unit test passes the value in directly; the repository int test covers the filter). WHEN a pending job whose enqueue failed was last changed `TEST_CONFIG.recoveryMinAgeMs / 2` ago and a pass runs → THEN the counts are all 0, `state` is not called, there is no second `enqueue`, and the job is still `pending` with 0 attempts.
+- Not needed here, because a lower level covers them: live entry left alone, finished entry replaced, `active` left alone, lost start report, timed-out job with attempts left, job within its time, recovery logged, queue unavailable.
+
+**Duplicates:** none. The schedule and poll tests repeat the interval, failure and wait checks of `SchedulerIntervalTask`, but each one proves that hook's own wiring (interval and message from config, `onModuleDestroy` awaiting `stop`), so keep them.
+
+**Belongs elsewhere:**
+- "Recovery runs at the configured interval" in the running app (that `JobRecoverySchedule` is a provider and actually fires) and "Pending job recovers on the full system" / "Killed worker's job is recovered on the full system": no level covers these yet. The e2e interval is set to 1 h on purpose. They are planned for the system e2e (tasks 6.2, not done); make sure 6.2 lands. Optionally, a per-app e2e check that the app's `SchedulerRegistry` lists `job-recovery` would catch the provider being removed.
+- Wiring of `batchSize` from config is not observable at any level below the system (unit covers passing it through, the config parser test covers the env var). Acceptable.
+
+**Rule violations:**
+- `apps/job-service/test/e2e/job-service-under-test.ts:579-592` (`age`): it writes `updated_at`/`started_at`/`scheduled_at` with raw SQL through `PrismaDatabase`. CLAUDE.md says data in states no route can create is stored "through the app's own repository". The repository cannot set `updatedAt` (Prisma `@updatedAt`), so this is a pragmatic deviation, but it should be justified (e.g. in design D8). Tasks 3.4 also says "seeded ... through the repository" and names the helper `seedStuck`. Either align the task text or record the deviation.
+- `recovery.e2e.test.ts` drives the pass through `app.get(JOB_RECOVERY).run()` (`job-service-under-test.ts:595`), not through HTTP ("Drive the app only through its HTTP API"). Design D8 decided this, so it is a documented exception, not a defect. Note it the same way.
+- Otherwise fine: scenario names are used, the stubs are `...Once`, ids come from `randomUUID()`, there are no hardcoded UUIDs and no probe controllers.
+
+**Test run** (unit and integration only, run per workspace):
+- `cd apps/job-service && npx vitest related --run --project job-service:unit --project job-service:integration src/infra/jobs/recovery/job-recovery.impl.ts src/app/jobs/job-recovery-schedule.ts src/infra/jobs/queue/bullmq-job-queue.ts <the three test files>` → Test Files 3 passed (3), Tests 61 passed (61), 12.1 s
+- `cd packages/service-kit && npx vitest related --run --project service-kit:unit src/infra/schedule/scheduler-interval-task.ts src/infra/schedule/scheduler-interval-task.test.ts` → 1 file, 7 passed, 0.3 s
+- `cd apps/job-group-service && npx vitest related --run --project job-group-service:unit --project job-group-service:integration src/app/groups/job-group-poll.ts src/app/groups/job-group-poll.test.ts` → 1 file, 3 passed, 0.3 s
+- No flaky or slow tests seen.
+
+**E2e files for you to run** (I did not run them; the shared harness `job-service-under-test.ts` changed, so all job-service e2e files are affected):
+- `~/Dev/prisma-photonics-test-reliability/apps/job-service/test/e2e/recovery.e2e.test.ts`
+- `~/Dev/prisma-photonics-test-reliability/apps/job-service/test/e2e/service.e2e.test.ts`, `errors.e2e.test.ts`, `jobs.e2e.test.ts`, `internal-jobs.e2e.test.ts`, `stats.e2e.test.ts`, `job-log.e2e.test.ts` (same folder)
+- `JobGroupPoll` changed, so also `~/Dev/prisma-photonics-test-reliability/apps/job-group-service/test/e2e/service.e2e.test.ts` and `groups.e2e.test.ts`
+
+</details>
+
+### Claude
+
+Group 2 is complete. Group 3 has tasks 3.1–3.4 done and passing; it isn't committed yet, waiting on its test review (task 3.5).
+
+**Group 2.** Its review fixes are on `reliability` as `55031ba`, with task 2.9 ticked in `d8f0662`. No new test found a bug.
+- The race tests "Two workers start the same job" are back, for a pending and for a scheduled job. They run through the real database write and the re-read.
+- Tests that seeded states the API can create now drive those states through the API. That covers the replay after a failure, the cancel while waiting for a retry, and the retry of a keyed job.
+- The cap test no longer passes by chance, and each job type's time limit is read back.
+
+One thing about how I brought it in: my uncommitted group 3 work also edits `tasks.md`. So I staged exactly the review commit's changes and checked that the staged diff equals that commit, so none of group 3's edits went in with it.
+
+**Group 3 so far**
+- **3.1, queue:** it now reports each entry's state and can replace a finished entry. 37 integration tests pass.
+- **3.2, recovery pass:** 21 unit tests pass.
+- **3.3, timer:** it now lives once in service-kit, as you chose, and job-group-service's poll uses it too. job-group-service's tests still pass.
+- **3.4, recovery e2e:** 9 tests. Each drives a job into a stuck state through the API, ages it in the database, and runs one pass. They cover:
+  - a waiting job queued again;
+  - a lost worker with and without attempts left;
+  - a missing entry left to the time limit;
+  - a timeout;
+  - two passes at the same time;
+  - a worker's report landing first.
+
+  They passed on their first run, because 3.1–3.3 had already built the code. I asked the reviewer to judge whether each would fail if its behaviour broke.
+
+All of job-service passes (39 files, 687 tests), and lint and typecheck are clean. When the review reports, I'll act on it, then commit group 3 and start group 6: the system e2e with three workers and a killed worker, `DECISIONS.md`, the roadmap, and the full checks.
+
+The review found real gaps. Three recovery e2e tests would still pass if their behaviour broke, and three recovery-specific cases are untested. I'm fixing all of them, starting with the unit tests: each type's own time limit, and `enqueue` failing mid-pass.
+
+All three workspaces I touched pass: job-service, job-group-service and service-kit, 73 files and 947 tests. A last typecheck, lint and format check, then the group 3 commit.
+
+Group 3 is committed as `744bb1d`. Its review fixes are inside it, so it's one commit. Now group 6, the integration group. Reading the system e2e support code first (task 6.1).
+
+Now the four tests at the end of `jobs.spec.ts`. The two destructive ones come last: the killed worker (restarted afterwards), then the Redis flush.
+
+The lint rule forbids top-level helper functions; the file's existing helpers live inside a `test.describe` callback. Wrapping the four new tests the same way.
+
+While the e2e suite runs, task 6.3: `DECISIONS.md`. The merge may have changed it, so I'm reading its current sections 1–5 again.
+
+Also locating every place `DECISIONS.md` still promises the sweep "later", and the library numbers decided for `safe-stable-stringify`.
+
+`decisions.md` has more Decided entries than the ones recorded in this session; they were added while planning went on. Reading the full list, so `DECISIONS.md` matches what was actually decided.
+
+The e2e run finished. Its exit code is that of my trailing `echo`, so I'm reading the log for the real result.
+
+The `as Job` cast at the end hid the missing field from the typechecker, which is why nothing flagged it earlier. Adding `idempotencyKey: null` and re-running job-ui's Playwright suite.
+
+Job-ui's Playwright suite is green again (20 passed). Now the system e2e on its own, in the background: it builds images and starts the stack with three workers.
+
+While the system e2e runs, the docs. First, where the README shows submission examples, for the idempotency-key example (task 6.3).
+
+The README has the idempotency example and design D8 records the settings change. Task 6.4: the roadmap.
+
+Last doc: CLAUDE.md lists the error codes and describes each app. Checking what it says now that the merge brought master's version in.
+
+Docs are done. Ticking 6.1, 6.3 and 6.4. Task 6.2 waits for the system e2e result, and 6.5 (the full checks) runs after it, so the Testcontainers runs don't overlap the compose stack.
+
+Groups 1–5 are committed on `reliability`. Group 6 is written but not yet committed: tasks 6.1, 6.3 and 6.4 are ticked. The system e2e is running in the background and hasn't finished.
+
+**Group 3 is complete** (`744bb1d`). Its test review found tests that would have passed even with the behaviour broken, and I fixed them all before committing:
+- The "pending job queued again" e2e test was satisfied by the submission's own enqueue call. It now requires the recovery's second call.
+- The "two passes at the same time" test now holds both passes at a barrier until both have read the job, so the race actually happens.
+- New tests cover each job type's own time limit, the queue failing during a re-queue, a re-queued entry keeping its priority, young jobs being left alone, and the timer being registered in the running app.
+- A deliberate mutation check confirmed the per-type tests catch reading the wrong limit.
+
+All of job-service, job-group-service and service-kit pass: 947 tests.
+
+**Group 6 so far**
+- **System e2e (6.1–6.2):** three worker instances, short recovery settings, and four new tests:
+  - many jobs complete once each, with the workers' own logs showing each job was picked up exactly once;
+  - a worker killed mid-run, with its jobs recovered on a second attempt;
+  - Redis wiped while jobs wait, with every job queued again and completed;
+  - a bulk sent twice with keys, answering 200 with the same jobs.
+  
+  A fifth test, cancelling a job while it waits for its retry, was added to the task list during group 2's review.
+- **Settings deviation:** I changed two numbers from the design and recorded both in design D8. The lock is 3 s instead of 2 s, so a busy moment can't make a live worker look dead. Retry delays are 1–2 s, so the test can catch a job while it waits for its retry.
+- **Docs (6.3–6.4):** `DECISIONS.md` sections 1, 2 and 4 are written. They include the proof of no double runs, crash recovery with its worst-case timing and at-least-once trade-off, the backoff timings, and an idempotency sub-section. The old "sweep comes later" promises are fixed. The README has an idempotency-key example, the roadmap marks the four items done, and CLAUDE.md lists the new error code.
+
+**A real bug the first e2e run caught.** job-ui's Playwright fixture built jobs without `idempotencyKey`, and an `as Job` cast hid that from the typechecker. 12 of job-ui's 20 browser tests failed. With the field added, all 20 pass. Group 5's agent had said those tests were unaffected.
+
+When the system e2e finishes I'll act on any failure, run the full checks (task 6.5), commit group 6, and then run `change-verifier`.
+
+### User
+
+Did you write everything that you wanted?
+
+### Claude
+
+I'll check where the system e2e run is, so the answer is accurate.
+
+No. The writing is done, but the change isn't finished. The system e2e is still building images and starting the stack; it has printed nothing past startup yet.
+
+**Still to do in this change:**
+- **6.2:** the five new system tests haven't run yet: many jobs once each, killed worker, Redis wiped, bulk replay, and cancel while waiting for a retry. Only then can I tick 6.2.
+- **6.5:** the full checks (`typecheck`, `lint`, `npm test`, `format:check`) across the whole repo. I'll run them after the stack is down, so Testcontainers and compose don't overload the machine together.
+- **Commit group 6.** Its changes are uncommitted: system e2e, `DECISIONS.md`, README, roadmap, CLAUDE.md, the job-ui fixture fix and the design/tasks notes.
+- **`change-verifier`** must return PASS. Then `/archive reliability` and the merge into `master`. `master` may have moved again by then.
+
+**Open items that need you:**
+- **Squash or not:** groups 2, 4 and 5 each have a separate follow-up commit with their test-review fixes. Merging each into its group's commit needs an amend or rebase, which needs your approval. If you say nothing, I'll leave them as they are.
+- **Leftover worktrees:** three stale worktrees from the first failed attempt sit under the main repo's `.claude/worktrees/agent-*`. The local branches `reliability-group2/4/5` and `reliability-group2-review` also remain; their commits are all on `reliability`. They're clean, and I'd delete them once the change is archived, if you agree.
+
+**Things you should know rather than act on:**
+- Group 2's code was written together with its tests, not test first. Its review closed the gaps, but the order wasn't TDD.
+- The recovery e2e tests passed on their first run, because the code already existed. The review checked that they would fail if broken, and I mutation-checked the per-type time limit.
+- `DECISIONS.md` §5 ("One thing I would do differently") is still TBD. It's outside this change; my candidate is the transactional outbox already mentioned in §0.
+
+I'll report back when the system e2e finishes.
+
+Lint and typecheck are clean. Re-running only the reliability tests against a fresh stack; the other 24 system tests already passed and these edits don't touch them.
+
+The system e2e suite has run once: 24 tests passed and 3 failed. All three failures were mistakes in my new tests. I've fixed them and the reliability tests are running again on a fresh stack; that run hasn't finished.
+
+The two key proofs passed:
+- **Many jobs on 3 instances complete once each:** every job finished with one attempt, and the workers' logs show each was picked up exactly once, across more than one instance.
+- **Bulk sent twice with keys:** the repeat answered 200 with the same jobs, and they exist once.
+
+The three failures:
+- **Killed worker** and **Redis wiped:** both got past "every job completed", so recovery itself worked. They then crashed while reading job-service's log, because my helper parsed every line as JSON and at least one line isn't. The helper now skips non-JSON lines.
+- **Cancel while waiting for a retry:** the job was cancelled and stayed cancelled with one attempt. My assertion was wrong: it counted "Attempt picked up" lines, but the cancelled job's next entry is still picked up by a worker, which reads the job and skips it, as the spec intends. The test now requires the worker's "Skipped: job is no longer startable" line for attempt 2 and no "Job started" for attempt 2.
+
+Once the re-run passes, I'll tick 6.2 and run the full checks (6.5) once the stack is down. Then I'll commit group 6 and run `change-verifier`.
+
+The four reliability system tests now pass on a fresh stack with three workers (6 passed counting setup and teardown):
+- **Bulk sent twice with keys:** the same jobs come back, and each exists once.
+- **Cancel while waiting for a retry:** the job stays cancelled, and the worker skipped attempt 2 without starting it.
+- **Killed worker:** every job completed, and the lost attempts ran again, about 29 s in all.
+- **Redis wiped while jobs waited:** every job was queued again and completed in about 11 s.
+
+The other 24 system tests had passed on the run before.
+
+Task 6.2 is ticked. The full checks (task 6.5: typecheck, lint, format check and the whole test suite) are now running in the background. When they're green, I'll commit group 6 and run `change-verifier`.
+
+### User
+
+try one more time
+
+### Claude
+
+I'll take that as running the whole system e2e suite once more, all 27 tests on a fresh stack. That checks the reliability tests are stable and not passing by luck, since they depend on timing.
+
+The full checks (typecheck, lint, format and every Testcontainers suite) are still running in the background. Starting a compose stack alongside them is what CLAUDE.md warns overloads the machine, so I'll start the system e2e run as soon as they finish. If you meant something else by "try one more time", tell me and I'll switch.
+
+The full checks are green: typecheck, lint and format pass, and the whole test suite passes (151 files, 1931 tests). Now running the whole system e2e suite once more on a fresh stack, as you asked.
+
+The full checks passed:
+
+| Check | Result |
+|---|---|
+| typecheck | passed |
+| lint | passed |
+| format:check | passed |
+| `npm test` | 151 files, 1931 tests passed |
+
+The whole system e2e suite (all 27 tests) is now running again on a fresh stack in the background, and hasn't finished yet. Once it passes, I'll tick 6.5, commit group 6 and run `change-verifier`.
+
+The second full run passed: all 27 system tests, including the five reliability ones. Ticking 6.5 and committing group 6.
+
+<details>
+
+<summary>Subagent test-case-reviewer: Review system e2e test cases</summary>
+
+#### User
+
+Review this test area of the OpenSpec change `reliability` (openspec/changes/reliability/), in the checkout ~/Dev/prisma-photonics-test-reliability: the system e2e suite tests/system-e2e (Playwright on the full compose stack), in particular the new tests in tests/system-e2e/job-execution-service.spec.ts and the `reliability` describe block in tests/system-e2e/jobs.spec.ts, and the support changes in tests/system-e2e/support/ (stack-settings.ts, stack.ts, compose-stack.ts, stack-jobs.ts). Also the job-ui Playwright fixture apps/job-ui/test/e2e/e2e-jobs.ts. Do not run any e2e test.
+
+#### Claude
+
+**Verdict:** GAPS. Every full-system scenario of the change has a test that sets up its WHEN and asserts its THEN, and there are no duplicates. Three tests have weak assertions, and two tests leave the stack in a state that only a fixed test order makes safe.
+
+**What the change asks for at this level** (the "on the full system" scenarios in `openspec/changes/reliability/specs/` and task 6.2): "Many jobs on several instances complete once each", "Killed worker's job is recovered on the full system", "Pending job recovers on the full system", "Bulk retried after a lost answer on the full system", and "Cancel a job waiting for its retry" on the full stack (task 6.2). The other scenarios of the change are tested at lower levels: the job-service unit, per-app e2e and integration tests, the job-execution-service `bullmq-job-queue-consumer.int.test.ts` ("Each entry goes to one consumer", "Stalled entry is not run again"), and the job-ui component tests.
+
+**Corner cases**
+
+*Several instances (`~/Dev/prisma-photonics-test-reliability/tests/system-e2e/job-execution-service.spec.ts`)*
+- ✅ Instances scaled to 3, every one running and healthy: "Instances scaled" (`job-execution-service.spec.ts:11`).
+- ✅ Many jobs complete once each: "Many jobs on several instances complete once each" (`job-execution-service.spec.ts:30`). It checks 60 jobs reach `completed` with `attempts: 1`, the sorted `Attempt picked up` job ids equal the submitted ids (a second pickup would fail it), and more than one instance picked jobs up.
+- ⚠️ Order dependency: "Instance started" (`job-execution-service.spec.ts:20`) expects exactly `EXECUTION_INSTANCES` "started" lines. It passes only because it runs before the kill test in `jobs.spec.ts`. The restarted victim logs a second "started" line under a new instance id. Fix: count only the latest "started" line per container (or per hostname), or move the kill test into its own spec that runs last on purpose.
+
+*Crash recovery (`~/Dev/prisma-photonics-test-reliability/tests/system-e2e/jobs.spec.ts`)*
+- ✅ The killed instance was running jobs: the poll waits for 12 or more jobs `processing` across 15 slots, so the victim holds at least 2 (`jobs.spec.ts:444`).
+- ✅ Every job ends `completed` with `error: null` (the lost attempt's error is gone), at least one has more than one attempt, and every re-run job was logged as a `WORKER_LOST` recovery (`jobs.spec.ts:449-457`).
+- ⚠️ The recovery's targets are not checked. The test proves every re-run job was logged `WORKER_LOST`, but not that these jobs were held by the killed instance. A pass that wrongly takes a live worker's job (lock 3000 ms against a busy event loop) would still pass. Fix: collect the `instanceId` of the attempt-1 `Attempt picked up` line for each re-run job and assert that the set has size 1. Each restart gets a new random id, so this set comes only from the victim. Better still, assert that it does not contain the instance ids of the live containers.
+- ⚠️ The threshold 12 is a bare number. It guarantees the victim is busy only while `JOB_EXECUTION_CONCURRENCY` is 5 and there are 3 instances. Derive it as `CONCURRENCY_PER_INSTANCE * (EXECUTION_INSTANCES - 1) + 1` (export the constant from `stack-jobs.ts`), so a config change cannot silently remove the "killed while it runs a job" condition.
+
+*Lost queue data*
+- ✅ Jobs stored but whose queue entries were lost are queued again and complete: "Pending job recovers on the full system" (`jobs.spec.ts:464`). `redis-cli FLUSHALL` runs right after a bulk of 40 jobs on 15 slots. Every job ends `completed`, and at least one `Recovery: waiting job queued again` line is logged for this test's ids.
+- ⚠️ The final state is checked too loosely. Only `status` is checked (`jobs.spec.ts:479`). A requeue that used up an attempt, or one that went through a failure first, would still pass. Assert `toMatchObject({ status: 'completed', attempts: 1, error: null })`, as the many-jobs test does.
+- ⚠️ The timing in the THEN is not checked. The scenario says "within the configured interval plus the configured minimum age". Record `Date.now()` before `FLUSHALL` and assert that the first requeue line's pino `time` is no later than flush + `JOB_SERVICE_RECOVERY_INTERVAL_MS` + `JOB_SERVICE_RECOVERY_MIN_AGE_MS` + a small margin. Read the two values from `STACK_ENV` so they stay in step.
+
+*Idempotency*
+- ✅ "Bulk retried after a lost answer on the full system" (`jobs.spec.ts:330`): the first bulk answers 201, the same bulk again answers 200 with the same ids in order, and the group query total is 3. A duplicate insert would make it 6. This is not a duplicate of per-app "Every item already exists" (`apps/job-service/test/e2e/jobs.e2e.test.ts:692`), because the spec asks for this scenario on the full system.
+
+*Cancel during a retry wait*
+- ✅ "Cancel a job waiting for its retry on the full system" (`jobs.spec.ts:351`):
+  - It catches a `scheduled` job that has an error and cancels it.
+  - It accepts the catch only if `startedAt` and `attempts` are unchanged.
+  - It waits past `scheduledAt` + 5 s and then reads `cancelled` with the same attempts.
+  - It asserts the next attempt's entry was taken and skipped exactly once with `status: 'cancelled'`, and that `Job started` was never logged for that attempt.
+  - I checked that `BullMqJobQueue.cancel` only publishes on the cancellation channel and does not remove the delayed entry, so the skip-log assertion is valid.
+  - "error unchanged" is not asserted here. That is fine: per-app e2e (`apps/job-service/test/e2e/jobs.e2e.test.ts:1274`) owns it.
+- ⚠️ Small flake window: if the worker reads the job before the cancel lands and reports its start after, it logs `Skipped: job-service did not let this worker start the job` instead of `Skipped: job is no longer startable`, and the exact `toEqual([...])` fails. With a 1–2 s retry delay and a 100 ms poll the window is small. To close it, accept either skip message for `nextAttempt`. Keep the `Job started` = none assertion, which is the real THEN.
+
+*Support code (`~/Dev/prisma-photonics-test-reliability/tests/system-e2e/support/`)*
+- ✅ `stack.ts`, `compose-stack.ts` (`kill` via `docker kill`, `exec` via `compose exec -T`), `stack-settings.ts` (3 instances, the short recovery, lock, stalled and retry settings) and `stack-jobs.ts` (`submitBulk`, `finished`) do what they claim. `finished` keeps the order of `ids`. `QUEUE_AHEAD` grows with the third instance, so `waiting()` still has its backlog.
+- ⚠️ The suite changes shared state and relies on running last. The kill test restarts an instance with a new id, and `FLUSHALL` wipes Redis, including the job-log stream, its group and the lease; the app recreates the group on `NOGROUP`. Both are safe only because `jobs.spec.ts` sorts last, with `workers: 1`, `fullyParallel: false`, and the `reliability` block at the end of the file. Any reordering, a new spec named after `jobs.spec.ts`, or `--repeat-each` breaks "Instance started" and possibly the job-log tests.
+  - Make this explicit: put these destructive tests in their own spec, or a Playwright project with a dependency, that runs last.
+  - Make `workerLogged` (`stack-jobs.ts:232`) and the two worker-log parsers in `job-execution-service.spec.ts:24,48` skip non-JSON lines, as `jobServiceLog` already does. A SIGKILL can cut a log line in half.
+- ✅ The `idempotencyKey: null` added to `~/Dev/prisma-photonics-test-reliability/apps/job-ui/test/e2e/e2e-jobs.ts` matches the contract `Job` type, and ids come from `randomUUID()`.
+
+**Duplicates:** none.
+
+**Belongs elsewhere:** none. The new tests stay at full-system behaviour. Lease expiry, duplicate-free delivery between consumers and delayed availability are owned by `apps/job-execution-service/src/infra/queue/bullmq-job-queue-consumer.int.test.ts` and `apps/job-service/src/infra/jobs/queue/bullmq-job-queue.int.test.ts`.
+
+**Rule violations:** none found.
+- Test names start with the scenario names.
+- Ids come from `randomUUID()`, with no UUID literals.
+- No test data comes from app code (`JOB_ERROR_CODES` is a contracts constant).
+- The `...Once` stub rule does not apply to Playwright.
+
+**Test run:**
+- `cd ~/Dev/prisma-photonics-test-reliability/tests/system-e2e && npx vitest related --run support/stack-settings.ts support/stack.ts support/compose-stack.ts support/stack-jobs.ts support/checkout-stack-identity.ts` passed: Test Files 1 passed (1), Tests 7 passed (7), 122 ms.
+  - Only `support/checkout-stack-identity.test.ts` is affected; the new support code has no unit tests of its own.
+  - From the workspace root, `--project system-e2e:unit` matched no project, so I ran it from inside the suite.
+- `npx tsc --noEmit -p tests/system-e2e/tsconfig.json` exits 0.
+- I ran no e2e tests. For the main agent to run:
+  - `tests/system-e2e` (all specs on the compose stack, since the stack settings changed): `job-execution-service.spec.ts`, `jobs.spec.ts`, `job-service.spec.ts`, `job-group-service.spec.ts`, `job-ui.spec.ts`
+  - job-ui Playwright, which uses the changed fixture: `apps/job-ui/test/e2e/jobs.spec.ts` and `apps/job-ui/test/e2e/groups.spec.ts`
+
+  Watch the wall time: the four new tests have timeouts of 120 to 240 s each.
+
+</details>
+
+### Claude
+
+Group 6 is committed as `d9df90e`, and every task in `tasks.md` is now ticked.
+
+- **Second full system e2e run:** all 27 tests passed, the five new reliability tests included, so they held up on a second, fresh run.
+- **Full checks:** typecheck, lint and format pass, and `npm test` passed all 1931 tests across 151 files.
+
+The change isn't verified yet. The test review of the system e2e is running, because CLAUDE.md requires one for every area with test changes, and this group had no review task. When it reports, I'll act on it, then run `change-verifier`; it must return PASS before `/archive`.
+
+The review confirms every full-system scenario is covered, with no duplicates. It found order dependencies and weak assertions, which I'm fixing:
+- **Isolation:** the two destructive tests (killed worker, Redis flush) move into their own `recovery.spec.ts`, run by a Playwright project that goes after all other system tests on purpose, not by luck of file order.
+- **Killed worker:** the test checks that the recovered jobs really were held by the killed instance, with its threshold derived from the concurrency setting.
+- **Redis flush:** the test checks one attempt and no error per job, and the recovery's timing.
+- **Retry cancel:** the test accepts either of the worker's two skip messages.
+- **Log parsing:** every log parser skips non-JSON lines, since a SIGKILL can cut one in half.
+
+Restructuring now. A `logEntries` helper in `StackJobs` parses any service's log and skips non-JSON lines. Every parser uses it, and the concurrency constant is exported.
+
+Now moving the two destructive tests out of `jobs.spec.ts` into a new `recovery.spec.ts`, with the stronger assertions, and fixing the retry-cancel skip check that stays behind.
+
+Same lint rule as before: the top-level `emailItem` helper has to live inside a `describe` callback. Wrapping the file's tests.
+
+I've acted on every point from the system e2e review. The fixes aren't committed yet, and the whole system e2e suite is running again on a fresh stack to confirm them; it hasn't finished.
+
+- **Order dependency:** the killed-worker and Redis-flush tests now live in `recovery.spec.ts`, under their own Playwright project that runs after every other system test. Before, they were only safe because `jobs.spec.ts` happened to sort last. Playwright lists them in the right order.
+- **Killed worker:**
+  - The test now checks that every recovered attempt was held by the one killed instance, and that the re-runs happened on other instances. Before, a pass that wrongly took a live worker's job would have passed.
+  - The "busy enough" threshold is derived from the concurrency setting instead of a bare 12.
+- **Redis flush:**
+  - Each job must end with one attempt and no error, not just `completed`.
+  - The first requeue must land within the configured interval plus the minimum age, plus a 5 s margin.
+- **Retry cancel:** the test accepts either of the worker's two skip messages, which closes a small flake window. The real check stays: attempt 2 is never started.
+- **Log parsing:** every log parser skips non-JSON lines through one shared helper, since a SIGKILL can cut a line short.
+
+When the run passes, I'll commit these fixes and run `change-verifier`.
+
+All 27 system tests pass, including the two destructive ones in their own project at the end. Committing the review fixes.
+
+Committed as `0254d9a`. Now the `change-verifier`, run in the foreground. It must return PASS before the change can be archived.
+
+<details>
+
+<summary>Subagent change-verifier: Verify the reliability change</summary>
+
+#### User
+
+Verify the OpenSpec change `reliability` (openspec/changes/reliability/) in the checkout ~/Dev/prisma-photonics-test-reliability, branch `reliability`. All tasks in tasks.md are checked. Do not run e2e tests (per-app *.e2e.test.ts, Playwright, tests/system-e2e); list any you want run and the main agent will run them. For reference, the main agent's last runs on this branch: `npm run typecheck`, `npm run lint`, `npm run format:check` and `npm test` all green (151 files, 1931 tests, before the last system-e2e-only commit); job-ui Playwright 20 passed; system e2e (tests/system-e2e) 27 passed on a fresh compose stack after the last commit.
+
+#### Claude
+
+Now unit tests across all workspaces, then the integration tests of the changed adapters.
+
+**Verdict:** PARTIAL
+
+The change is built, it matches decisions.md, and every check I ran passed. Three small gaps keep it from PASS: one scenario branch has no test that would catch a mistake, two scenarios are tested only at the schema level even though task 2.6 says HTTP tests were written, and three comments are stale.
+
+**Checks I ran myself** (I did not take the earlier runs on trust)
+- `npm run typecheck`: exit 0. `npm run lint`: exit 0. `npm run format:check`: all files pass.
+- `npm run test:unit`: 122 files, 1423 tests passed.
+- `npx vitest run --project '*(job-service:integration)' --project '*(job-execution-service:integration)'`: 10 files, 163 tests passed (real Postgres and Redis).
+- I did not run any e2e tests, as instructed.
+
+**Checklist**
+- ✅ Contracts: `idempotencyKey` limits 1–255, the key on the request and the job, the bulk check for repeated keys at the later item, `run`/`attempt` on every report variant, `InternalJob` with `maxProcessingMs`, and `JOB_ERROR_CODES` as one closed list (`packages/contracts/src/jobs/job.ts`, `job-error-codes.ts`). Tested in `job.test.ts` ("Empty key", "Key too long", "Bulk item with a bad key", "Duplicate key within the bulk", "Report without run and attempt").
+- ✅ `IDEMPOTENCY_KEY_CONFLICT` is in `ERROR_CODES` and the filter answers it with 409 (`error-response.filter.ts:27`).
+- ✅ Config: every new variable with its decided default, plus the rule min ≤ max ≤ cap (`zod-job-service-config-parser.ts`, `zod-execution-config-parser.ts`). They are also in `.env.example` and in `docker-compose.yml` as `${VAR:-default}`.
+- ✅ Migration: the key column with a unique index, the fingerprint column, and the `(status, updated_at)` index (`prisma/migrations/20261031120000_idempotency_and_recovery/migration.sql`).
+- ✅ Retry backoff: retry n waits a random [min, max] × 2^(n−1), each bound capped (`exponential-jitter-retry-delay.ts`). A failure with attempts left becomes `scheduled` with `scheduledAt` = now + delay, and the next attempt is queued with `runAt` = `scheduledAt` (`job-service.impl.ts` `failureChanges` and `update`). Tested by the unit tests and by e2e "Failure with attempts left", "Delay grows with each retry", "Delay is capped", "Retry survives an unavailable queue" and "Invalid payload with attempts left".
+- ✅ A manual retry clears `scheduledAt` and runs at once (`retry()`; e2e "Retry a failed job" also checks the key is kept).
+- ✅ Reports for another run or attempt are refused with 409; a repeated start of the same attempt answers 200 without a write; a lost start write is read again (`update`, `findStartOf`). Unit tests: "Repeated start of the same attempt", "Start for a stale attempt", "Start from another run", "Two workers start the same job". E2e: "Completion of a recovered attempt", "Failure from an earlier run", "Two workers start the same (scheduled) job".
+- ⚠️ "Start a job that is not pending", branch "or for a `processing` job with another attempt number": no test covers it. The unit test only loops over `completed`, `failed` and `cancelled`. If the `current.attempts === update.attempt` check in the start branch of `update` were removed, every test would still pass.
+- ✅ Idempotency, single and bulk: the fingerprint uses `safe-stable-stringify` and SHA-256, with a pinned sample (`sha256-job-request-fingerprint.ts`). The key is looked up before the time rules. The race is decided by the unique index; the single flow reads again once, the bulk tries up to `BULK_INSERT_TRIES = 3` and then answers 500 (`IdempotencyKeyTakenError` carries `INTERNAL_ERROR`). The answer is 201 or 200 from `created` (`jobs.controller.ts`). Every scenario has an e2e test in `jobs.e2e.test.ts`, except the next item.
+- ⚠️ "Key too long" and "Bulk item with a bad key" are tested only in the contract tests. No test checks their HTTP 400 `VALIDATION_FAILED` answer or that nothing is stored, although task 2.6 says these e2e tests were written. Only "Empty key" is tested over HTTP.
+- ✅ Worker read: `GET /internal/v1/jobs/:id` returns `maxProcessingMs` for the job's type (`internal-jobs.controller.ts`; e2e "Read a job with its time limit", each type).
+- ✅ Recovery pass (`job-recovery.impl.ts`): a waiting job whose entry finished is requeued, a missing one is enqueued, a live one is left alone. A processing job past its time limit plus one interval gets `JOB_TIMEOUT` whatever its entry; one whose entry is waiting, delayed or finished gets `WORKER_LOST`; one whose entry is active or missing is left alone. Failures go through `JobService.update`; a conflict or not-found is logged at info level; a queue outage ends the pass with one warn line; each query reads at most `batchSize` jobs. Unit tests cover every branch; `recovery.e2e.test.ts` covers the scenarios against real Postgres, including "Two recovery passes at the same time" and "Worker report lands first".
+- ✅ Queue state and requeue against real Redis (`bullmq-job-queue.ts`; `bullmq-job-queue.int.test.ts` "state and requeue").
+- ✅ Timer: `SchedulerIntervalTask` and `IntervalTask` in service-kit; `JobGroupPoll` and `JobRecoverySchedule` are thin wrappers around it; `ScheduleModule.forRoot()` is imported. Tests: `job-recovery-schedule.test.ts`, `scheduler-interval-task.test.ts`, and the e2e check that the running app registers the recovery timer.
+- ✅ Worker: every report carries `run` and `attempt`. The handler is aborted at `maxProcessingMs` and reports `JOB_TIMEOUT`; a cancel or a shutdown reports nothing. A refusal with a status other than `cancelled` is logged at warn level with the run and attempt (`job-execution.impl.ts`). The consumer uses `lockDuration`, `stalledInterval` and `maxStalledCount: 0` (`bullmq-job-queue-consumer.ts:60-62`). Integration tests "Each entry goes to one consumer" and "Stalled entry is not run again" (this one fails if `maxStalledCount` is not 0); `http-job-repository.int.test.ts` covers the 409 status and `InternalJob`.
+- ✅ Statistics: e2e "Failed attempt that will be retried" counts the job as scheduled.
+- ✅ Job status change: e2e "Cancel a job waiting for its retry", plus a system e2e.
+- ✅ job-ui: the Details row appears only when the job has a key (`job-details-list.tsx`, `job-presenter.ts`, `en.ts`). Tests: "Job with a key" and "Job without a key" (presenter and page), "Submit form unchanged". There is no `ui.md`, so no screenshot comparison applies.
+- ✅ System e2e, judged by reading: "Many jobs on several instances complete once each", "Killed worker's job is recovered on the full system", "Pending job recovers on the full system" (`recovery.spec.ts`, its own project that runs last), "Bulk retried after a lost answer", "Cancel a job waiting for its retry on the full system". Three instances, short settings in `STACK_ENV`.
+- ✅ Docs: `DECISIONS.md` section 1 (the proof), section 2 (the full recovery model, about 2 minutes worst case, at-least-once, no worker alive, several instances), section 4 (backoff) and the idempotency sub-section, all consistent with decisions.md. `README.md` has the key example. The roadmap marks the four items done.
+- ✅ Traceability: every requirement and scenario traces to a "Decided" line, and all Assumed items and Open questions are checked and copied into Decided. Nothing invented.
+- ✅ Duplication: the interval logic that `JobGroupPoll` had is now shared, and I found no other copies. `@nestjs/schedule` has the same version (^12.0.2) everywhere.
+- ⚠️ Stale or leftover comments:
+  - `apps/job-service/src/infra/jobs/job-service.impl.ts:688` still says "the sweep in `crash-recovery` queues it later".
+  - `apps/job-service/prisma/schema.prisma` still calls the `(status, created_at)` index "the sweep of pending jobs".
+  - In `tests/system-e2e/jobs.spec.ts`, the comment `/** job-service's log lines, parsed. */` sits above the "Bulk retried..." test and describes nothing there.
+
+**Edge cases:** the delay cap and growth, retry 1, key length at the minimum, maximum and maximum + 1 (schema), an empty bulk lookup, a bulk where every item matches, a replay next to a new item that breaks a rule, a race lost to a winner with a different request, a job exactly at its time limit plus one interval, the batch limit, the queue unavailable partway through a pass, and a timeout after the grace period are all covered. The one boundary not covered is a start report for a processing job with another attempt (above).
+
+**Extra / out of scope:** moving `JobGroupPoll` into service-kit (recorded in the design as decided during apply). Small deviations, not gaps: the worker's time limit uses `setTimeout` with fake timers in tests instead of the design's `AbortSignal.timeout`; a `delayed` entry of a processing job also counts as a lost worker.
+
+**Not verified:** the e2e files below, which I was told not to run.
+- `apps/job-service/test/e2e/jobs.e2e.test.ts`
+- `apps/job-service/test/e2e/internal-jobs.e2e.test.ts`
+- `apps/job-service/test/e2e/recovery.e2e.test.ts`
+- `apps/job-service/test/e2e/stats.e2e.test.ts`
+- `apps/job-service/test/e2e/service.e2e.test.ts`
+- `apps/job-service/test/e2e/errors.e2e.test.ts`
+- `apps/job-execution-service/test/e2e/job-execution.e2e.test.ts`
+- `apps/job-execution-service/test/e2e/email-job.e2e.test.ts`
+- `apps/job-execution-service/test/e2e/webhook-job.e2e.test.ts`
+- job-ui Playwright
+- `tests/system-e2e` (`jobs.spec.ts`, `job-execution-service.spec.ts`, `recovery.spec.ts`)
+
+Before archive, run at least the job-service e2e files after fix 2 below.
+
+**Next steps:**
+1. In `apps/job-service/src/infra/jobs/job-service.impl.test.ts`, extend "Start a job that is not pending": a `processing` job with attempts 2 that gets a start for attempt 1 or 3 must reject with `JOB_STATUS_CONFLICT`, `details.status` `processing`, and no write.
+2. In `apps/job-service/test/e2e/jobs.e2e.test.ts`, add "Key too long" (key of maximum + 1) and "Bulk item with a bad key" (empty key on the second item). Each must answer 400 `VALIDATION_FAILED` with an issue at `idempotencyKey` (or `jobs.1.idempotencyKey`), store nothing (total 0), and queue nothing.
+3. Fix the three stale or misplaced comments listed above.
+
+CHANGE: reliability
+VERDICT: PARTIAL
+GAPS:
+- apps/job-service/src/infra/jobs/job-service.impl.test.ts: scenario "Start a job that is not pending" lacks its "processing job with another attempt number" case; add a processing job (attempts 2) receiving start for attempt 1 and 3 that must reject with JOB_STATUS_CONFLICT, details.status 'processing', and no repository.update (today removing the attempt check in the idempotent-start branch of JobServiceImpl.update breaks no test)
+- apps/job-service/test/e2e/jobs.e2e.test.ts: scenarios "Key too long" and "Bulk item with a bad key" have no HTTP-level test although task 2.6 is checked; add tests asserting 400 VALIDATION_FAILED with an issue at idempotencyKey / jobs.1.idempotencyKey, total jobs 0 and no enqueue/enqueueMany call
+- apps/job-service/src/infra/jobs/job-service.impl.ts:688 comment still refers to "the sweep in `crash-recovery`"; point it at the recovery pass (JobRecovery)
+- apps/job-service/prisma/schema.prisma: the (status, created_at) index comment still says "the sweep of pending jobs"; the recovery pass uses (status, updated_at)
+- tests/system-e2e/jobs.spec.ts: remove the misplaced leftover JSDoc "/** job-service's log lines, parsed. */" above the "Bulk retried after a lost answer" test
+
+</details>
+
+### Claude
+
+The fixes from the system e2e review are committed (`0254d9a`). With them in place, all 27 system tests passed on a fresh stack, the killed-worker and Redis-flush tests now in their own Playwright project that runs last.
+
+`change-verifier` is now checking the whole change against its specs and tasks; it hasn't reported yet. If it lists gaps, I'll fix them and run it again until it returns PASS. Then the next steps are `/archive reliability` and the merge into `master`. The merge needs your approval.
+
+The verifier returned PARTIAL with five small gaps. I'm fixing all of them. Gap 2 overrides an earlier review call: group 2's reviewer had removed the HTTP tests "Key too long" and "Bulk item with a bad key" as repeats of the contract tests. But those scenarios' THEN includes "no job is stored", which only an HTTP-level test can see, so they come back. First, the unit test for a start of the wrong attempt on a processing job.
+
+Adding the missing case: a `processing` job at attempt 2 that gets a start for attempt 1 or 3. Then the three comment fixes.
+
+All 100 pass. The verifier's point was that removing the attempt check breaks no test, so I'm mutation-checking it: I'll remove the check, expect the new test to fail, and restore the code.
+
+The new test catches the mutation, and the code is restored. Now the two HTTP tests in `jobs.e2e.test.ts`, written like the existing "Empty key" test.
+
+Lint and typecheck are clean. Running all of job-service's e2e files and its unit level, as the verifier asked before archiving.
+
+All 698 job-service tests pass, and the fixes are committed as `8bb90e0`. The only system-e2e change was a deleted comment, so that suite doesn't need another run. Running `change-verifier` again.
+
+<details>
+
+<summary>Subagent change-verifier: Re-verify the reliability change</summary>
+
+#### User
+
+Verify the OpenSpec change `reliability` (openspec/changes/reliability/) in the checkout ~/Dev/prisma-photonics-test-reliability, branch `reliability`. All tasks in tasks.md are checked. A previous verification returned PARTIAL with five gaps; commit 8bb90e0 addresses them. Do not run e2e tests (per-app *.e2e.test.ts, Playwright, tests/system-e2e); list any you want run and the main agent will run them. For reference, the main agent's runs after 8bb90e0: every job-service test level (39 files, 698 tests, including its per-app e2e) passed. Before it, after 0254d9a (the last system-e2e change except one removed comment): system e2e 27 passed on a fresh compose stack, job-ui Playwright 20 passed, and `npm run typecheck`, `lint`, `format:check` and `npm test` green.
+
+#### Claude
+
+Now the unit and integration tests for the changed workspaces.
+
+Comes from master (job-log change), not this one. Now the worker and shared packages.
+
+**Verdict: PARTIAL.** All five gaps from the last verification are closed, and every requirement and scenario now has a test and traces to a "Decided" line. One new gap remains, and it is small: a test-data helper is copied word for word between two system e2e spec files.
+
+**The five previous gaps, now closed**
+- **Start for another attempt:** the unit test at `~/Dev/prisma-photonics-test-reliability/apps/job-service/src/infra/jobs/job-service.impl.test.ts:716` has a processing job at attempt 2 refuse a start for attempt 1 and 3, with `details.status` 'processing' and no `repository.update`. If the attempt check in the idempotent-start branch (`job-service.impl.ts:270`) were removed, that branch would return the job and the test would fail.
+- **"Key too long" and "Bulk item with a bad key":** both now have HTTP tests (`~/Dev/prisma-photonics-test-reliability/apps/job-service/test/e2e/jobs.e2e.test.ts:512` and `:726`). The first goes through `expectRejected` (`:59`), which checks 400 `VALIDATION_FAILED`, the issue path, `total()` 0 and no enqueue. The second checks the issue at `jobs.1.idempotencyKey` through `issuePaths`, `total()` 0 and no `enqueueMany`.
+- **Stale comments:** `job-service.impl.ts:688` now names `JobRecovery`, the index comment in `schema.prisma` reads "Status filters.", and the stray JSDoc in `tests/system-e2e/jobs.spec.ts` is gone. A grep for "sweep" in tracked source finds nothing; the only hit is the git-ignored generated Prisma client, which is rebuilt.
+
+**Checks I ran**
+- `npm run typecheck`, `npm run lint` and `npm run format:check` all exit 0.
+- job-service unit and integration: 451 tests, 450 passed. The one failure was `src/infra/job-log/redis/redis-job-log-stream.int.test.ts > closes its connection` ("Connection is closed"). It passed 16/16 on three reruns, and the file comes from master's job-log change, not this one: it is flaky, not a regression.
+- job-execution-service unit and integration (including `bullmq-job-queue-consumer.int.test.ts` and `http-job-repository.int.test.ts`): 150/150.
+- job-group-service unit 68/68, service-kit 109/109, contracts 250/250, kernel 56/56, job-ui unit 494/494.
+
+**Requirements against the code**
+- **Retry with backoff:** a failed attempt with attempts left becomes `scheduled` with `scheduledAt` = now + delay and the next attempt is enqueued with that `runAt`. Retry n draws from [min, max] × 2^(n−1), each bound capped. Config defaults are 5000/30000/300000 ms, and min ≤ max ≤ cap is enforced. Tests: "Failure with attempts left", "Delay grows with each retry", "Delay is capped", "Retry survives an unavailable queue" and "Invalid payload with attempts left", at unit and e2e level.
+- **Run and attempt on reports:** a wrong run or attempt answers 409, and a repeated start of the same attempt answers 200 without a write. The "Repeated start", "Start for a stale attempt", "Completion of a recovered attempt", "Failure from an earlier run" and "Two workers start the same (scheduled) job" scenarios are tested at unit, integration and e2e level.
+- **Manual retry:** it clears `scheduledAt` and runs at once.
+- **Recovery pass (`job-recovery.impl.ts`):** it reads jobs that have been in their state since now − min age, in batches. A waiting job whose entry is finished is requeued and one with no entry is enqueued again. A processing job past its type's maximum processing time plus one interval fails with `JOB_TIMEOUT`, whatever its entry. An entry that exists but is no longer held fails with `WORKER_LOST`; one that is active or missing is left alone. Failures go through `JobService.update`, a lost race is logged at info, and an unreachable queue ends the pass with one warn line. Every scenario is named in `job-recovery.impl.test.ts`, `recovery.e2e.test.ts` and `bullmq-job-queue.int.test.ts`.
+- **Timer:** `SchedulerIntervalTask` lives in service-kit; `JobRecoverySchedule` and `JobGroupPoll` are thin hooks around it, as design D5 decided.
+- **Worker:** `maxStalledCount: 0` and the lock and stalled interval come from config. The time limit fires through an AbortController plus `setTimeout` and reports `JOB_TIMEOUT`. A cancel or shutdown reports nothing. A refusal with a status other than `cancelled` is logged at warn with jobId, run and attempt. "Stalled entry is not run again" would fail without `maxStalledCount: 0`, and "Each entry goes to one consumer" checks each of the 40 entries runs exactly once and that both consumers took some.
+- **Idempotency:** the fingerprint is built with `safe-stable-stringify` and SHA-256. The key is looked up before the time rules. A lost key race re-reads once in a single submit; a bulk retries up to `BULK_INSERT_TRIES = 3` and then fails with a 500. The contract rejects a key repeated within one bulk. The controller answers 201 or 200 from `created`. The migration adds the unique index and `(status, updated_at)`.
+- **job-ui:** the Details row for the key appears only when the job has one, and the submit form test proves it is unchanged.
+- **Docs:** `DECISIONS.md` sections 1, 2 and 4 and the idempotency sub-section match `decisions.md`; the README example and the roadmap are updated.
+
+**The gap: duplicated test helper**
+`emailItem` is identical in `~/Dev/prisma-photonics-test-reliability/tests/system-e2e/jobs.spec.ts:313` and `~/Dev/prisma-photonics-test-reliability/tests/system-e2e/recovery.spec.ts:19`. The same numbered email-bulk shape is built inline again in `job-execution-service.spec.ts:38-41` and in `StackJobs.waiting()` (`support/stack-jobs.ts:176-179`). It belongs once in `StackJobs`, for example `emailItems({ subject, count })`, used by all four.
+
+**Outside the change's scope**
+- Commit a51b0ee, a flow-tooling change, is on this branch: `.claude/hooks/guard-git.sh` and its test, the apply and work-on skills, and the Git section of `CLAUDE.md`, which now lets agents commit on change branches without asking. It is not product behaviour, but it will reach master with this merge.
+
+**Small notes, not gaps**
+- An idempotency key containing `\u0000` passes Zod but Postgres refuses it, so it would come back as a generic 500. Every other string field behaves the same today.
+- The "Pending job recovers on the full system" test checks the timing bound only on the first requeue, not on every job.
+- `ui.md` does not exist, so there was no screenshot comparison to check.
+
+**Not verified**
+- No e2e test was run, as you asked; I judged them by reading. Before the change counts as done, run:
+  - `apps/job-service/test/e2e/{jobs,internal-jobs,recovery,stats,service,errors}.e2e.test.ts`
+  - `apps/job-execution-service/test/e2e/{job-execution,email-job,webhook-job}.e2e.test.ts`
+  - job-ui Playwright
+  - `tests/system-e2e` (`job-execution-service.spec.ts`, `jobs.spec.ts`, `recovery.spec.ts`)
+
+  The fix for the gap touches those system e2e spec files and `support/stack-jobs.ts`, so the system e2e must run again after it.
+
+**Next steps**
+1. Move the email-item builder into `StackJobs` and use it in the four places, then run `npx tsc --noEmit -p tests/system-e2e` and the system e2e.
+
+CHANGE: reliability
+VERDICT: PARTIAL
+GAPS:
+- tests/system-e2e: the `emailItem(subject, index)` builder is copied verbatim in tests/system-e2e/jobs.spec.ts:313 and tests/system-e2e/recovery.spec.ts:19 (and the same numbered email-bulk item is built inline in job-execution-service.spec.ts:38-41 and StackJobs.waiting() in support/stack-jobs.ts:176-179); move it into one StackJobs method (e.g. `emailItems({ subject, count })`) in tests/system-e2e/support/stack-jobs.ts and use it in all four places
+
+</details>
+
+### Claude
+
+The first `change-verifier` run returned PARTIAL with five small gaps. All five are fixed and committed as `8bb90e0`, and the second verifier run is in progress.
+
+- **Wrong-attempt start untested:** a start report for a running job at a different attempt had no test, so removing that check broke nothing. A new unit test covers it, and I confirmed it fails when the check is removed.
+- **Key validation not tested over HTTP:** "Key too long" and "Bulk item with a bad key" now have HTTP tests again. They check the 400 answer and that nothing is stored or queued. Group 2's reviewer had removed them as repeats of the contract tests, but "nothing is stored" can only be seen at the HTTP level.
+- **Stale comments:** three comments still talked about the old sweep or no longer belonged; they're corrected or removed.
+
+All of job-service passes afterwards, 698 tests including its e2e files.
+
+When the verifier returns PASS, the next step is `/archive reliability`, then the merge into `master`, which needs your approval.
+
+One gap left: the same email-bulk builder exists in four places across the system e2e. Moving it into one `StackJobs.emailItems({ subject, count })` method used everywhere.
+
+Typecheck and lint are clean, and no copy of the builder is left. The fix touches system e2e files, so the whole system suite runs again before the third verification.
+
+The second verification also came back PARTIAL. It confirmed the five earlier gaps are closed and found one new one, now fixed but not yet committed: the same email-bulk builder existed in four places in the system e2e. All four now use one `StackJobs.emailItems({ subject, count })` method. Typecheck and lint are clean, and the full system suite is running again because those files changed.
+
+The verifier also raised two things for you:
+- **The commit-rule change will reach `master` with this merge.** Commit `a51b0ee` (the git hook that lets agents commit on change branches without asking, plus the matching CLAUDE.md and skill changes) is on this branch. It isn't product code, but it goes into `master` along with the reliability work. If you'd rather it land separately, say so before the merge.
+- **One integration test failed once and passed on all three reruns.** It's `redis-job-log-stream.int.test.ts > closes its connection` ("Connection is closed"), from the job log change merged from `master`, not this one. It looks flaky; I haven't changed it.
+
+When the system e2e passes, I'll commit the fix and run the verifier a third time.
+
+### User
+
+/compact
+
+### User
+
+/compact
+
+### User
+
+Everything is fine let's commit archive commit merge
+
+### Claude
+
+Checking the system e2e result before committing.
+
+All 27 system tests passed after the refactor. Committing it.
+
+Using change: `reliability` (override with `/archive <other>`). The archive skill only archives after `change-verifier` returned PASS for the current code. Checking the recorded verdict.
+
+<details>
+
+<summary>Subagent change-verifier: Final verification of reliability</summary>
+
+#### User
+
+Verify the OpenSpec change `reliability` (openspec/changes/reliability/) in the checkout ~/Dev/prisma-photonics-test-reliability, branch `reliability`, at commit 677c699. All tasks in tasks.md are checked. The previous verification returned PARTIAL with one gap (the email-bulk builder duplicated in four system e2e places); commit 677c699 moves it into `StackJobs.emailItems({ subject, count })` and uses it in jobs.spec.ts, recovery.spec.ts, job-execution-service.spec.ts and StackJobs.waiting(). Do not run e2e tests (per-app *.e2e.test.ts, Playwright, tests/system-e2e). For reference, the main agent's runs: after 677c699 the whole system e2e (tests/system-e2e) passed 27/27 on a fresh compose stack; after 8bb90e0 every job-service test level passed (698 tests, its per-app e2e included); job-execution-service per-app e2e passed after its last change; job-ui Playwright 20 passed; `npm run typecheck`, `lint`, `format:check` and `npm test` green.
+
+</details>
+
+### Claude
+
+The last fix is committed as `677c699`. After it, the whole system e2e suite passed again, 27 of 27 on a fresh stack.
+
+Archive and merge aren't done yet. The archive step only runs after `change-verifier` returns PASS for the current code. The verdict on file is still the PARTIAL from before this fix, and a hook enforces it. The third verifier run is going now.
+
+Once it returns PASS, I'll do the rest in this order:
+1. Sync the delta specs into `openspec/specs/` and archive the change.
+2. Commit the archive.
+3. Merge into `master`. You've asked for that; the hook will still show its approval prompt for the merge command.
+
+If the verifier finds anything else, I'll fix it and tell you before archiving.
+
+### User
+
+skip verifier
+
+### Claude
+
+Skipping it. Stopping the running verifier, then syncing the specs and archiving.
+
+All 17 specs validate, no delta headers remain, and the two new specs have their proper title and Purpose. Committing the archive.
+
+Five conflicts. `JobGroupPoll` is one of them, so `master` changed the poll as well. Looking at each hunk.
+
+Purely a rename on `master`'s side. For both poll files I'm taking this branch's version and applying the rename.
+
+The `job-ui` spec conflict is two independent appends, so I'm keeping both. The harness conflict needs a closer look at its surrounding lines before I combine the two sides.
+
+The work is committed and archived on `reliability`, but not yet merged into `master`. I skipped the final verifier, as you asked.
+
+**Archived** (`5818e7d`): the change's specs are merged into `openspec/specs/`.
+- Two new specs, `job-idempotency` and `job-recovery`, plus six updated ones: 20 requirements added, 12 changed, none removed.
+- All 17 main specs validate.
+- The change folder moved to `openspec/changes/archive/2026-10-31-reliability/`.
+
+**`master` had moved on.** It gained ten more commits, including a README rewrite and a compose change to the database ports. So I merged `master` into `reliability` first (`ca55eeb`) and resolved five conflicts there:
+- **`JobGroupPoll` and its test:** kept this branch's thin wrapper, with `master`'s rename `checkRunning` → `checkOpen`.
+- **job-service e2e test harness:** kept both sides' new seed options.
+- **`job-ui` spec:** kept both sides' new requirements.
+- **README:** took `master`'s new version and added this branch's idempotency example, the three-worker system e2e with its recovery tests, and automatic retries in the job lifecycle line.
+
+Typecheck, lint and format are clean on the merged code.
+
+**Still running:** the whole test suite, job-ui Playwright and the system e2e on the merged code. This is the first time `master`'s new commits and this branch run together. When it's green I'll run `git merge --no-ff reliability` in the main checkout, where `master` is checked out. The hook will ask you to approve that command. If anything fails, I'll fix it on `reliability` first.
+
+### User
+
+merge into maste
+
+### Claude
+
+Merging now, while the checks on the merged code are still running in the background. If one of them fails, the fix will go to `master` as a follow-up.
+
+The merge went through as `97df819`. `master` had moved once more, with a README date fix (`91f2f09`). Checking that it merged cleanly and that the README has no conflict leftovers.
+
+`reliability` is merged into `master` (`97df819`), and `master`'s checkout is clean. `master` had gained one more commit in the meantime, a README date fix. It merged with no conflicts, and the README kept both that fix and this branch's additions. Nothing has been pushed.
+
+The tests on the merged code are still running in the background: the whole suite, job-ui's browser tests, and the system e2e. They exercise `reliability` with `master`'s earlier commits, not that last README fix, which doesn't affect any test. If one fails, the fix goes onto `master` as a follow-up.
+
+**Left open:**
+- The final `change-verifier` run was skipped, as you asked; its last verdict was PARTIAL. The one gap it named, a duplicated test helper, was fixed in `677c699`.
+- Groups 2, 4 and 5 each kept a second commit for their review fixes; merging those into their group commits would need a rebase, so they stay as they are.
+- `DECISIONS.md` §5 ("one thing I would do differently") is still TBD.
+- The old worktrees and branches from the parallel groups are clean and can be deleted if you want: `reliability-group2/4/5` and `reliability-group2-review`, plus three stale `agent-*` worktrees under the main repository's `.claude/worktrees/`.
+
+The filter test needs `&groupId=null` on its statistics call, so it counts what the jobs list counts. Now the log test.
 
 <a id="session-e2bd4975-3cae-4663-8280-5e9ddcc0e224"></a>
 
@@ -28387,3 +29290,837 @@ Only the last session, this one, differs, so the export is deterministic. Now th
 Approved. Ticking 2.5 and committing group 2, together with the plan changes (no spec, fewer tests, no verifier), since `tasks.md` carries both.
 
 Group 2 is committed as `aac4b53`. Now group 3: masking, the renderer and the file writer.
+
+Group 4 is committed as `68f5da9`. For group 5 I'm regenerating `AI_CHAT.md` first, so it includes this session up to now, then committing the integration.
+
+All groups are committed and the tree is clean. Archiving now, as you chose.
+
+Using change: `ai-chat-export`. To archive a different change, run `/archive <other>`. You waived the verifier, so this skips the "verified first" step.
+
+All artifacts are done (specs skipped), all 17 tasks are complete, and there are no delta specs to sync. Moving the change to the archive.
+
+### Claude asked
+
+- **ai-chat-export is archived (moved to openspec/changes/archive/2026-10-31-ai-chat-export/). Commit it as "docs(openspec): archive ai-chat-export" and merge the branch into master?** → Commit and merge (Recommended)
+
+### Claude
+
+`AI_CHAT.md` is in the repo root and `ai-chat-export` is merged into master (`54e8888`) and archived.
+
+- **What's in it:** all 47 sessions from the main checkout and every worktree, including removed ones, with their 201 subagents. Only the conversation is kept: your prompts, Claude's replies, and each question with the answer you picked. Subagents sit in collapsed blocks, and a table of contents at the top links to each session.
+- **Masking:** a grep of the generated file finds neither your home path nor your email. Secret-shaped strings would be replaced too, though the transcripts don't contain any.
+- **Size:** about 2.3 MB, of which subagents are 1.4 MB.
+- **Checks:** typecheck, lint and the full test suite (1,841 tests) pass. Two consecutive exports differed only in this session, which was still growing, so the output is stable.
+
+**Before you submit:** run `npm run export:chats` once more right before the final commit. It reads the transcripts as they are at that moment, so the reliability work and any later sessions only get in that way.
+
+**What I cut, as you asked:** there's no spec and no verifier run. Only the transcript reading and the masking have tests; the rest was checked by running it on your real transcripts.
+
+**Two things outside the plan:**
+- **Subagent files:** ferry refuses Claude Code's subagent files as they are, so the reader adjusts them before importing.
+- **Subagent reports:** a subagent's final report sits in its hand-back call rather than in a normal reply, so the export shows that message as the subagent's answer.
+
+Both are written up in the archived design.
+
+**Still open elsewhere:** the `job-group-create-ui` worktree has a merge from master stopped halfway. One file still has a conflict: `apps/job-ui/src/features/jobs/api/fetch-jobs-api.ts`.
+
+### User
+
+quick fix at jobs page should be only displayed jobs without groupId
+
+### Claude
+
+I'll check how the jobs list queries the API and whether the API can already filter on "no group".
+
+### Claude asked
+
+- **Hiding group jobs from the jobs page needs a new API filter on GET /v1/jobs, which changes what users and API clients see. CLAUDE.md says such work goes through a change, not a fix/ branch. Which path?** → fix/ branch, no OpenSpec
+- **How should job-service express "only jobs without a group" on GET /v1/jobs?** → groupId = null
+- **The status/type buttons on the jobs page show counts from GET /v1/stats. Should those counts also leave out group jobs?** → Yes, same filter (Recommended)
+
+### Claude
+
+`groupId=null` it is, on both `/v1/jobs` and `/v1/stats`, on a `fix/` branch. Creating the branch and finding the query and stats code paths.
+
+Still tracing the stats path: the counts are computed from status/type pairs in `job-statistics.impl.ts`. Next I need where those pairs are read from the database, then I'll write the failing tests.
+
+The counts come from `JobCounts.countByStatusAndType()`, which takes no filter today. I'll give it an optional group filter. Reading its port and Prisma implementation.
+
+I'm writing the failing tests first, as the fix rule requires, starting with the contract tests.
+
+They fail for the expected reason. Now a shared `GroupIdFilter` schema in the contract.
+
+Contracts pass. Now job-service, starting with the existing repository and counts tests for the group filter.
+
+The repository and counts tests now fail for the expected reason: the filter is ignored. Implementing it in job-service's domain types, the Prisma repository and the counts query.
+
+Both pass. Next, the statistics use case passes the group filter through to the counts. Test first.
+
+Statistics pass and job-service typechecks. Now the per-app e2e tests for the two routes, next to the existing group-filter cases.
+
+Adding the e2e cases: the seed helper gets an optional `groupId`, then I'll add one test per route plus the OpenAPI parameter.
+
+Running the three affected job-service e2e files (Testcontainers).
+
+All 128 pass. Now job-ui: the API client must send `groupId=null`, and the jobs page must ask for it on the list and the counts. Reading the existing client tests.
+
+It fails for the expected reason. Implementing the client and the two hooks, plus a client test for the `null` value.
+
+All 326 related UI tests pass. The contracts package changed, and many workspaces use it, so I'm running the full checks before the commit.
+
+The full checks pass (typecheck, lint, 151 test files with 1,852 tests). I didn't run the Playwright suites (`npm run test:e2e`).
+
+### Claude asked
+
+- **Commit the fix on fix/jobs-list-without-groups with the message above, and merge it into master?** → Commit and merge (Recommended)
+
+### Claude
+
+The jobs page now shows only jobs without a group, and the status and type counts leave group jobs out as well. The fix is committed (`ef25edf`) and merged into master (`98df867`), and the working tree is clean.
+
+`GET /v1/jobs` and `GET /v1/stats` accept a new `groupId=null` parameter, which the jobs page sends. A group's own page is unchanged.
+
+Typecheck, lint and the full test suite pass (1,852 tests). I didn't run the Playwright suites (`npm run test:e2e`).
+
+The `reliability` branch was planned before this API change. When you merge it, `job-service` is where conflicts are most likely.
+
+### User
+
+I have one more small error. When job group is failed and I restart used job it doesn't change status. I know why but it should be fixed as well.
+
+### Claude
+
+I'll look at how the group tracker decides which groups to re-check.
+
+### Claude asked
+
+- **How should a failed job group react when one of its failed jobs is retried?** → Keep polling failed groups (Recommended)
+- **This changes a spec requirement (job-groups: "no longer poll it ... even when jobs are retried"). How should it be done?** → fix/ branch + spec edit
+
+### Claude
+
+Renaming `listRunning`/`checkRunning` to `listOpen`/`checkOpen`. "Open" means a group that can still change, which is now `running` or `failed`. The rename is mechanical, so I'll do it with sed.
+
+zsh doesn't word-split the file list, so sed got it as one argument. Retrying through xargs.
+
+The rename is done and typechecks. Now the failing tests, starting with the repository integration tests.
+
+Both fail for the expected reason. Implementing the repository change and updating the port and tracker comments.
+
+As expected, only the `finishedAt` case fails; the other two already work with the existing logic. Fixing the tracker.
+
+My edit turned "not finished" (`null`) into now. Correcting the expression.
+
+Tracker passes, lint and typecheck are clean. Now a per-app e2e case for the whole flow: a failed group, then a retried child.
+
+The e2e passes. Before editing the spec, a check on job-ui: if the group page stops polling once a group is `failed`, it would never show the group running again.
+
+job-ui polls groups regardless of status, so it needs no change. Now the spec requirement.
+
+The spec is updated. Checking whether README, DECISIONS.md or code comments still describe a failed group as final.
+
+### Claude asked
+
+- **Make the two commits on fix/job-group-retry (the fix, then a Prettier-only style commit) and merge into master?** → Both commits + merge (Recommended)
+
+### Claude
+
+Retrying a failed job now updates its group: the group goes back to `running`, then becomes `completed` or `failed` again as its jobs finish. Both commits are on master (`ea1eede`) and the working tree is clean.
+
+**The cause:** job-group-service only re-checked groups in `running`, so a `failed` group was never looked at again. The spec required that ("no longer poll it… even when jobs are retried").
+
+**What changed:**
+- **Polling:** the group service now also re-checks `failed` groups. A retried job makes the group `running` again with `finishedAt` cleared. Only a `completed` group is final now.
+- **Finish time:** a group that stays failed keeps the time it first failed, rather than getting a new `finishedAt` on every poll.
+- **Spec:** in `openspec/specs/job-groups/spec.md`, "A completed group no longer changes" replaces "A finished group no longer changes", and a new requirement covers retried children, with three scenarios.
+- **DECISIONS.md:** updated, and it names the cost. A failed group nobody retries is polled forever, three count queries per poll.
+
+job-ui needed no change, since the group page keeps polling whatever the status.
+
+**Tests:** all job-group-service tests pass (146, including a new e2e test of failed → retried → completed). The new repository tests and the finish-time test failed before the fix. I didn't rerun the whole repo's suite, because only job-group-service changed.
+
+Prettier had never been run on 12 files from today's earlier changes. The second commit, `28e5d15`, only formats those.
+
+### User
+
+What else should we based on the task?
+
+### Claude
+
+I'll check the task's requirements against what's on master now.
+
+Most of the task is covered. Five things are still open.
+
+**Required by the task, not done yet**
+
+1. **The reliability work.** It covers four of the six "Critical Implementation Details": duplicate-free pickup (proven by tests), crash recovery, retry with backoff, and idempotency. It's in your `reliability` worktree: 30 of 35 tasks are checked, and 18 files are uncommitted.
+2. **`AI_USAGE.md` doesn't exist.** The task requires it, with these sections: tools used, 1–2 cases where AI helped most, 1–2 cases where you had to fix its advice (especially around concurrency), and where it struggled. You have to supply the substance; I can pull candidate cases from today's sessions.
+3. **DECISIONS.md, sections 2, 4 and 5:**
+   - Section 2 (crash recovery) still says "the recovery sweep is a later change". It needs updating once reliability merges.
+   - Section 4 (retry backoff) is `TBD` for both the approach and the timing.
+   - Section 5 ("one thing I'd do differently") is `TBD`.
+
+**Already covered, but worth a last check**
+
+4. **README.** It has run instructions, a test job example (`curl`), the test commands and an architecture overview, which is all the task asks for. Check it once the reliability features are in, since things like the idempotency key belong in the example.
+5. **The Batch job's "progress percentage".** It's handled by job groups instead of a `batch` job type. DECISIONS.md says so plainly, and the group page shows a percentage. Nothing to do, but a reviewer will look for it.
+
+**Last step before you send the link:** run `npm run export:chats` once more, so `AI_CHAT.md` includes the final sessions.
+
+**Not required by the task, so they can be dropped:**
+- **`job-update`.** The task's API list has no update endpoint.
+- **The optional extras on the roadmap.**
+- **`job-group-create-ui`.** That worktree is still mid-merge with one conflict. Either finish it (resolve the conflict, verify, merge) or leave it out.
+
+My recommended order: finish reliability → DECISIONS.md sections 2, 4 and 5 → `AI_USAGE.md` → a README pass → regenerate `AI_CHAT.md` → submit.
+
+### Claude asked
+
+- **What should I pick up next (in this session)?** → DECISIONS.md section 5
+
+### Claude
+
+Section 5 should be the user's own honest pick, so first I'm collecting what DECISIONS.md already admits as skipped or simplified.
+
+The current text already names four things as "would do with more time" or "better design". Section 5 asks for one, in your voice, so I'll let you pick.
+
+### Claude asked
+
+- **Which one should DECISIONS.md section 5 ("One Thing I Would Do Differently With More Time") be about? I'll draft it in first person, linking to the section that explains it.** → Lets mark few of them. Events instead of polling no 1. We are DDOS ourselves. Improve test/verifier to save progress step by step. Different service for logs and other stuff that not have own services
+
+### Claude
+
+You want several items, with events first. The task asks for "one thing", so I'll make events the main entry and put the other two below it as shorter points. Writing it on a small `docs/` branch.
+
+### Claude asked
+
+- **Commit only DECISIONS.md (section 5) on docs/decisions-section-5 as "docs: write DECISIONS.md section 5" and merge it into master? The other uncommitted job-service/contracts edits in this checkout stay untouched and uncommitted.** → Commit and merge (Recommended)
+
+### Claude
+
+DECISIONS.md section 5 is written and merged into master (`57359e3`). Events instead of polling is the main entry. Separate services for the job log and statistics, and a lighter step-by-step verification flow, are the two shorter points.
+
+The 9 job-service and contracts files someone is editing in this checkout are untouched and still uncommitted on master. Those edits make `groupId` narrow every value in `/v1/stats`, not just the counts. If that's your work in progress, it belongs on its own `fix/` branch before it's committed.
+
+What's still open from the task:
+- **Reliability:** your worktree, 30 of 35 tasks done.
+- **DECISIONS.md section 4:** backoff approach and timings, filled in with reliability.
+- **DECISIONS.md section 2:** crash recovery, which still says the recovery sweep is a later change.
+- **`AI_USAGE.md`:** doesn't exist yet. I can draft it from today's sessions for you to edit.
+- **README:** a last pass once reliability is merged.
+- **`AI_CHAT.md`:** regenerate with `npm run export:chats` before you submit.
+
+### User
+
+let's create AI_USAGE
+
+### Claude
+
+The task lists what `AI_USAGE.md` must contain: tools used, 1–2 cases where AI helped most, 1–2 cases where you had to fix its advice (especially around concurrency), and what it struggled with. I'll check for notes kept so far, then mine the chats for real cases rather than invent them.
+
+Several real corrections turned up. I need the context of the strongest ones, so I'll look at the cancel-race commit and the exchanges around three of your corrections.
+
+Those give two good correction cases: the shared-database design and the hand-written retry. Checking the cancel race in more detail, since a concurrency case is the one reviewers weigh most.
+
+I have enough cases. One last fact check: which models actually appear in the transcripts, so the "Tools" section lists only what was really used.
+
+Before writing the cancellation-registry case, I'll confirm the bug the reviewer found was actually fixed, not just reported.
+
+### Claude asked
+
+- **What should happen with the AI_USAGE.md draft?** → I didn't write any code at all at this project. Everething using chat. I used claude design which really helped me to create ui and pass it to the claude code. About what helped most you can miss extra details. for test reviewer it's better to say in generally. Like found different corner cases such as race condition issue. 
+
+About struggling i would say that problem is not one machine. Everything should settuped and tested by time to find best ballance for performance/quality.
+
+I wouldn't say that scalling is problem. It more looks like except feeling and context out of words.
+
+To duplication you can also add no strict code styles accross all monorepo without instructions
+
+the last once you can delete
+
+### Claude asked
+
+- **AI_USAGE.md is revised per your notes (no hand-written code, Claude Design for the UI, shorter "helped most", reviewer in general terms, struggles reworded, the tooling item removed). Commit it?** → What I had to fix is about what I did by myself isn't it?
+
+### Claude asked
+
+- **How should I finish AI_USAGE.md?** → Let's change ## What I Had to Fix. Concurency firstly wasn't clearly designed by the AI from the first attempt so I collected knowledges from different sources and then use fable to design reliability  and opus to implement
+
+### Claude
+
+You edited the file meanwhile, so I'll read the current version before changing that section.
+
+### Claude asked
+
+- **Commit AI_USAGE.md now?** → Also add worktrees for parallelism of big tasks
+
+### Claude
+
+I'll add that to "What Helped Most".
+
+### Claude asked
+
+- **Added "Git worktrees for parallel work" to What Helped Most (a worktree per change for parallel sessions, and big changes split into task groups built by subagents in their own worktrees). Commit AI_USAGE.md now?** → Commit and merge (Recommended)
+
+### Claude
+
+You removed the intro line about writing no code by hand, so I'm committing the file exactly as it is now.
+
+`AI_USAGE.md` is merged. The 9 uncommitted stats files are gone from the working tree, though, so I'll check where they went.
+
+`AI_USAGE.md` is in master (`a172358`) and the working tree is clean.
+
+The stats edits weren't lost. Another session committed them as `6cf5a19` ("count only the jobs without a group in every statistic for groupId=null"), and that commit is now in master too.
+
+The file is in your voice and has the task's four sections:
+- **Tools I Used:**
+  - Claude Design for the UI, handed to Claude Code to build it.
+  - Claude Code in VS Code: Opus 5.5 did most of the work, Fable 5.1 designed the reliability part, Sonnet 5.5 took the routine work, and Haiku 5.5 was tried briefly.
+  - The subagents, OpenSpec with the custom schema, the hooks, and `AI_CHAT.md`.
+- **What Helped Most:** decisions approved before code, enforced by hooks; the independent test reviewer finding corner cases, including a race condition; and git worktrees for parallel work.
+- **What I Had to Fix:** the AI's first concurrency design wasn't clear. You gathered sources yourself, used Fable to design the reliability part from them, and Opus to build it.
+- **What AI Struggled With:** finding the balance between speed and quality on its own, context that isn't put into words, and consistency across the monorepo (duplicated code, code style before the rules were written down).
+
+Two things to settle after the reliability merge:
+- "What I Had to Fix" points to DECISIONS.md sections 1 to 4, and section 4 is still `TBD`.
+- The task asks for 1–2 cases there; you have one now.
+
+### User
+
+We should make descinions smaller. Too much information for human. Most interesting is some tricky stuff like reuse of scheduling for retry or trade offs. Check and say what do you think
+
+### Claude
+
+I'll read DECISIONS.md's structure and size first, then give you my view before changing anything.
+
+You're right, and it's lopsided:
+
+- **Size:** DECISIONS.md is 831 lines and about 11,000 words, roughly 45 minutes of reading.
+- **Where it sits:** 83% is in "0. Stack and Architecture" (lines 5–690). That section is a log of every decision made along the way, including library choices with download numbers, the body-parser types, UI details (`cmdk`, `react-hook-form`, error boundaries), code structure rules, test levels, and seven flight-transit and four job-log entries.
+- **What the task asks for:** only sections 1–5 (pickup, crash recovery, priority, retry backoff, one thing differently), and those are just about 140 lines. The interesting parts are buried under the log.
+
+**What a reviewer should see (my proposal, about 200 lines):**
+1. **Sections 1–5 first, short, each leading with the tricky part:**
+   - **Pickup:** BullMQ hands out entries, but Postgres decides with a compare-and-set, so a second worker gets a conflict and drops the job. Each attempt gets its own queue entry.
+   - **Crash recovery:** a dead worker's job is detected and sent back. An attempt counts when it starts, so a job that crashes its worker can't loop forever.
+   - **Priority and scheduled jobs.**
+   - **Retry backoff reuses scheduling** (written on the reliability branch): a retry is just a `scheduled` job with `scheduledAt` = now + backoff. There's no separate retry status or loop, and it can be cancelled like any scheduled job. Your example is exactly the kind of thing that should stand out.
+   - **Section 5** as it is.
+2. **"Other trade-offs", 8–10 short entries:**
+   - One owner of job state, with an internal API instead of a shared database.
+   - Job groups instead of a Batch job type.
+   - A failed enqueue leaves the job pending (an outbox would be better, not built).
+   - Polling between services, and its cost.
+   - The job log in ClickHouse inside job-service, said plainly that Postgres would do.
+   - Health checks report only their own service.
+   - Zod contracts instead of Pact.
+   - Simulated webhook calls.
+3. **Everything else leaves the file:** library numbers, UI implementation details, code style and test levels. Code style already lives in CLAUDE.md and test levels in the README. I'd move the full current text to `docs/decisions-log.md` and link to it, so nothing is lost. CLAUDE.md's rule ("record library choices with numbers in DECISIONS.md") would then point to the log.
+
+**Timing:** the `reliability` branch rewrites about 250 lines of DECISIONS.md (sections 1, 2 and 4). Condensing it on master now would collide with that badly. I'd do it right after reliability is merged, or in the reliability worktree as its last step.
+
+### Claude asked
+
+- **How should DECISIONS.md be slimmed down?** → Oh)) We do not all decisions that we wrote at all)
+
+### Claude
+
+So no archive: the extra detail just goes, and DECISIONS.md keeps only sections 1–5 plus a few real trade-offs. One question is still open, timing, because of the reliability branch.
+
+### Claude asked
+
+- **DECISIONS.md will be cut down to sections 1–5 plus a short "Other trade-offs" list, with everything else deleted (no log). When? The reliability branch rewrites ~250 lines of DECISIONS.md (sections 1, 2, 4).** → So now lets make readme as it should be
+
+### Claude
+
+The UI tests mention a `/groups/new` route, which I thought was still unmerged in the `job-group-create-ui` worktree. Checking the real routes.
+
+`job-group-create-ui` has been merged meanwhile, so `/groups/new` exists. One more lookup: valid airport codes for the transit example.
+
+Before showing you this, I'll check that every example request body actually passes the API's own validation schema.
+
+### Claude asked
+
+- **Commit the new README.md?** → use mermaid for schema
+
+### Claude
+
+Mermaid usually accepts a node used before its label is defined, but I'm reordering the lines so `job-service` is defined first.
+
+### Claude asked
+
+- **The architecture diagram is now a Mermaid flowchart (GitHub renders it). Commit the new README.md?** → Commit and merge (Recommended)
+
+### Claude
+
+The new README is merged into master (`e626c70`), and the working tree is clean.
+
+It now covers the task's four parts:
+- **Run the project:** one compose command, a table of URLs, how to scale the workers and how to stop.
+- **Submit a test job:** one example request per job type, plus scheduling, filters, cancel and retry, stats and a group. All the example bodies pass the API's own schemas.
+- **Run the tests:** the commands and one line per test level.
+- **Architecture:** a Mermaid diagram and a short paragraph per service.
+
+It's 100 lines shorter, and the stale status note is gone. I haven't looked at the Mermaid diagram rendered, so check it on GitHub.
+
+Still to do once reliability is merged:
+- **README:** add an idempotency key example and a line saying failed attempts retry with backoff.
+- **DECISIONS.md:** cut it down to sections 1–5 plus a short "Other trade-offs" list, as we discussed.
+- **`AI_CHAT.md`:** run `npm run export:chats` right before submitting.
+
+### User
+
+I made repo public so download repo and try run docker from docker-compose there
+
+### Claude
+
+I'll do a fresh clone into the scratchpad and start it exactly as the README says, so nothing from this checkout can leak in. First the remote URL, and a check that no other stack is holding the ports.
+
+### User
+
+I pushed changes so let's do it one more tine
+
+### Claude asked
+
+- **Your dev Postgres, Redis and ClickHouse (compose project job-queue) hold ports 5432, 6379 and 8123. May I stop them for the fresh-clone run?** → _no answer_
+
+### User
+
+Reliablity is still working. Do we have something else that should be checked?
+
+### Claude
+
+I'll leave the dev stack alone. Some checks don't need the running stack at all. The two most urgent, now that the repo is public, are CI and whether anything secret got pushed. Both are read-only.
+
+CI on GitHub has failed on every master run since the job-log merge (`e618cbd`). The last green run was `1d88fad`. The current run is still in progress. Finding which step fails.
+
+### Claude asked
+
+- **CI's e2e job (job-ui Playwright + system e2e) has failed on master since the job-log merge. How do we find the cause?** → I mean in project based on task. Do we need some env for it? We have default values in docker. isnt'?
+
+### Claude
+
+You're asking whether `docker compose up` needs a `.env` to run. Checking the compose file for any variable without a default.
+
+### Claude asked
+
+- **Should docker-compose.yml stop publishing the database ports (5432, 6379, 8123) by default, so a reviewer's own Postgres/Redis can't block `docker compose up`?** → Yes, dev-only override (Recommended)
+
+### Claude
+
+I'll check first whether anything besides `npm run dev` reaches the databases through the host ports, for example the system e2e.
+
+Now the checks: the default config, the dev config, and the system e2e's own unit tests and typecheck.
+
+The default config now publishes only 3000, 3002 and 8080. The dev-config check broke only because zsh didn't split my `$f` variable; rerunning it without the variable.
+
+### Claude asked
+
+- **Commit "fix(compose): publish the database ports only for local development" on fix/compose-db-ports and merge into master?** → Commit and merge (Recommended)
+
+### Claude
+
+A fresh clone needs no env setup: no `.env`, no exported variables, just `git clone` and `docker compose up --build --wait`. I checked by rendering the compose config with an empty environment; every value comes from its default without a warning. I haven't started the stack from a clone, because your dev containers hold the ports.
+
+I also fixed one risk for reviewers, merged into master (`e4a5124`) but not pushed:
+- **Before:** `docker compose up` also bound the database ports 5432, 6379 and 8123, so anyone running their own Postgres or Redis would see the stack fail to start.
+- **Now:** it publishes only the UI and APIs (8080, 3000, 3002). `npm run dev` adds the database ports through the new `docker-compose.dev.yml`.
+- **Checked:** both configurations, plus the system e2e's support unit tests, typecheck and lint. The full system e2e wasn't run.
+
+**Main open problem: CI is red on GitHub.** The `e2e` job (job-ui Playwright plus the full-stack test) has failed on every master push since the job-log merge. The other job, `checks` (typecheck, lint, all other tests), passes. The logs need a GitHub login, so I can't see why. Reviewers will see the red mark next to your latest commit. To find the cause, either paste me the error from the failed run, or let me run `npm run test:e2e` here once the reliability session is done.
+
+**Public repo:** clean. No secrets, no `.env`, and no home paths in tracked files.
+
+### User
+
+ci it's not a problem. It's not part of the task
+
+### Claude
+
+Understood, I'll drop CI. The task doesn't ask for it.
+
+One small thing to keep in mind: GitHub still shows the red mark next to the latest commit, and a reviewer may notice it. If you'd rather avoid that, deleting `.github/workflows/checks.yml` or disabling the `e2e` job removes it. Otherwise it can stay as it is.
+
+What's left once reliability is merged:
+- **DECISIONS.md:** sections 2 and 4 from the reliability work, then cut it down to sections 1–5 plus a short "Other trade-offs" list.
+- **README:** add the idempotency key example and a line saying failed attempts retry with backoff.
+- **`AI_USAGE.md`:** optionally a second "What I Had to Fix" case (the task asks for 1–2).
+- **Fresh clone:** run `docker compose up` from a fresh clone once your dev containers are stopped.
+- **`AI_CHAT.md`:** run `npm run export:chats`, then push.
+
+### User
+
+let's delete it
+
+### Claude
+
+I'll delete the workflow on its own branch and check for anything that still refers to it.
+
+### Claude asked
+
+- **Commit the CI removal on chore/remove-ci and merge into master?** → Commit and merge (Recommended)
+
+### Claude
+
+The CI workflow is deleted and merged into master (`7d50aa3`). Once you push, GitHub won't run any checks on new commits, so there won't be a status mark on the latest commit any more. The PR template in `.github/` stays.
+
+### User
+
+what's more do we have?
+
+### Claude
+
+I'll check the current state: unpushed commits, the reliability worktree, and leftover worktrees and branches.
+
+Reliability looks finished, and `job-group-create-ui` is still listed as an active OpenSpec change on master although its code is merged. Checking both, plus which branches are on GitHub.
+
+### Claude asked
+
+- **What should I do now, while reliability finishes?** → /archive job-group-create-ui (Recommended)
+
+### Claude
+
+Using change: `job-group-create-ui`. To archive a different change, run `/archive <other>`. Gathering its status and delta specs.
+
+The guard hook blocks any command that mentions a `.verdict` file, even just reading it. Running the same checks without that part.
+
+### Claude asked
+
+- **job-group-create-ui is merged but has no verifier PASS on master. Run the change-verifier before archiving?** → Archive without it (Recommended)
+- **Sync job-group-create-ui's delta spec into openspec/specs/job-ui (3 modified requirements, 8 added for the New group page)?** → Sync now (Recommended)
+
+### Claude
+
+I'll do the sync myself: replace the three modified requirement blocks in the main `job-ui` spec with their new versions, and append the eight new ones. First a look at the main spec's layout.
+
+The spec validates and has no leftover delta headers. Checking that the three modified blocks now match the delta word for word.
+
+All 11 requirements in the main spec now match the delta exactly. Moving the change to the archive.
+
+### Claude asked
+
+- **job-group-create-ui is archived and its spec synced into openspec/specs/job-ui. Commit "docs(openspec): archive job-group-create-ui and sync its specs" on docs/archive-job-group-create-ui and merge into master?** → Commit and merge (Recommended)
+
+### Claude
+
+## Archive Complete
+
+**Change:** job-group-create-ui
+**Schema:** spec-flow
+**Archived to:** `openspec/changes/archive/2026-10-31-job-group-create-ui/`
+**Specs:** ✓ Synced to main specs. `openspec/specs/job-ui/spec.md` now has the 8 New group page requirements and the 3 updated ones (app frame, page URLs, groups list states). They match the delta exactly and the spec validates.
+
+All artifacts and all 27 tasks are complete. It was archived without a verifier PASS, as you chose, and the commit message says so.
+
+It's merged into master (`639002d`) but not pushed. There are no active changes left on master. Reliability is the only open one, in its own worktree.
+
+### User
+
+I just mentioned that we have different collors for some items. Like in group completed blue but in job green. Check everything and make same as at job
+
+### Claude
+
+I'll compare how job statuses and group statuses are coloured in job-ui.
+
+The status badges already share one colour map, so the blue must come from somewhere else in the group screens. Searching their colour classes.
+
+A new component gets its own test file, `group-progress-bar.test.tsx`. The page tests keep their `aria-valuenow` checks, so they show both screens still use the bar correctly.
+
+Both fail for the expected reasons. Implementing the colour change and the shared bar, and wiring it into the group page and the groups list.
+
+### Claude asked
+
+- **Commit "fix(job-ui): colour group progress with the job status colours" on fix/group-status-colours and merge into master?** → Commit and merge (Recommended)
+
+### Claude
+
+Group screens now use the job status colours. On the group page, a completed job's cell and the "Completed" legend square are green instead of blue.
+
+Both progress bars, on the group page and in the groups list, also changed. They were one blue fill. Now they show the completed share in green and the failed share in red on a grey track, matching the cells.
+
+All the other status colours (badges, statistics cards, filter counts) already matched. The job log's blue "info" badge and the highlighted waypoint on the transit map stay blue, since they aren't statuses.
+
+The group tests pass, and lint and typecheck are clean. I haven't looked at it in a browser. It's merged into master (`7d577b5`), not pushed.
+
+### User
+
+check copy please
+
+### Claude
+
+By "copy" I take it you mean the UI text. All of it comes from the locale file, so I'll read that.
+
+### User
+
+Clone fresh git and run there docker to check is it working as exepecte
+
+### Claude
+
+I'll clone from GitHub into the scratchpad and start the stack there. First a check that GitHub has the latest commits (including the compose port fix) and which host ports are free.
+
+The clone built and started in 2 min 46 s. All services are healthy and both migrations finished. Now the README's example requests against it, checking the results, not just the status codes.
+
+Almost everything works, but the README's scheduled-job example failed. Looking at the error.
+
+The relative dates work: the job is scheduled, and then cancelled, and the transit job is accepted. Last README step: scaling the workers to 3 and pushing a burst of jobs through.
+
+The test stack is already down, so I'll check the README lines exactly as written: I run them in bash with `curl` swapped for `echo` and parse the JSON they'd send.
+
+My extraction cut off one line before the second command's body. Rerunning with the right range.
+
+### Claude asked
+
+- **Commit the README date fix on fix/readme-relative-dates and merge into master?** → Commit and merge (Recommended)
+
+### Claude
+
+The README date fix is merged into master (`a7f11da`), but not pushed, so push it for the public repo to include it.
+
+Apart from those two dates, the fresh clone worked exactly as the README describes. The UI-copy review you asked for just before this is still to do.
+
+### User
+
+Reliability is merged so let's update decisions
+
+### Claude
+
+I'll check the current DECISIONS.md after the reliability merge, then condense it as we agreed.
+
+Sections 1–5 are now complete and good, but long. Before writing, I'll read the section 0 entries that will become the short trade-offs list, to get their facts right.
+
+### Claude asked
+
+- **Commit the short DECISIONS.md and the CLAUDE.md rule on docs/decisions-short and merge into master?** → ## 5. One Thing I Would Do Differently With More Time
+
+events for client as well
+
+### Claude
+
+I'll extend the main point of section 5 to the client: job-ui polls job-service every 2 s too, so pushing updates (Server-Sent Events) is the same idea on the client side.
+
+### Claude asked
+
+- **Section 5 now covers events to the client too (the UI polls every 2 s; Server-Sent Events instead). Commit the short DECISIONS.md and the CLAUDE.md rule and merge into master?** → Commit and merge (Recommended)
+
+### Claude
+
+DECISIONS.md is now about 180 lines instead of 941, merged into master (`a689fbb`) but not pushed.
+- **Gone:** section 0 and the per-feature detail.
+- **Left:** sections 1–5 in the task's template, then a short "Other Trade-offs" list.
+- **Section 5:** now also says the UI should receive changes through Server-Sent Events instead of polling every 2 s.
+- **CLAUDE.md:** keeps the file short from now on; library numbers stay in each change's own decisions file.
+
+What's left before you submit:
+- **README:** an idempotency key example and a line saying failed attempts retry with backoff.
+- **UI copy review:** the check you asked for earlier, still to do.
+- **`AI_CHAT.md`:** run `npm run export:chats` as the last step, then commit and push.
+
+### User
+
+I just tried
+
+<pasted_content id="70cc">
+~/dev/temp1 » git clone git@github.com:hovorun-art/prisma-photonics-test.git
+Cloning into 'prisma-photonics-test'...
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+</pasted_content id="70cc">
+
+### Claude
+
+The repository is fine. This is an SSH key problem on that machine. `git@github.com:…` clones over SSH, and GitHub asks every SSH clone for a key it recognises, even for public repos. "Permission denied (publickey)" means that machine has no SSH key registered with your GitHub account.
+
+A public repo clones without any key over HTTPS, which is how I cloned it for the fresh-clone check:
+
+```bash
+git clone https://github.com/hovorun-art/prisma-photonics-test.git
+```
+
+To use SSH from that machine, add its key to GitHub (Settings → SSH and GPG keys). `ssh -T git@github.com` tells you whether it works.
+
+Reviewers will usually copy the HTTPS URL from GitHub's "Code" button, so this won't affect them. The README doesn't include a clone step yet. I can add the HTTPS command at the top of "Run the project", so the instructions start from nothing.
+
+### User
+
+lets get rid of vulnerabilities in npm
+
+### Claude
+
+I'll start by seeing what `npm audit` reports.
+
+Checking whether the production images install dev dependencies at all. That decides whether the 25 dev-only findings ever ship.
+
+### Claude asked
+
+- **How far should we go with the npm audit findings?** → whatever. For this case not so important
+
+### Claude
+
+You don't mind either way, so I'll take the lower-risk route: fix the runtime findings and the safe dev ones with npm overrides, leave the rest, and prove nothing broke with the full checks.
+
+The `minimatch` override worked, but `multer` and `js-yaml` are still on the old versions. npm probably kept the exact versions already in the lockfile. I'll make npm resolve just those two again.
+
+Now `multer` is 2.5.0 and `js-yaml` is 5.5.0. The exit code came from my file loop, not npm. Checking the dependency tree is valid and re-running the audit.
+
+### Claude asked
+
+- **Commit "fix(deps): override multer, js-yaml and minimatch to patched versions" on fix/npm-audit and merge into master?** → Commit and merge (Recommended)
+
+### Claude
+
+The npm audit findings are down from 31 to 14, with no high ones left. The fix is merged into master (`cfc9897`) but not pushed.
+
+- **Runtime (what ships in the service images):** both high `multer` findings and the `js-yaml` findings are fixed, by forcing patched versions of the same major through overrides in the root `package.json`. The 2 low `deepmerge` findings remain because no fixed version exists.
+- **Dev-only:** 12 moderate remain, in ESLint, typescript-eslint, Testcontainers and the Nest CLI, which depend on old majors of `minimatch` and `glob`. Forcing those to the fixed versions would break the tools. The production images drop dev dependencies, so these never ship.
+
+Typecheck, lint and the full test suite (2,070 tests) pass with the new versions.
+
+### User
+
+drop all docker cache. Want to start new instance from the scratch
+
+### Claude
+
+Removing Docker data can't be undone, so first a look at what's on this machine: other projects' images and volumes would go too with a global prune.
+
+I didn't delete anything: Claude Code's safety check blocked the command as an irreversible deletion. So nothing is removed and your stack is still running.
+
+You can run it yourself. Typing `!` in front of a line in this chat runs it in your shell:
+
+```bash
+# stop the job-queue stack and delete its containers and data volumes
+docker compose -p job-queue down -v --remove-orphans
+# remove every image, stopped container, network and volume (only this project's are here)
+docker system prune -a --volumes -f
+# remove the 7.3 GB build cache
+docker builder prune -a -f
+```
+
+That deletes your dev data (the Postgres and ClickHouse volumes), all project images and the build cache. Base images like Postgres and Redis will be downloaded again.
+
+Then start from scratch in this checkout:
+
+```bash
+docker compose up --build --wait
+```
+
+The first build will take a few minutes without the cache. If you'd rather I run the wipe, add a permission rule for these `docker` commands to your Claude Code settings, then ask again.
+
+### User
+
+add to readme command to clone over http to make it easier and run collect all ai chat
+
+### Claude
+
+Two things: add the HTTPS clone command to the README, and regenerate `AI_CHAT.md` with all the chats. First the README.
+
+`AI_CHAT.md` is regenerated: 48 sessions and 208 subagents. Neither your home path nor your email appears in it. A quick check that the reliability sessions are in:
+
+### Claude asked
+
+- **Make the two commits (README clone step, refreshed AI_CHAT.md) on docs/clone-and-chats and merge into master?** → Commit both and merge (Recommended)
+
+<a id="session-d71f5123-0c48-48e2-afae-866065c74ca3"></a>
+
+## Job-group-tracker completed statistic
+
+2026-10-31 00:24 UTC · worktree `main` · session `d71f5123-0c48-48e2-afae-866065c74ca3`
+
+### User
+
+just do a quick fix. statistic completed show me 200 completed but all of them are related to groups so shouldn't be displayed
+
+### Claude
+
+Now an e2e case for the cards, then running the tests to watch them fail.
+
+All three fail for the expected reason. Now the fix:
+
+All 236 related tests pass. Next: typecheck, lint, and the project's required test-case review of the changed test files.
+
+<details>
+
+<summary>Subagent test-case-reviewer: Review stats test cases</summary>
+
+#### User
+
+Review the test cases for job-service queue statistics with the group filter (groupId, including groupId=null meaning jobs without a group), across these files: apps/job-service/src/infra/jobs/job-statistics.impl.test.ts (unit), apps/job-service/src/infra/jobs/prisma/prisma-job-counts.int.test.ts (integration), apps/job-service/test/e2e/stats.e2e.test.ts (per-app e2e). Focus on the group-filter cases in the diff against master (`git diff master`).
+
+#### Claude
+
+**Verdict:** GAPS
+
+The diff gets the main point right: the group filter now reaches `count` as well as `countByStatusAndType`, and each of the three levels checks it. Three things are missing or weak: the route never rejects a bad `groupId` in an e2e test, the integration tests seed only one group, and no spec scenario describes the new behaviour.
+
+**Corner cases**
+
+*Schema (`QueryStatsRequest` / `GroupIdFilter`, contracts unit tests, outside the diff, checked so nothing is asked twice)*
+- ✅ `groupId=null` is read as `null`: "reads groupId=null as only the jobs without a group" (`packages/contracts/src/jobs/queue-stats.test.ts:180`)
+- ✅ a value that is neither a UUID nor `null` is rejected (`queue-stats.test.ts:184`)
+- ✅ a UUID is accepted, and empty or repeated values are rejected. These go through the shared `GroupIdFilter` (`packages/contracts/src/jobs/job.test.ts:349`, `:359-363`).
+
+*Unit: `JobStatisticsImpl` (`apps/job-service/src/infra/jobs/job-statistics.impl.test.ts`)*
+- ✅ `groupId` is passed to both ports with the exact arguments: "counts the jobs of the requested group only, in every statistic" (`:141`)
+- ✅ with no `groupId`, nothing is narrowed: "counts from the start of each configured window…" (`:55`). `toHaveBeenCalledExactlyOnceWith` would fail if `null` were sent instead of nothing.
+- ✅ a port failure passes through (`:113`, `:121`)
+
+*Integration: `PrismaJobCounts` (`apps/job-service/src/infra/jobs/prisma/prisma-job-counts.int.test.ts`)*
+- ✅ `count` with `groupId: null`: grouped jobs in both branches of the `OR` (active, and finished inside a window) are left out, so the new brackets around the `OR` are really tested. Test: "counts only the jobs without a group for groupId null, and one group for its id" (`:164`)
+- ⚠️ `count` with a group's id (`:164-186`): only one group is seeded. An implementation that read the filter as `group_id IS NOT NULL` would still pass. Seed at least one active and one finished job of a second `randomUUID()` group and keep the expected group result unchanged.
+- ⚠️ `countByStatusAndType` with a group's id (`:196`, existing test): same weakness, only one group. Add a job of a second group.
+
+*Per-app e2e (`apps/job-service/test/e2e/stats.e2e.test.ts`)*
+- ✅ `groupId=null` narrows `counts`: "Counts of the jobs without a group for groupId=null" (`:153`), with a full `toEqual` on `counts`.
+- ⚠️ `groupId=null` narrows the other statistics: "Statistics of the jobs without a group for groupId=null" (`:164`). It does detect a missing filter (`processing` 0, `recent.failed` 0 and the throughput would all change). But it checks fields one by one, and the `pending` check proves nothing because no grouped pending job is seeded. It also sits in the `job counts per status and per type` describe, though it is about the other statistics. Better: seed one grouped pending and one grouped scheduled job, then compare the whole response with `toEqual` (all fields except `counts`, or including `counts`, which would also make `:153` unnecessary). Move it to the top-level describe.
+- ❌ An invalid `groupId` on `GET /v1/stats` is not wired. WHEN a client calls `GET /v1/stats?groupId=campaign-1`, THEN the response is 400 `VALIDATION_FAILED` with exactly one issue, for `groupId`. Put it in the `invalid filters` describe (`:255`) next to `status` and `type`, as the one wiring case for this field. The edges are already in the schema tests.
+- A UUID value through the route is not needed here: `null` proves the wiring at e2e, and the integration test covers the id branch.
+- ✅ Docs list a `groupId` parameter: `apps/job-service/test/e2e/service.e2e.test.ts:183` (the name only).
+
+**Duplicates:** none. The two e2e `groupId=null` tests cover two different results (`counts`, and the other statistics), so they are not duplicates. They could become one test, as above.
+
+**Belongs elsewhere:** nothing. The reviewed tests try nothing that belongs to another level.
+
+**Rule violations**
+- Spec traceability (CLAUDE.md "Testing", and "Small fixes"): `openspec/specs/queue-statistics/spec.md` does not mention `groupId`. Its requirement (lines 10-13) still says only `status` and `type` change the job counts, "never the other statistics". This branch makes `groupId` narrow every statistic, which changes what API clients see. Yet there is no scenario for the new e2e names (`:153`, `:164`) to trace to. CLAUDE.md says a small fix that changes what the user sees should stop and become a change, or at least the main spec needs a requirement for the group filter. The user should decide this.
+- Otherwise clean: ids come from `randomUUID()`, there are no UUID literals, stubs use the `...Once` forms, e2e seeding goes through the app's own repository, and nothing is test-only harness code.
+
+**Test run:** `cd ~/Dev/prisma-photonics-test/apps/job-service && npx vitest related --run --project job-service:unit --project job-service:integration src/infra/jobs/job-statistics.impl.ts src/infra/jobs/prisma/prisma-job-counts.ts src/infra/jobs/job-statistics.impl.test.ts src/infra/jobs/prisma/prisma-job-counts.int.test.ts` gave "Test Files 2 passed (2), Tests 28 passed (28), Duration 3.27s". Nothing was flaky or slow. Run from the repo root, the same command fails: the `--project` filter matches no project there (the job-service projects are nested in `apps/job-service/vitest.config.ts`).
+
+**E2e files for the main agent to run:**
+- `~/Dev/prisma-photonics-test/apps/job-service/test/e2e/stats.e2e.test.ts`
+- `~/Dev/prisma-photonics-test/apps/job-service/test/e2e/service.e2e.test.ts` (the controller's OpenAPI description changed)
+
+</details>
+
+### Claude
+
+Typecheck, lint and formatting are clean. The test-case reviewer is still running; I'll act on what it finds before proposing the commit.
+
+The reviewer found gaps. I'm fixing them: a second group in the integration tests, one stricter e2e test at top level, and the invalid `groupId` case.
+
+### Claude asked
+
+- **The stats fix is ready on branch fix/stats-without-groups. All 57 stats tests (unit, integration, e2e) pass, and typecheck, lint and formatting are clean. The test reviewer noted that openspec/specs/queue-statistics/spec.md still says only status and type change the counts, so the new groupId behaviour has no spec scenario. How do you want to proceed?** → Commit as is (Recommended)
+
+### Claude asked
+
+- **The fix is committed on fix/stats-without-groups (6cf5a19). Merge it into master?** → Merge into master (Recommended)
+
+### Claude
+
+The fix is on master, but it was committed directly to master rather than through the branch and a merge. The merge did nothing ("Already up to date").
+
+**The fix:** the job filter counts on the jobs page already left out grouped jobs, but the cards didn't. The cards are pending, processing, scheduled, completed/failed in the last 24h, and throughput. `groupId=null` on `GET /v1/stats` now applies to those as well, so "Completed · 24h" no longer counts group jobs.
+- The query is in [prisma-job-counts.ts](apps/job-service/src/infra/jobs/prisma/prisma-job-counts.ts). The group filter is passed through in [job-statistics.impl.ts](apps/job-service/src/infra/jobs/job-statistics.impl.ts).
+- New unit, integration and e2e tests failed first and now pass, 57 in total including the stats and service e2e files. Typecheck, lint and formatting are clean.
+- After the test-case reviewer's report I tightened the tests: a second group in the integration tests, one full-response e2e check, and a test that an invalid `groupId` on stats is rejected.
+- As you chose, the queue-statistics spec still doesn't describe `groupId`.
+
+**Why it ended up on master:** another session is working in the same folder. While I was working, it switched from my `fix/stats-without-groups` branch to `docs/decisions-section-5`, then to master, and merged that branch. My `git commit` then landed on master (6cf5a19, after their merge 57359e3). `fix/stats-without-groups` is still empty, at `ea1eede`.
+
+The code on master is what we intended; only the merge commit is missing. Moving the commit back onto the branch and merging it properly would mean resetting master. I haven't done that, because it rewrites master while the other session is still active. Tell me if you want it done.
+
+The other session also left an untracked `AI_USAGE.md`. It isn't mine, so I didn't touch it.
