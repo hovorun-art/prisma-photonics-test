@@ -808,4 +808,24 @@ its status badge, and the job page shows "Scheduled for" and a Lifecycle that st
 
 ## 5. One Thing I Would Do Differently With More Time
 
-TBD
+**Events between services instead of polling.** job-group-service learns about its groups by asking
+job-service every 2 s: three count queries per open group per tick, and since a retry can reopen a
+failed group, a failed group nobody retries is polled forever. With many groups the services spend
+their time querying each other; we are, in effect, DDoSing ourselves. I would have job-service
+publish job status changes (a Redis Stream, as job log entries already travel, or a real broker)
+and let job-group-service update a group when one of its jobs changes. That removes the polling
+load and the delay of up to one interval. The price is what polling gets for free: at-least-once
+delivery with idempotent updates, and replaying missed events after downtime. See "Polling
+job-service" and "The status rule" above.
+
+Two smaller ones, said plainly:
+
+- **Own services for what now lives inside job-service.** The job log (writer, store and API) and
+  the queue statistics run inside job-service to save scaffolding more services. I would give them
+  their own services with their own APIs and storage; the producers would not change, since they
+  already only append to a stream. See "Job log: owned by job-service, for now".
+- **A lighter, step-by-step verification flow.** The spec-driven flow (decisions, specs, a test
+  review per task group, a verifier at the end of a change) caught real gaps, but one heavy
+  verification pass at the end cost a lot of time, and gaps it found late were fixed after
+  everything else was built. I would check and save progress per task group, so each step is
+  verified and committed on its own, and scale the ceremony to the size of the change.
