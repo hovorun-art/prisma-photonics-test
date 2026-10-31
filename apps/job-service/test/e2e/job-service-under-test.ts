@@ -131,6 +131,8 @@ export interface SeedRequest {
   completedAt?: string;
   /** The error of a failed attempt; defaults to none. */
   error?: JobError;
+  /** The group the job was submitted in; defaults to none. */
+  groupId?: string;
 }
 
 export interface ChangeStatusRequest {
@@ -482,6 +484,7 @@ export class JobServiceUnderTest implements Closable {
         attempts: options.attempts ?? (notStarted ? 0 : 1),
         maxAttempts: options.maxAttempts ?? 3,
         error: options.error ?? null,
+        groupId: options.groupId ?? null,
         scheduledAt: status === 'scheduled' ? new Date(Date.now() + 3_600_000).toISOString() : null,
         startedAt: notStarted ? null : now,
         completedAt: finished ? (options.completedAt ?? now) : null,

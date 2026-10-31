@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { JOBS_ROUTE, QueryJobsResponse } from '@job-queue/contracts';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -145,6 +147,17 @@ describe('job-service queue statistics', () => {
       expect((await service.stats()).counts).toEqual({
         status: { ...NO_STATUS_COUNTS, failed: 2, completed: 1, pending: 1 },
         type: { ...NO_TYPE_COUNTS, webhook: 2, email: 2 },
+      });
+    });
+
+    it('Counts of the jobs without a group for groupId=null', async () => {
+      await service.seed({ status: 'failed', type: 'webhook' });
+      await service.seed({ status: 'failed', type: 'webhook', groupId: randomUUID() });
+      await service.seed({ status: 'pending', groupId: randomUUID() });
+
+      expect((await service.stats([['groupId', 'null']])).counts).toEqual({
+        status: { ...NO_STATUS_COUNTS, failed: 1 },
+        type: { ...NO_TYPE_COUNTS, webhook: 1 },
       });
     });
 

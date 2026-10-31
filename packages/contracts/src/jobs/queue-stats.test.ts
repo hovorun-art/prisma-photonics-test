@@ -177,6 +177,14 @@ describe('QueryStatsRequest', () => {
     expect(QueryStatsRequest.parse({})).toEqual({});
   });
 
+  it('reads groupId=null as only the jobs without a group', () => {
+    expect(QueryStatsRequest.parse({ groupId: 'null' })).toEqual({ groupId: null });
+  });
+
+  it('rejects a groupId that is neither a UUID nor null', () => {
+    expect(issuePaths({ groupId: 'none' })).toContainEqual(['groupId']);
+  });
+
   it('accepts one status, one type, or both', () => {
     expect(QueryStatsRequest.parse({ status: 'failed' })).toEqual({ status: 'failed' });
     expect(QueryStatsRequest.parse({ type: 'flight-transit' })).toEqual({ type: 'flight-transit' });

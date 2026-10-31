@@ -120,7 +120,7 @@ export class PrismaJobRepository implements JobRepository {
     return {
       ...(req.statuses && { status: { in: req.statuses } }),
       ...(req.types && { type: { in: req.types.map((type) => ROW_TYPES[type]) } }),
-      ...(req.groupId && { groupId: req.groupId }),
+      ...(req.groupId !== undefined && { groupId: req.groupId }),
     };
   }
 

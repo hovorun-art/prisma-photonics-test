@@ -181,6 +181,7 @@ describe('job-service health, docs and shutdown', () => {
       const parameter = (name: string): unknown =>
         stats?.parameters?.find((candidate) => candidate.name === name);
       expect(stats?.parameters?.map((candidate) => candidate.name).sort()).toEqual([
+        'groupId',
         'status',
         'type',
       ]);

@@ -15,6 +15,8 @@ export interface GetJobStatisticsRequest {
   status?: JobStatus;
   /** Narrows the counts per status to jobs of this type. */
   type?: JobType;
+  /** Narrows both counts to this group's jobs, or (`null`) to the jobs without a group. */
+  groupId?: string | null | undefined;
 }
 
 export interface GetJobStatisticsResponse {
