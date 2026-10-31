@@ -63,14 +63,14 @@ tested; no `test-case-reviewer` runs (user decision, see decisions.md).
 Owns: `src/infra/masking/**`, `src/infra/render/**`, `src/infra/output/**` · Depends on: 1 ·
 Parallel with: 2, 4
 
-- [ ] 3.1 Write failing tests for `PatternTextMask`: home path → `~`, git email → `<email>`,
+- [x] 3.1 Write failing tests for `PatternTextMask`: home path → `~`, git email → `<email>`,
   secret-shaped text → `<redacted>` (Anthropic, GitHub, AWS key id, JWT, PEM private key), and the
   dev tokens (`change-me-local-dev-token`, `e2e-service-token`) unchanged; see them fail.
   Implement it; verify they pass.
-- [ ] 3.2 Implement `MarkdownChatRenderer` (contents with anchor links, `### User` / `### Claude`,
+- [x] 3.2 Implement `MarkdownChatRenderer` (contents with anchor links, `### User` / `### Claude`,
   `### Claude asked`, subagents in `<details>` with the blank lines GitHub needs); verify by the
   real run in 5.3.
-- [ ] 3.3 Implement `FsExportFile` (temporary file, then rename); verify by the real run in 5.3.
+- [x] 3.3 Implement `FsExportFile` (temporary file, then rename); verify by the real run in 5.3.
 
 ## 4. Use case and command
 
