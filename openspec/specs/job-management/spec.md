@@ -9,10 +9,11 @@ in its own spec (`email-job`, `webhook-job`, `flight-transit-job`).
 
 ### Requirement: Clients can submit a job
 `POST /v1/jobs` with a known job type, a payload valid for that type and optionally a priority, max
-attempts and an execution time (`scheduledAt`) SHALL store a new job and answer HTTP 201 with the
-job. The new job has a generated UUID id, status `scheduled` when `scheduledAt` is in the future and
-`pending` otherwise, and zero attempts; fields not used yet are `null`. Each type's payload is
-defined in its own spec.
+attempts, an execution time (`scheduledAt`) and an idempotency key SHALL store a new job and answer
+HTTP 201 with the job. The new job has a generated UUID id, status `scheduled` when `scheduledAt` is
+in the future and `pending` otherwise, and zero attempts; fields not used yet are `null`. A
+submission whose idempotency key was already used is answered as the `job-idempotency` spec
+describes. Each type's payload is defined in its own spec.
 
 #### Scenario: Defaults are applied
 - **WHEN** a client submits a job without priority and max attempts
@@ -37,6 +38,10 @@ defined in its own spec.
 #### Scenario: Execution time with a time zone offset
 - **WHEN** a client submits a job with a future `scheduledAt` written with a non-UTC offset (for example `+02:00`)
 - **THEN** the job is `scheduled` and its `scheduledAt` is the same instant, returned in UTC
+
+#### Scenario: New job has no idempotency key
+- **WHEN** a client submits a job without an idempotency key
+- **THEN** the job's `idempotencyKey` is `null`
 
 ### Requirement: Invalid job submissions are rejected
 A submission whose type is not a known job type, whose payload does not match its type, whose
@@ -246,7 +251,8 @@ response schemas.
 `POST /v1/jobs/bulk` with a body `{ jobs: [...] }`, where each item is an ordinary job submission
 of any known job type, SHALL store one new job per item and answer HTTP 201 with `{ items }`: the
 created jobs in the order of the request. Each item is stored as a single submission would store
-it, with the same defaults.
+it, with the same defaults. An item whose idempotency key was already used is answered as the
+`job-idempotency` spec describes, and the bulk answers HTTP 200 when no item created a job.
 
 #### Scenario: Mixed job types are created in request order
 - **WHEN** a client submits a bulk of an email job, a webhook job and a flight transit job
@@ -271,6 +277,10 @@ it, with the same defaults.
 #### Scenario: Bulk item with an execution time too far ahead
 - **WHEN** a client submits a bulk whose second item has a `scheduledAt` more than the configured maximum time ahead
 - **THEN** the response has HTTP status 400, the code `VALIDATION_FAILED` and an issue for the `jobs.1.scheduledAt` field, and no job is stored
+
+#### Scenario: Bulk items carry their keys
+- **WHEN** a client submits a bulk whose items carry different idempotency keys
+- **THEN** every created job shows its item's `idempotencyKey`
 
 ### Requirement: A bulk submission is all or nothing
 When any item of a bulk submission is invalid, whether by the shared job contract or by a

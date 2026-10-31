@@ -31,7 +31,8 @@ the `status` field, and the job is unchanged.
 ### Requirement: Clients can cancel a job that has not finished
 A cancel SHALL be accepted for a job in status `pending`, `scheduled` or `processing`: the job
 becomes `cancelled`, its completed timestamp is set, and its error, result and attempts stay as
-they were.
+they were. A job waiting for its next attempt after a failure is `scheduled` and is cancelled the
+same way; its queued next attempt is then never run.
 
 #### Scenario: Cancel a pending job
 - **WHEN** a client cancels a `pending` job
@@ -49,6 +50,10 @@ they were.
 - **WHEN** a client cancels a `pending` job on the full system before a worker takes it
 - **THEN** getting the job later still shows it `cancelled` with no started timestamp and no result
 
+#### Scenario: Cancel a job waiting for its retry
+- **WHEN** a client cancels a job that is `scheduled` for its next attempt after a failed one
+- **THEN** the response has HTTP status 200 and the job in status `cancelled` with its error and attempts unchanged, and after its `scheduledAt` has passed the job is still `cancelled` with the same attempts
+
 ### Requirement: A cancel stops the job's running work
 When a `processing` job is cancelled, the worker running it SHALL stop the job's work, and the job
 SHALL stay `cancelled`: no result or error from that run is stored.
@@ -59,16 +64,16 @@ SHALL stay `cancelled`: no result or error from that run is stored.
 
 ### Requirement: Clients can retry a failed job
 A retry SHALL be accepted only for a job in status `failed`: the job becomes `pending` with zero
-attempts, its error, result, started and completed timestamps are cleared, and it is put on the job
-queue again, so it runs as a newly submitted job would.
+attempts, its error, result, started, completed and scheduled timestamps are cleared, and it is put
+on the job queue again at once, so it runs as a newly submitted job would, without a retry delay.
 
 #### Scenario: Retry a failed job
 - **WHEN** a client retries a `failed` job that has used all its attempts
-- **THEN** the response has HTTP status 200 and the job in status `pending` with zero attempts and `null` error, result, started and completed timestamps, keeping its id, type, payload, priority, max attempts and created time
+- **THEN** the response has HTTP status 200 and the job in status `pending` with zero attempts and `null` error, result, started, completed and scheduled timestamps, keeping its id, type, payload, priority, max attempts, idempotency key and created time
 
 #### Scenario: Retried job is queued
 - **WHEN** a client retries a `failed` job
-- **THEN** the job queue holds a new entry for the job's first attempt, carrying the job's id
+- **THEN** the job queue holds a new entry for the job's first attempt, carrying the job's id and available to workers at once
 
 #### Scenario: Retried job runs again on the full system
 - **WHEN** a client retries a `failed` job on the full system

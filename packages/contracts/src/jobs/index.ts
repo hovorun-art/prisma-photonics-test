@@ -26,6 +26,7 @@ export {
   FlightTransitJobPayload,
   FlightTransitJobResult,
   INTERNAL_JOBS_ROUTE,
+  InternalJob,
   JOB_LIMITS,
   JOB_RESULT_SCHEMAS,
   JOBS_BULK_ROUTE,
@@ -50,6 +51,7 @@ export {
   WebhookJobPayload,
   WebhookJobResult,
 } from './job.js';
+export { JOB_ERROR_CODES } from './job-error-codes.js';
 export {
   JOB_LOG_LEVELS,
   JOB_LOG_ROUTE,

@@ -5,6 +5,10 @@ import type {
   ContainersStackRequest,
   ContainersStackResponse,
   DownStackResponse,
+  ExecStackRequest,
+  ExecStackResponse,
+  KillStackRequest,
+  KillStackResponse,
   LogsStackRequest,
   LogsStackResponse,
   Stack,
@@ -77,6 +81,15 @@ export class ComposeStack implements Stack {
   async start(req: StartStackRequest): Promise<StartStackResponse> {
     await this.compose(['start', '--wait', req.service]);
     return {};
+  }
+
+  async kill(req: KillStackRequest): Promise<KillStackResponse> {
+    await run('docker', ['kill', req.container], { env: { ...process.env, ...this.p.env } });
+    return {};
+  }
+
+  async exec(req: ExecStackRequest): Promise<ExecStackResponse> {
+    return { stdout: await this.compose(['exec', '-T', req.service, ...req.command]) };
   }
 
   private async compose(args: string[]): Promise<string> {

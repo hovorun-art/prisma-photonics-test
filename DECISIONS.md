@@ -121,9 +121,9 @@ custom ids.) Ids themselves come from Postgres (`gen_random_uuid()`).
 
 **Enqueue failure leaves the job pending, not the request failed.** A job is stored first, then
 queued. If Redis is down or slower than the configured timeout, the submit (or the retry report)
-still succeeds, the job stays pending and a warning with the job id is logged. The crash-recovery
-change adds a sweep that re-queues pending jobs that have no queue entry; until then such a job
-waits. *Alternatives:* deleting the row and answering 503 (simple, but the client must resubmit and
+still succeeds, the job stays pending and a warning with the job id is logged. The recovery pass
+(section 2) queues such a job again once it has been pending for the configured minimum age (30 s),
+within one more interval. *Alternatives:* deleting the row and answering 503 (simple, but the client must resubmit and
 may not); a transactional outbox (a row in the same transaction, relayed to Redis until it
 succeeds), which is the robust answer and the one we would take with more time. *Trade-off:* a
 window in which a job is pending but not queued.
@@ -169,7 +169,8 @@ random suffix per retry (failure retries inside one run need it too, so it must 
 **Query: offset pages over indexed columns.** `GET /v1/jobs?limit&offset` returns newest first,
 ordered by `(created_at DESC, id DESC)` so jobs created in the same millisecond keep a stable order
 across pages. Indexes: `(created_at DESC, id DESC)` for this order, `(status, created_at DESC)` for
-status filters and the pending-job sweep, `(type, created_at DESC)` for type filters. Default and
+status filters, `(type, created_at DESC)` for type filters, and `(status, updated_at)` for the
+recovery pass (jobs in one status since before an instant). Default and
 maximum page size are configuration; a larger `limit` is a 400, not silently clamped.
 *Trade-off:* offset paging gets slower on deep pages and can repeat or skip rows while jobs are
 being inserted; keyset (cursor) paging fixes both but makes a numbered table in the UI harder.
@@ -695,46 +696,131 @@ writer in its own process (the separate log service).
 `<jobId>_<run>_<attempt>`) to one worker at a time: its atomic move from waiting to active is what spreads
 work over instances and over the in-process concurrency slots (5 per instance by default). That
 alone is not trusted to prevent a double run, so the worker then asks job-service to start the job
-(`PATCH /internal/v1/jobs/:id` with `processing`; the worker sends nothing else). job-service reads
-the job, checks it is still `pending`, and writes the start in one conditional `UPDATE` that only
-matches while the job still has the status and attempts job-service itself just read
-(compare-and-set). The loser of any race gets 409 and drops the entry without running anything.
-Before starting, the worker reads the job and skips it when it is no longer pending (finished,
-cancelled, deleted, or already started), so stale and redelivered entries cost one read.
+(`PATCH /internal/v1/jobs/:id` with `processing` and the entry's run and attempt). job-service reads
+the job, checks it is `pending` or `scheduled` in that run and that the attempt is the next one, and
+writes the start in one conditional `UPDATE` that only matches while the job still has the status
+and attempts job-service itself just read (compare-and-set). A start that loses the write is read
+again: if the job is now `processing` in that same run and attempt, the start answers 200 (the same
+worker repeating a start whose answer it lost); anything else is 409, and the worker drops the entry
+without running anything. Before starting, the worker reads the job and skips it when it is no
+longer startable (finished, cancelled, deleted, or already started), so stale entries cost one read.
+Every later report (`completed`, `failed`) also names its run and attempt, and job-service refuses
+one that is not the job's current attempt, so a worker that was declared lost (section 2) can never
+complete or fail the attempt that replaced it.
 
-**Why:** BullMQ's pickup is fast and battle-tested, but a queue entry is not the source of truth:
-entries can be redelivered (stalled detection after a crash), and the job's real state lives in
-Postgres. Putting the final "may I run this?" decision into one conditional write in Postgres makes
-duplicate-free execution independent of queue behaviour, timing or the number of instances. BullMQ's
-own retries are off (one try per entry); job-service owns the retry rule and queues a new entry for
-the next attempt.
+**Why:** BullMQ's pickup is fast and battle-tested, but a queue entry is not the source of truth;
+the job's real state lives in Postgres. Putting the final "may I run this?" decision into one
+conditional write in Postgres makes duplicate-free execution independent of queue behaviour, timing
+or the number of instances. BullMQ never runs an entry twice by itself here: its own retries are off
+(one try per entry), and a stalled entry is never redelivered (`maxStalledCount: 0`, section 2);
+job-service owns the retry rule and queues a new entry for the next attempt.
+
+**Proof:** an integration test runs two of our queue consumers on one real Redis and hands them 40
+entries: every entry is executed exactly once, and both consumers take some. Another holds an entry
+in a worker that stops renewing its lock and shows the second worker never runs it. In job-service,
+two simultaneous starts of one pending (and of one scheduled) job both answer 200 and leave exactly
+one attempt and one start time, through the real database write. The system e2e submits 60 jobs to
+three execution instances: each completes with exactly one attempt, the workers' own logs show each
+picked up once, and more than one instance took part.
 
 **Trade-offs:** every job costs two extra calls to job-service before it runs (read, start). A
 worker never touches the database, so a job-service outage stops all progress; calls are retried a
 configured number of times, then given up. Ordering across the queue is BullMQ's: higher priority
 first, first in first out within one priority (section 3).
 
+**Idempotent submission.** The task's sixth critical detail. A submission (single, or each item of a
+bulk) may carry an `idempotencyKey` of 1–255 characters in its body; a body field rather than an
+`Idempotency-Key` header, so each bulk item can carry its own and the key is stored and shown with
+the job. The key is unique on the jobs table, so Postgres, not a read-then-write, decides that one
+key holds one job; it stays taken as long as its job exists and is freed when the job is deleted
+(nothing expires on a timer). With the key job-service stores a fingerprint of the request: SHA-256
+of the canonical request (type, payload, priority, max attempts, scheduled instant, group; defaults
+applied, timestamps normalised to UTC, object keys sorted), serialised with `safe-stable-stringify`
+(3.0.0, 2026-10-15, ~91.5M weekly npm downloads, own types; chosen over fast-json-stable-stringify,
+more downloads but last released in 2019, json-stable-stringify and canonicalize). A repeated
+submission with the same fingerprint answers **200** with the existing job in its current state (201
+means "created"); the same key with a different request answers **409 `IDEMPOTENCY_KEY_CONFLICT`**
+with the existing job's id, because silently returning another job would hide a client bug. The
+fingerprint, not the stored job, is compared, since a backoff retry rewrites the job's
+`scheduledAt`. The key is looked up before the time-dependent rules, so a replay of a request that
+was valid when first sent (a flight transit whose departure day has passed since) still answers 200.
+Two simultaneous submissions with a new key create one job: the loser's insert hits the unique index,
+re-reads and answers 200. In a bulk, items whose key matches answer their existing job at their
+position, the others are created, and the bulk answers 201 if it created one, 200 if none; a
+conflicting key rejects the whole bulk (nothing stored), and a key repeated within one bulk is a
+400. A bulk that keeps losing key races to concurrent bulks (three tries) answers a generic 500,
+logged; no public code for a race that needs several bulks to collide on one key within
+milliseconds. *Trade-offs:* keys are one namespace for every client (there is no authentication to
+scope them); a key is remembered for the job's whole life, so a client cannot reuse it for a new
+job without deleting the old one; the fingerprint and key cost two columns.
+
 ---
 
 ## 2. Worker Crash Recovery
 
-**Approach chosen (so far):** prevention and a clean shutdown; the recovery sweep is a later change.
-On SIGTERM a worker stops taking entries and lets running jobs finish and report, up to a configured
-grace period (10 s; compose waits 15 s before killing). After the grace period the remaining jobs
-are abandoned without a report. An attempt is counted when the job starts, so a job that kills its
-worker cannot loop forever.
+**Approach chosen:** no heartbeat of our own. BullMQ's lock on an active entry is the worker's
+liveness signal: a living worker renews it every half lock duration (`lockDuration` 30 s), and any
+worker's stalled check (`stalledInterval` 30 s) moves an entry whose lock expired out of `active`.
+With `maxStalledCount: 0` BullMQ 6.5.1 marks such an entry with a deferred failure and fails it,
+unrun, at the next worker that takes it; a stalled entry is never run again. job-service then
+reconciles Postgres with the queue in one **recovery pass** every 30 s, over jobs that have been in
+their state for at least 30 s (so a submit whose enqueue is still in flight is not touched), in
+bounded batches:
+- a `pending` job, or a `scheduled` one whose time has passed, with no live entry (waiting, delayed
+  or held) for its next attempt is queued again; an entry of that attempt that already finished is
+  replaced under the same id;
+- a `processing` job whose start is older than its type's maximum processing time plus one interval
+  fails its attempt with `JOB_TIMEOUT`, whatever its entry;
+- a `processing` job whose current entry exists but is no longer held (back in waiting after a
+  stall, failed or completed) fails its attempt with `WORKER_LOST`;
+- a `processing` job with no entry at all (Redis lost its data while the worker may still run it) is
+  left to the time limit.
+
+A failed attempt goes through the same `JobService.update` a worker's failure report uses, so one
+rule decides: while attempts remain the job is `scheduled` for its next attempt after the retry
+delay (section 4), otherwise it fails for good. That write is conditional on the state the pass
+read, so a worker report or another job-service instance that changed the job first wins, and the
+pass logs the refusal at info level and moves on. Every recovery is logged at warn level with the
+job id, run, attempt and reason, and shows in the job's log. A queue outage ends the pass with one
+warn line instead of one timeout per job.
+
+The time limit (email 30 s, webhook 30 s, flight transit 60 s; configured in job-service only) also
+reaches the worker with the job it reads: the worker aborts a handler that runs longer and reports
+`JOB_TIMEOUT` itself. The pass only acts one interval later, so in normal operation the worker's own
+report wins and the pass is the backstop for a worker that is gone. A cancel or a shutdown still
+stops a handler without any report; only the timeout reports.
 
 **Why:** state is changed only through job-service, so the worker holds nothing that needs saving;
-the only loss is the job it was running. Recovering that job safely needs a rule for when a
-`processing` job counts as dead (heartbeat or lease timeout), which is its own change
-(`crash-recovery`), together with the sweep that re-queues pending jobs whose entry never reached the
-queue.
+what a crash loses is the attempt it was running, and Postgres knows that attempt. BullMQ already
+renews and checks a lock per entry, so a heartbeat of our own would be a second liveness protocol
+with its own timeouts. Comparing Postgres with the queue from job-service covers every way a job
+gets stuck with one mechanism: a crashed or killed worker, a shutdown past its grace period, a start
+or result report that never arrived, an enqueue that failed, and Redis losing its data.
 
-**What happens if a worker crashes mid-job:** today the job stays `processing`. BullMQ's stalled
-detection may hand the entry to another worker, which reads the job, sees it is no longer pending and
-drops it, so the job is never run twice, but it is also not finished. The same happens when a report
-cannot reach job-service after its retries. The crash-recovery change will detect such jobs and send
-them back to pending (or fail them on their last attempt).
+**What happens if a worker crashes mid-job:** its lock stops being renewed; within one lock duration
+plus one stalled interval another worker's stalled check takes the entry out of `active`, and the
+next recovery pass fails the attempt with `WORKER_LOST`. With the defaults that is about one to one
+and a half minutes after the crash, plus the retry delay (5–30 s for a first retry) before the next
+attempt runs on a living worker. The attempt was counted when it started, so a job that kills its
+worker every time uses up its attempts and fails instead of looping. On SIGTERM a worker still stops
+taking entries and lets running jobs finish and report for up to the grace period (10 s); a job
+still running then is recovered the same way. The system e2e kills one of three instances with
+`docker kill` while it runs jobs: every job completes, the lost ones on a second attempt, and
+job-service logged `WORKER_LOST` for them.
+
+**Trade-offs:**
+- *At-least-once, not exactly-once.* A worker that was only slow (its lock expired while its event
+  loop was blocked), or one whose result report never reached job-service, has its attempt failed and
+  the job runs again; its late report is refused by the attempt check. Exactly-once would need the
+  handler's side effect and the report in one transaction, which a worker without a database cannot
+  have; handlers that touch the outside world should be idempotent.
+- *No worker alive.* BullMQ's stalled check runs only inside workers, so with every worker down a
+  lost entry stays `active` and only the time limit acts (after its maximum plus one interval); the
+  job then waits, `scheduled`, for a worker to come back.
+- *Redis data loss while jobs run:* their entries are gone, so only the time limit recovers them;
+  waiting jobs are queued again by the next pass.
+- *Several job-service instances* are safe (the conditional write lets one recover a job), but each
+  runs its own pass; at scale one would elect a single runner.
 
 ---
 
@@ -771,15 +857,16 @@ with the job's priority. When the time comes BullMQ moves the entry into the pri
 it competes by priority like any other; a worker starts the job straight from `scheduled` to
 `processing`, as the task's lifecycle diagram allows, with the same single-winner conditional write
 as a pending job. A `scheduledAt` now or in the past runs at once (`pending`); one more than 30 days
-ahead is rejected, so a typo cannot park an entry in Redis for years. A retry of a scheduled job
-runs at once: its time has passed.
+ahead is rejected, so a typo cannot park an entry in Redis for years. An automatic retry uses the
+same mechanism: the job becomes `scheduled` again, at the time of its next attempt (section 4).
 *Why delayed entries:* exact timing with no extra moving part. The alternative was a loop in
 job-service that every second moves due `scheduled` jobs to `pending` in one atomic `UPDATE` and
 queues them; it keeps the schedule in Postgres but adds a loop and up to one interval of lateness.
 *What we gave up:* the schedule lives in Redis. If Redis loses its data, or the delayed entry
 cannot be queued at submit (Redis down), the job stays `scheduled` with nothing on the queue to
-wake it; the submit is logged and still succeeds. The recovery sweep planned in `crash-recovery`
-re-queues such jobs from Postgres, the same way it handles `pending` jobs whose entry never landed.
+wake it; the submit is logged and still succeeds. The recovery pass (section 2) queues such a job
+again from Postgres once its time has passed, the same way it handles `pending` jobs whose entry
+never landed.
 Clock skew between job-service and Redis only shifts the start by that skew; a worker does not
 check the time again, because a second check could drop a due entry over a few milliseconds and
 leave the job stuck.
@@ -800,9 +887,32 @@ its status badge, and the job page shows "Scheduled for" and a Lifecycle that st
 
 ## 4. Retry Backoff Strategy
 
-**Approach chosen:** TBD
+**Approach chosen:** exponential backoff with jitter, applied by job-service when an attempt fails
+while attempts remain (a worker's `failed` report, `WORKER_LOST` or `JOB_TIMEOUT` from the recovery
+pass: one rule for all). The job becomes `scheduled` with `scheduledAt` = now + the delay, its error
+is stored, and the entry of its next attempt is queued as a BullMQ delayed entry for that time, with
+the job's priority. So a retry is a scheduled job: no separate retry status or loop, the job's
+`scheduledAt` tells a client when the next attempt starts, it counts as scheduled in the statistics,
+and it can be cancelled like any scheduled job. BullMQ's own retry options stay off. Every failure is
+retried while attempts remain, `INVALID_PAYLOAD` and `UNSUPPORTED_JOB_TYPE` included, since the
+failure may come from a worker that is older than the job's payload or type. The last allowed attempt
+fails the job for good. A client's manual retry (`failed` → `pending`) runs at once, without backoff,
+and clears the old `scheduledAt`.
 
-**Timing:** TBD
+**Timing:** retry *n* waits a random time drawn uniformly from [5 s, 30 s] × 2^(n−1), each bound
+capped at 5 minutes: retry 1 waits 5–30 s, retry 2 10–60 s, retry 3 20–120 s, retry 4 40–240 s, and
+from retry 5 on 80–300 s, then 5 min flat. With the default of 3 attempts a job is retried at most
+twice. All three numbers are configuration (`JOB_SERVICE_RETRY_MIN_DELAY_MS`, `..._MAX_DELAY_MS`,
+`..._CAP_DELAY_MS`); the system e2e runs with 1–2 s.
+
+**Why:** the range grows so a failing dependency gets more room each time, and it is drawn at random
+so jobs that failed together (an outage) do not all come back at the same instant. Reusing the
+scheduled-job path means the retry time lives in the same place as a client's schedule, and the
+recovery pass already covers a retry whose delayed entry was lost. The computation is three lines
+(`ExponentialJitterRetryDelay`, with randomness through the `Random` port), not a library: it is a
+stored schedule time, not a retry loop. *Trade-offs:* a retry overwrites the job's original
+`scheduledAt` (that time has passed anyway); the delayed entry lives in Redis, so the retry's timing
+is as reliable as the scheduled-job timing of section 3.
 
 ---
 

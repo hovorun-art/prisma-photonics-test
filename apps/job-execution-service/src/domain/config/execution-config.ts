@@ -44,4 +44,11 @@ export interface ExecutionConfig extends BaseConfig {
   readonly jobServiceTimeoutMs: number;
   /** How long a shutdown waits for running jobs. */
   readonly shutdownGraceMs: number;
+  /**
+   * How long a worker's hold on a queue entry lasts without renewal (renewed every half of it while
+   * the worker lives); an entry whose hold expired is failed by the queue, never run again.
+   */
+  readonly lockDurationMs: number;
+  /** How often the queue looks for entries whose hold expired. */
+  readonly stalledIntervalMs: number;
 }

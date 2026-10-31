@@ -130,3 +130,13 @@ export {
   ZodPagingEnvSchema,
   type ZodPagingEnvSchemaParams,
 } from './infra/config/zod-paging-env-schema.js';
+export type {
+  IntervalTask,
+  StartIntervalTaskResponse,
+  StopIntervalTaskResponse,
+} from './domain/schedule/interval-task.js';
+export {
+  SchedulerIntervalTask,
+  type SchedulerIntervalTaskDeps,
+  type SchedulerIntervalTaskParams,
+} from './infra/schedule/scheduler-interval-task.js';

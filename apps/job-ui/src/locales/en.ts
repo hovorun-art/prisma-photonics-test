@@ -118,6 +118,7 @@ export const en = {
       attempts: 'Attempts',
       created: 'Created',
       scheduledFor: 'Scheduled for',
+      idempotencyKey: 'Idempotency key',
       started: 'Started',
       finished: 'Finished',
       totalTime: 'Total time',

@@ -62,6 +62,11 @@ AT=$(date -u -d '+1 hour' +%FT%TZ 2>/dev/null || date -u -v+1H +%FT%TZ)
 curl -s -X POST http://localhost:3000/v1/jobs -H 'content-type: application/json' \
   -d "{\"type\":\"email\",\"payload\":{\"to\":\"ada@example.com\",\"subject\":\"Later\",\"body\":\"Hi\"},\"scheduledAt\":\"$AT\"}"
 
+# Safe to send twice: with an idempotencyKey a repeat answers 200 with the job it created (201 the
+# first time); the same key with a different request answers 409 IDEMPOTENCY_KEY_CONFLICT
+curl -s -i -X POST http://localhost:3000/v1/jobs -H 'content-type: application/json' \
+  -d '{"type":"email","idempotencyKey":"order-4821-receipt","payload":{"to":"ada@example.com","subject":"Receipt","body":"Thanks"}}'
+
 # List with filters (repeat a filter for several values)
 curl -s 'http://localhost:3000/v1/jobs?status=failed&type=webhook&limit=20'
 
@@ -99,7 +104,8 @@ npm run typecheck && npm run lint
   ClickHouse in a container.
 - **Per-app e2e** tests (`apps/<app>/test/e2e/`) run one service as a black box with its own
   database; the worker is tested on its own there, with the API it reports to mocked.
-- **System e2e** (`tests/system-e2e/`) starts the whole stack with two workers.
+- **System e2e** (`tests/system-e2e/`) starts the whole stack with three workers; its last tests
+  kill a worker and wipe Redis to show that every job is still recovered and completed.
 
 ## Architecture
 
@@ -136,5 +142,6 @@ flowchart LR
   `packages/service-kit` hold the code the services share.
 
 Job lifecycle: `scheduled` → `pending` → `processing` → `completed` or `failed`; a job that has not
-finished can be `cancelled`, and a failed one can be retried by hand. How pickup, crash recovery,
+finished can be `cancelled`, and a failed one can be retried by hand. A failed attempt with
+attempts left is `scheduled` again for its automatic retry, after a growing random delay. How pickup, crash recovery,
 priority, retries and duplicates are handled is in [DECISIONS.md](DECISIONS.md).

@@ -9,6 +9,7 @@ import {
   EMAIL_LIMITS,
   EmailJobResult,
   FlightTransitJobResult,
+  InternalJob,
   Job,
   JOB_LIMITS,
   JobIdParams,
@@ -175,6 +176,44 @@ describe('CreateJobRequest', () => {
     { name: 'null', groupId: null },
   ])('Malformed group id: $name', ({ groupId }) => {
     expect(issuePaths({ ...validEmailJob, groupId })).toEqual([['groupId']]);
+  });
+
+  it('Job with a key', () => {
+    const job = { ...validEmailJob, idempotencyKey: 'order-4821-receipt' };
+
+    expect(CreateJobRequest.parse(job)).toEqual(job);
+  });
+
+  it('Job without a key', () => {
+    expect(CreateJobRequest.parse(validEmailJob)).not.toHaveProperty('idempotencyKey');
+  });
+
+  it('accepts a key at its minimum and maximum length', () => {
+    for (const length of [
+      JOB_LIMITS.idempotencyKey.minLength,
+      JOB_LIMITS.idempotencyKey.maxLength,
+    ]) {
+      const job = { ...validEmailJob, idempotencyKey: 'k'.repeat(length) };
+
+      expect(CreateJobRequest.parse(job)).toEqual(job);
+    }
+  });
+
+  it('Empty key', () => {
+    expect(issuePaths({ ...validEmailJob, idempotencyKey: '' })).toEqual([['idempotencyKey']]);
+  });
+
+  it('Key too long', () => {
+    const idempotencyKey = 'k'.repeat(JOB_LIMITS.idempotencyKey.maxLength + 1);
+
+    expect(issuePaths({ ...validEmailJob, idempotencyKey })).toEqual([['idempotencyKey']]);
+  });
+
+  it.each([
+    { name: 'a number', idempotencyKey: 42 },
+    { name: 'null', idempotencyKey: null },
+  ])('rejects a key that is $name', ({ idempotencyKey }) => {
+    expect(issuePaths({ ...validEmailJob, idempotencyKey })).toEqual([['idempotencyKey']]);
   });
 });
 
@@ -413,39 +452,66 @@ describe('ChangeJobStatusRequest', () => {
 });
 
 describe('UpdateJobRequest', () => {
-  it('accepts a start, a completion with a result and a failure with an error', () => {
-    expect(UpdateJobRequest.parse({ status: 'processing' })).toEqual({ status: 'processing' });
-    expect(UpdateJobRequest.parse({ status: 'completed', result: { messageId: 'm-1' } })).toEqual({
-      status: 'completed',
-      result: { messageId: 'm-1' },
+  const reportOf = { run: 1, attempt: 2 };
+  const issuePaths = (input: unknown): PropertyKey[][] =>
+    UpdateJobRequest.safeParse(input).error?.issues.map((issue) => issue.path) ?? [];
+
+  it('Reports of one entry: accepts a start, a completion and a failure with their run and attempt', () => {
+    expect(UpdateJobRequest.parse({ status: 'processing', ...reportOf })).toEqual({
+      status: 'processing',
+      ...reportOf,
     });
+    expect(
+      UpdateJobRequest.parse({ status: 'completed', result: { messageId: 'm-1' }, ...reportOf }),
+    ).toEqual({ status: 'completed', result: { messageId: 'm-1' }, ...reportOf });
     expect(
       UpdateJobRequest.parse({
         status: 'failed',
         error: { code: 'SEND_FAILED', message: 'Mailbox unavailable' },
+        ...reportOf,
       }),
-    ).toEqual({ status: 'failed', error: { code: 'SEND_FAILED', message: 'Mailbox unavailable' } });
+    ).toEqual({
+      status: 'failed',
+      error: { code: 'SEND_FAILED', message: 'Mailbox unavailable' },
+      ...reportOf,
+    });
+  });
+
+  it('Report without run and attempt', () => {
+    for (const report of [
+      { status: 'processing' },
+      { status: 'completed', result: { messageId: 'm-1' } },
+      { status: 'failed', error: { code: 'SEND_FAILED', message: 'x' } },
+    ]) {
+      expect(issuePaths(report)).toEqual([['run'], ['attempt']]);
+    }
+  });
+
+  it.each([0, -1, 1.5, '1', null])('rejects a run or attempt of %s', (value) => {
+    expect(issuePaths({ status: 'processing', run: value, attempt: 1 })).toEqual([['run']]);
+    expect(issuePaths({ status: 'processing', run: 1, attempt: value })).toEqual([['attempt']]);
   });
 
   it('Unknown target status', () => {
     for (const status of ['pending', 'cancelled', 'done']) {
-      expect(UpdateJobRequest.safeParse({ status }).success).toBe(false);
+      expect(UpdateJobRequest.safeParse({ status, ...reportOf }).success).toBe(false);
     }
   });
 
   it('rejects a report without a status', () => {
-    expect(UpdateJobRequest.safeParse({}).success).toBe(false);
+    expect(UpdateJobRequest.safeParse(reportOf).success).toBe(false);
   });
 
   it('rejects a failure without an error, or with an error without a code', () => {
-    expect(UpdateJobRequest.safeParse({ status: 'failed' }).success).toBe(false);
-    expect(UpdateJobRequest.safeParse({ status: 'failed', error: { message: 'x' } }).success).toBe(
-      false,
-    );
+    expect(UpdateJobRequest.safeParse({ status: 'failed', ...reportOf }).success).toBe(false);
+    expect(
+      UpdateJobRequest.safeParse({ status: 'failed', error: { message: 'x' }, ...reportOf })
+        .success,
+    ).toBe(false);
   });
 
   it('rejects a completion without a result', () => {
-    expect(UpdateJobRequest.safeParse({ status: 'completed' }).success).toBe(false);
+    expect(UpdateJobRequest.safeParse({ status: 'completed', ...reportOf }).success).toBe(false);
   });
 });
 
@@ -502,6 +568,7 @@ describe('Job', () => {
         details: { statusCode: 503 },
       },
       groupId: null,
+      idempotencyKey: null,
       scheduledAt: null,
       startedAt: timestamp,
       completedAt: timestamp,
@@ -525,6 +592,7 @@ describe('Job', () => {
       result: null,
       error: null,
       groupId: null,
+      idempotencyKey: null,
       scheduledAt: '2026-11-02T08:30:00.000Z',
       startedAt: null,
       completedAt: null,
@@ -553,6 +621,7 @@ describe('Job', () => {
       result: null,
       error: null,
       groupId: randomUUID(),
+      idempotencyKey: null,
       scheduledAt: null,
       startedAt: null,
       completedAt: null,
@@ -568,6 +637,90 @@ describe('Job', () => {
     expect(
       Job.safeParse({ ...job, groupId: 'campaign-1' }).error?.issues.map((issue) => issue.path),
     ).toEqual([['groupId']]);
+  });
+
+  it('Job with a key: returns the idempotency key of a job, and requires the field', () => {
+    const timestamp = new Date().toISOString();
+    const job = {
+      id: randomUUID(),
+      type: 'email',
+      status: 'pending',
+      priority: 5,
+      attempts: 0,
+      maxAttempts: 3,
+      payload: validEmailJob.payload,
+      result: null,
+      error: null,
+      groupId: null,
+      idempotencyKey: 'order-4821-receipt',
+      scheduledAt: null,
+      startedAt: null,
+      completedAt: null,
+      createdAt: timestamp,
+      updatedAt: timestamp,
+    };
+    const { idempotencyKey: _key, ...withoutKey } = job;
+
+    expect(Job.parse(job)).toEqual(job);
+    expect(Job.parse({ ...job, idempotencyKey: null }).idempotencyKey).toBeNull();
+    expect(Job.safeParse(withoutKey).error?.issues.map((issue) => issue.path)).toEqual([
+      ['idempotencyKey'],
+    ]);
+  });
+});
+
+describe('InternalJob', () => {
+  const timestamp = new Date().toISOString();
+  const job = {
+    id: randomUUID(),
+    type: 'email',
+    status: 'pending',
+    priority: 5,
+    attempts: 0,
+    maxAttempts: 3,
+    payload: validEmailJob.payload,
+    result: null,
+    error: null,
+    groupId: null,
+    idempotencyKey: null,
+    scheduledAt: null,
+    startedAt: null,
+    completedAt: null,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    maxProcessingMs: 30_000,
+  };
+
+  // Each job type is its own member of the union, so each must carry the limit.
+  const jobs = [
+    job,
+    { ...job, type: 'webhook', payload: { method: 'GET', url: 'https://example.com/ping' } },
+    {
+      ...job,
+      type: 'flight-transit',
+      payload: { origin: 'LHR', destination: 'JFK', departureDate: '2030-06-15' },
+    },
+  ];
+
+  it.each(jobs)(
+    'Read a job with its time limit: a $type job carries its maximum processing time',
+    (typed) => {
+      expect(InternalJob.parse(typed)).toEqual(typed);
+    },
+  );
+
+  it.each(jobs)('requires the maximum processing time of a $type job', (typed) => {
+    const { maxProcessingMs: _limit, ...withoutLimit } = typed;
+
+    expect(InternalJob.safeParse(withoutLimit).error?.issues.map((issue) => issue.path)).toEqual([
+      ['maxProcessingMs'],
+    ]);
+  });
+
+  it.each([0, -1, 1.5])('rejects a maximum processing time of %s', (maxProcessingMs) => {
+    expect(
+      InternalJob.safeParse({ ...job, maxProcessingMs }).error?.issues.map((issue) => issue.path),
+    ).toEqual([['maxProcessingMs']]);
   });
 });
 
@@ -826,6 +979,7 @@ describe('Job for a flight transit job', () => {
     maxAttempts: 3,
     payload: validTransitJob.payload,
     groupId: null,
+    idempotencyKey: null,
     scheduledAt: null,
     startedAt: timestamp,
     completedAt: timestamp,
@@ -939,6 +1093,51 @@ describe('CreateJobsBulkRequest', () => {
     expect(issuePaths({ jobs: [invalidPriority, validEmailJob, malformedGroup] })).toEqual([
       ['jobs', 0, 'priority'],
       ['jobs', 2, 'groupId'],
+    ]);
+  });
+
+  it.each([
+    { type: 'email', job: validEmailJob },
+    { type: 'webhook', job: validWebhookJob },
+    { type: 'flight-transit', job: validTransitJob },
+  ])('Job with a key: a $type job keeps its key', ({ job }) => {
+    const keyed = { ...job, idempotencyKey: 'order-4821-receipt' };
+
+    expect(CreateJobRequest.parse(keyed)).toEqual(keyed);
+  });
+
+  it('Bulk items carry their keys', () => {
+    const jobs = [
+      { ...validEmailJob, idempotencyKey: 'receipt-1' },
+      { ...validWebhookJob },
+      { ...validEmailJob, idempotencyKey: 'receipt-2' },
+    ];
+
+    expect(CreateJobsBulkRequest.parse({ jobs })).toEqual({ jobs });
+  });
+
+  it('Bulk item with a bad key', () => {
+    const jobs = [validEmailJob, { ...validEmailJob, idempotencyKey: '' }];
+
+    expect(issuePaths({ jobs })).toEqual([['jobs', 1, 'idempotencyKey']]);
+  });
+
+  it('Duplicate key within the bulk', () => {
+    const jobs = [
+      { ...validEmailJob, idempotencyKey: 'receipt-1' },
+      validWebhookJob,
+      { ...validTransitJob, idempotencyKey: 'receipt-1' },
+    ];
+
+    expect(issuePaths({ jobs })).toEqual([['jobs', 2, 'idempotencyKey']]);
+  });
+
+  it('names every later item that repeats a key', () => {
+    const job = { ...validEmailJob, idempotencyKey: 'receipt-1' };
+
+    expect(issuePaths({ jobs: [job, job, job] })).toEqual([
+      ['jobs', 1, 'idempotencyKey'],
+      ['jobs', 2, 'idempotencyKey'],
     ]);
   });
 });

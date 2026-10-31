@@ -15,7 +15,7 @@ import { EXECUTION_INSTANCES, JOB_SERVICE_URL } from './stack-settings.js';
  * Jobs each execution instance runs at once: the stack's default `JOB_EXECUTION_CONCURRENCY`
  * (`.env.example`); keep the two in step, or the backlog of `waiting()` shrinks.
  */
-const CONCURRENCY_PER_INSTANCE = 5;
+export const CONCURRENCY_PER_INSTANCE = 5;
 
 /** Email jobs submitted ahead of a job that must still wait: many times what the stack runs at once. */
 const QUEUE_AHEAD = CONCURRENCY_PER_INSTANCE * EXECUTION_INSTANCES * 6;
@@ -53,6 +53,49 @@ export interface WaitingStackJobsApiResponse {
   job: Job;
 }
 
+export interface EmailItemsStackJobsApiRequest {
+  /** Put in front of each item's number, so the jobs of one test are told apart. */
+  subject: string;
+  count: number;
+}
+
+export interface EmailItemsStackJobsApiResponse {
+  /** Email job submissions numbered from 0, ready for `submitBulk`. */
+  items: Record<string, unknown>[];
+}
+
+export interface SubmitBulkStackJobsApiRequest {
+  /** The items of `POST /v1/jobs/bulk`. */
+  jobs: unknown[];
+}
+
+export interface SubmitBulkStackJobsApiResponse {
+  /** The bulk's HTTP status: 201 when it created a job, 200 when every item already existed. */
+  status: number;
+  jobs: Job[];
+}
+
+export interface FinishedStackJobsApiRequest {
+  ids: string[];
+  /** How long to wait for the last job to finish. */
+  timeoutMs: number;
+}
+
+export interface FinishedStackJobsApiResponse {
+  /** The jobs as read once every one had finished, in the order of `ids`. */
+  jobs: Job[];
+}
+
+export interface LogEntriesStackJobsApiRequest {
+  /** The compose service whose log is read. */
+  service: string;
+}
+
+export interface LogEntriesStackJobsApiResponse {
+  /** Its JSON log lines, parsed; lines that are not JSON (a line a kill cut short) are skipped. */
+  entries: Record<string, unknown>[];
+}
+
 export interface WorkerLoggedStackJobsApiRequest {
   jobId: string;
   /** The exact message of the job-execution-service log line. */
@@ -71,11 +114,15 @@ export interface WorkerLoggedStackJobsApiResponse {
  */
 export interface StackJobsApi {
   submit(req: SubmitStackJobsApiRequest): Promise<JobStackJobsApiResponse>;
+  emailItems(req: EmailItemsStackJobsApiRequest): EmailItemsStackJobsApiResponse;
+  submitBulk(req: SubmitBulkStackJobsApiRequest): Promise<SubmitBulkStackJobsApiResponse>;
   read(req: ReadStackJobsApiRequest): Promise<JobStackJobsApiResponse>;
+  finished(req: FinishedStackJobsApiRequest): Promise<FinishedStackJobsApiResponse>;
   changeStatus(req: ChangeStatusStackJobsApiRequest): Promise<ChangeStatusStackJobsApiResponse>;
   waiting(): Promise<WaitingStackJobsApiResponse>;
   running(): Promise<JobStackJobsApiResponse>;
   failed(): Promise<JobStackJobsApiResponse>;
+  logEntries(req: LogEntriesStackJobsApiRequest): Promise<LogEntriesStackJobsApiResponse>;
   workerLogged(req: WorkerLoggedStackJobsApiRequest): Promise<WorkerLoggedStackJobsApiResponse>;
 }
 
@@ -93,6 +140,38 @@ export class StackJobs implements StackJobsApi {
     });
     expect(response.status()).toBe(201);
     return { job: Job.parse(await response.json()) };
+  }
+
+  emailItems(req: EmailItemsStackJobsApiRequest): EmailItemsStackJobsApiResponse {
+    return {
+      items: Array.from({ length: req.count }, (_value, index) => ({
+        type: 'email',
+        payload: { to: 'ada@example.com', subject: `${req.subject} ${index}`, body: 'Hi Ada' },
+      })),
+    };
+  }
+
+  async submitBulk(req: SubmitBulkStackJobsApiRequest): Promise<SubmitBulkStackJobsApiResponse> {
+    const response = await this.d.request.post(`${JOB_SERVICE_URL}${JOBS_BULK_ROUTE}`, {
+      data: { jobs: req.jobs },
+    });
+    expect([200, 201]).toContain(response.status());
+    const { items } = CreateJobsBulkResponse.parse(await response.json());
+    return { status: response.status(), jobs: items };
+  }
+
+  async finished(req: FinishedStackJobsApiRequest): Promise<FinishedStackJobsApiResponse> {
+    let jobs: Job[] = [];
+    await expect
+      .poll(
+        async () => {
+          jobs = await Promise.all(req.ids.map(async (id) => (await this.read({ id })).job));
+          return jobs.filter((job) => !FINISHED.includes(job.status)).length;
+        },
+        { timeout: req.timeoutMs, intervals: [500] },
+      )
+      .toBe(0);
+    return { jobs };
   }
 
   async read(req: ReadStackJobsApiRequest): Promise<JobStackJobsApiResponse> {
@@ -115,10 +194,7 @@ export class StackJobs implements StackJobsApi {
    * at once, so the jobs ahead of it keep the workers busy for a while.
    */
   async waiting(): Promise<WaitingStackJobsApiResponse> {
-    const jobs = Array.from({ length: QUEUE_AHEAD + 1 }, (_value, index) => ({
-      type: 'email',
-      payload: { to: 'ada@example.com', subject: `Queued ${index}`, body: 'Hi Ada' },
-    }));
+    const { items: jobs } = this.emailItems({ subject: 'Queued', count: QUEUE_AHEAD + 1 });
     const response = await this.d.request.post(`${JOB_SERVICE_URL}${JOBS_BULK_ROUTE}`, {
       data: { jobs },
     });
@@ -176,14 +252,25 @@ export class StackJobs implements StackJobsApi {
     return { job: failed };
   }
 
+  async logEntries(req: LogEntriesStackJobsApiRequest): Promise<LogEntriesStackJobsApiResponse> {
+    const { lines } = await stack.logs({ service: req.service });
+    return {
+      entries: lines.flatMap((line) => {
+        try {
+          return [JSON.parse(line) as Record<string, unknown>];
+        } catch {
+          return [];
+        }
+      }),
+    };
+  }
+
   async workerLogged(
     req: WorkerLoggedStackJobsApiRequest,
   ): Promise<WorkerLoggedStackJobsApiResponse> {
-    const { lines } = await stack.logs({ service: 'job-execution-service' });
+    const { entries } = await this.logEntries({ service: 'job-execution-service' });
     return {
-      lines: lines
-        .map((line) => JSON.parse(line) as Record<string, unknown>)
-        .filter((entry) => entry.jobId === req.jobId && entry.msg === req.msg),
+      lines: entries.filter((entry) => entry.jobId === req.jobId && entry.msg === req.msg),
     };
   }
 }

@@ -11,6 +11,7 @@ import {
 } from '@job-queue/service-kit';
 import { DynamicModule, Module } from '@nestjs/common';
 import { APP_FILTER, APP_PIPE } from '@nestjs/core';
+import { ScheduleModule } from '@nestjs/schedule';
 import { ZodValidationPipe } from 'nestjs-zod';
 
 import { JOB_SERVICE_CONFIG, type JobServiceConfig } from '../domain/config/job-service-config.js';
@@ -44,6 +45,8 @@ export class AppModule {
         ServiceConfigModule.forRoot({ token: JOB_SERVICE_CONFIG, config }),
         LoggingModule.forRoot({ nodeEnv: config.nodeEnv, logLevel: config.logLevel, jobLog }),
         PrismaModule,
+        // The scheduler registry of the recovery pass's timer.
+        ScheduleModule.forRoot(),
         RedisModule.forRoot({
           redisUrl: config.redisUrl,
           connectionName: 'job-service',

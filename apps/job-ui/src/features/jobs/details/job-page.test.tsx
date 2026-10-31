@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import type { Job } from '@job-queue/contracts';
 import { render, screen, within } from '@testing-library/react';
 import { userEvent } from '@testing-library/user-event';
@@ -238,6 +240,27 @@ describe('JobPage', () => {
 
     const list = await screen.findByRole('region', { name: en.job.details });
     expect(within(list).queryByText(en.job.fields.scheduledFor)).toBeNull();
+  });
+
+  it('Job with a key: the Details list shows the Idempotency key row with the key', async () => {
+    const idempotencyKey = randomUUID();
+    const job = jobFixtures.build({ idempotencyKey });
+    answerJob(job.id, job);
+
+    renderJob(job.id);
+
+    await screen.findByRole('heading', { level: 1, name: job.id });
+    expect(detail(en.job.fields.idempotencyKey)?.textContent).toBe(idempotencyKey);
+  });
+
+  it('Job without a key: the Details list has no Idempotency key row', async () => {
+    const job = jobFixtures.build({ idempotencyKey: null });
+    answerJob(job.id, job);
+
+    renderJob(job.id);
+
+    const list = await screen.findByRole('region', { name: en.job.details });
+    expect(within(list).queryByText(en.job.fields.idempotencyKey)).toBeNull();
   });
 
   it('Lifecycle of a scheduled job: scheduled reached at the creation time, then processing and completed not yet', async () => {

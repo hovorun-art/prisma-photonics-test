@@ -13,6 +13,7 @@ import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testconta
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { JobNotFoundError, JobStatusConflictError } from '@job-queue/kernel';
+import { IdempotencyKeyTakenError } from '../../../domain/jobs/errors/idempotency-key-taken.error.js';
 import type { NewJob } from '../../../domain/jobs/job-repository.js';
 import { PrismaDatabase } from '../../prisma/prisma-database.js';
 import { PrismaJobRepository } from './prisma-job-repository.js';
@@ -94,6 +95,7 @@ describe('PrismaJobRepository against Postgres', () => {
       ...job,
       id: stored.id,
       groupId: null,
+      idempotencyKey: null,
       createdAt: expect.any(String) as string,
       updatedAt: expect.any(String) as string,
     });
@@ -184,6 +186,7 @@ describe('PrismaJobRepository against Postgres', () => {
           ...job,
           id: stored[index]!.id,
           groupId: job.groupId ?? null,
+          idempotencyKey: null,
           updatedAt: expect.any(String) as string,
         })),
       );
@@ -664,6 +667,192 @@ describe('PrismaJobRepository against Postgres', () => {
       status: 'processing',
       attempts: 1,
       scheduledAt,
+    });
+  });
+
+  describe('idempotency key', () => {
+    const FINGERPRINT = 'a'.repeat(64);
+    const key = (): string => `key-${randomUUID()}`;
+
+    it('stores the key and the fingerprint of a job and gets them back', async () => {
+      const idempotencyKey = key();
+
+      const { job } = await repository.create({
+        job: newJob({ idempotencyKey, requestFingerprint: FINGERPRINT }),
+      });
+
+      expect(job.idempotencyKey).toBe(idempotencyKey);
+      expect(await repository.get({ id: job.id })).toEqual({
+        job,
+        run: 1,
+        requestFingerprint: FINGERPRINT,
+      });
+    });
+
+    it('a job without a key has no key and no fingerprint, and jobs without keys never collide', async () => {
+      const first = await store();
+      await store();
+
+      expect(first.idempotencyKey).toBeNull();
+      expect((await repository.get({ id: first.id })).requestFingerprint).toBeNull();
+    });
+
+    it('Two submissions at the same time: the second create with the key throws IdempotencyKeyTakenError', async () => {
+      const idempotencyKey = key();
+      await store({ idempotencyKey, requestFingerprint: FINGERPRINT });
+
+      await expect(
+        repository.create({ job: newJob({ idempotencyKey, requestFingerprint: FINGERPRINT }) }),
+      ).rejects.toBeInstanceOf(IdempotencyKeyTakenError);
+      expect((await repository.query({ limit: 10, offset: 0 })).total).toBe(1);
+    });
+
+    it('createMany with a taken key throws IdempotencyKeyTakenError and stores nothing', async () => {
+      const idempotencyKey = key();
+      await store({ idempotencyKey, requestFingerprint: FINGERPRINT });
+
+      await expect(
+        repository.createMany({
+          jobs: [
+            newJob({ idempotencyKey: key(), requestFingerprint: FINGERPRINT }),
+            newJob({ idempotencyKey, requestFingerprint: FINGERPRINT }),
+          ],
+        }),
+      ).rejects.toBeInstanceOf(IdempotencyKeyTakenError);
+      expect((await repository.query({ limit: 10, offset: 0 })).total).toBe(1);
+    });
+
+    it('Key reused after the job was deleted', async () => {
+      const idempotencyKey = key();
+      const first = await store({ status: 'completed', idempotencyKey });
+      await repository.delete({ id: first.id, allowedStatuses: FINISHED_JOB_STATUSES });
+
+      const { job: second } = await repository.create({
+        job: newJob({ idempotencyKey, requestFingerprint: FINGERPRINT }),
+      });
+
+      expect(second.idempotencyKey).toBe(idempotencyKey);
+      expect(second.id).not.toBe(first.id);
+    });
+
+    it('findByIdempotencyKeys returns the jobs of the given keys with their fingerprints', async () => {
+      const [keyA, keyB, keyC] = [key(), key(), key()];
+      const a = await store({ idempotencyKey: keyA, requestFingerprint: 'a'.repeat(64) });
+      const b = await store({ idempotencyKey: keyB, requestFingerprint: 'b'.repeat(64) });
+      await store({ idempotencyKey: key(), requestFingerprint: 'c'.repeat(64) });
+      await store();
+
+      const { jobs } = await repository.findByIdempotencyKeys({ keys: [keyA, keyB, keyC] });
+
+      expect(jobs).toHaveLength(2);
+      expect(jobs).toContainEqual({ job: a, run: 1, requestFingerprint: 'a'.repeat(64) });
+      expect(jobs).toContainEqual({ job: b, run: 1, requestFingerprint: 'b'.repeat(64) });
+    });
+
+    it('findByIdempotencyKeys with no keys finds nothing', async () => {
+      await store({ idempotencyKey: key(), requestFingerprint: FINGERPRINT });
+
+      await expect(repository.findByIdempotencyKeys({ keys: [] })).resolves.toEqual({ jobs: [] });
+    });
+  });
+
+  it('stores a new execution time with an update (the time of the next attempt) and can clear it', async () => {
+    const job = await store({ status: 'processing', attempts: 1 });
+    const scheduledAt = '2026-11-02T08:30:00.250Z';
+
+    const { job: scheduled } = await repository.update({
+      id: job.id,
+      expected: { status: 'processing', attempts: 1 },
+      changes: { status: 'scheduled', scheduledAt },
+    });
+    const { job: pending } = await repository.update({
+      id: job.id,
+      expected: { status: 'scheduled', attempts: 1 },
+      changes: { status: 'pending', scheduledAt: null },
+    });
+
+    expect(scheduled).toMatchObject({ status: 'scheduled', scheduledAt });
+    expect(pending).toMatchObject({ status: 'pending', scheduledAt: null });
+  });
+
+  describe('recovery queries', () => {
+    const BEFORE = new Date('2026-11-01T12:00:00.000Z');
+    const minutesBefore = (minutes: number): Date => new Date(BEFORE.getTime() - minutes * 60_000);
+
+    /** Stores a job whose last change was at `updatedAt` (the database would stamp the clock). */
+    const storeUpdatedAt = async (
+      updatedAt: Date,
+      overrides: Partial<NewEmailJob> = {},
+    ): Promise<string> => {
+      const job = newJob(overrides);
+      const row = await database.job.create({
+        data: {
+          type: 'email',
+          payload: job.payload,
+          status: job.status,
+          priority: job.priority,
+          attempts: job.attempts,
+          maxAttempts: job.maxAttempts,
+          scheduledAt: job.scheduledAt === null ? null : new Date(job.scheduledAt),
+          updatedAt,
+        },
+      });
+      return row.id;
+    };
+
+    const ids = (jobs: { job: Job }[]): string[] => jobs.map(({ job }) => job.id);
+
+    it('findWaitingSince returns pending jobs and due scheduled jobs not changed since before', async () => {
+      const oldPending = await storeUpdatedAt(minutesBefore(10), { status: 'pending' });
+      const dueScheduled = await storeUpdatedAt(minutesBefore(5), {
+        status: 'scheduled',
+        scheduledAt: minutesBefore(1).toISOString(),
+      });
+      const scheduledAtTheInstant = await storeUpdatedAt(minutesBefore(3), {
+        status: 'scheduled',
+        scheduledAt: BEFORE.toISOString(),
+      });
+      const atTheInstant = await storeUpdatedAt(BEFORE, { status: 'pending' });
+      await storeUpdatedAt(new Date(BEFORE.getTime() + 1), { status: 'pending' });
+      await storeUpdatedAt(minutesBefore(5), {
+        status: 'scheduled',
+        scheduledAt: new Date(BEFORE.getTime() + 60_000).toISOString(),
+      });
+      await storeUpdatedAt(minutesBefore(10), { status: 'processing', attempts: 1 });
+      await storeUpdatedAt(minutesBefore(10), { status: 'failed', attempts: 3 });
+
+      const { jobs } = await repository.findWaitingSince({ before: BEFORE, limit: 10 });
+
+      expect(ids(jobs)).toEqual([oldPending, dueScheduled, scheduledAtTheInstant, atTheInstant]);
+    });
+
+    it('findWaitingSince returns the stored run with each job and at most limit, oldest first', async () => {
+      const oldest = await storeUpdatedAt(minutesBefore(30));
+      await storeUpdatedAt(minutesBefore(20));
+      await storeUpdatedAt(minutesBefore(10));
+      await database.job.update({
+        where: { id: oldest },
+        data: { run: 4, updatedAt: minutesBefore(30) },
+      });
+
+      const { jobs } = await repository.findWaitingSince({ before: BEFORE, limit: 2 });
+
+      expect(jobs).toHaveLength(2);
+      expect(jobs[0]).toMatchObject({ job: { id: oldest }, run: 4, requestFingerprint: null });
+    });
+
+    it('findProcessingSince returns processing jobs not changed since before, oldest first, at most limit', async () => {
+      const older = await storeUpdatedAt(minutesBefore(20), { status: 'processing', attempts: 1 });
+      const old = await storeUpdatedAt(minutesBefore(10), { status: 'processing', attempts: 1 });
+      const newest = await storeUpdatedAt(minutesBefore(5), { status: 'processing', attempts: 1 });
+      await storeUpdatedAt(new Date(BEFORE.getTime() + 1), { status: 'processing', attempts: 1 });
+      await storeUpdatedAt(minutesBefore(30), { status: 'pending' });
+
+      const all = await repository.findProcessingSince({ before: BEFORE, limit: 10 });
+      const limited = await repository.findProcessingSince({ before: BEFORE, limit: 2 });
+
+      expect(ids(all.jobs)).toEqual([older, old, newest]);
+      expect(ids(limited.jobs)).toEqual([older, old]);
     });
   });
 

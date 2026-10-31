@@ -16,8 +16,15 @@ export interface TotalTimeJobPresentationRequest {
 export interface LifecycleJobPresentationRequest {
   readonly job: Job;
 }
+export interface IdempotencyKeyJobPresentationRequest {
+  readonly job: Job;
+}
 export interface TextJobPresentationResponse {
   readonly text: string;
+}
+export interface IdempotencyKeyJobPresentationResponse {
+  /** The job's idempotency key; `null` when it was submitted without one. */
+  readonly text: string | null;
 }
 export interface TotalTimeJobPresentationResponse {
   /** `null` while the job has not both started and finished. */
@@ -46,6 +53,7 @@ export interface LifecycleJobPresentationResponse {
 export interface JobPresentation {
   shortId(req: ShortIdJobPresentationRequest): TextJobPresentationResponse;
   details(req: DetailsJobPresentationRequest): TextJobPresentationResponse;
+  idempotencyKey(req: IdempotencyKeyJobPresentationRequest): IdempotencyKeyJobPresentationResponse;
   /** Local time of day, `HH:mm:ss`, as in the jobs list. */
   listTime(req: TimeJobPresentationRequest): TextJobPresentationResponse;
   /** Local date and time, `29 Oct, 21:02:09`, as on the job page. */

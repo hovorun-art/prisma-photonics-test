@@ -7,18 +7,23 @@ logged. `DECISIONS.md` sections 1–4 are filled in along the way.
 
 ## Changes
 
+`retry-backoff`, `concurrent-pickup`, `crash-recovery` and `idempotency` were built as one change,
+`reliability`.
+
 | Change | Intent | Depends on |
 |---|---|---|
-| `retry-backoff` | Automatic retries with backoff up to the maximum attempts; the error is stored | `webhook-job` |
+| `retry-backoff` | Automatic retries with backoff up to the maximum attempts; the error is stored. Done in `reliability` | `webhook-job` |
 | `priority-scheduling` | Higher-priority jobs run first; scheduled jobs start when their time arrives | `email-job-execution` |
 | `priority-scheduling-ui` | job-ui: "At a specific time" on the submit page (date and time in local time) and the scheduled time on the jobs list and job page | `priority-scheduling` |
-| `concurrent-pickup` | Several workers never execute the same job twice | `email-job-execution` |
-| `crash-recovery` | A job held by a worker that dies is recovered and finishes | `concurrent-pickup` |
-| `idempotency` | Submitting with an idempotency key already used returns the existing job | `job-api` |
+| `concurrent-pickup` | Several workers never execute the same job twice. Done (proven) in `reliability` | `email-job-execution` |
+| `crash-recovery` | A job held by a worker that dies is recovered and finishes. Done in `reliability` | `concurrent-pickup` |
+| `idempotency` | Submitting with an idempotency key already used returns the existing job. Done in `reliability` | `job-api` |
 | `job-log-service` | Each lifecycle step and attempt is logged (ClickHouse, fed by the services' log lines through a Redis Stream) and shown in the job details | `email-job-execution` |
 
 ## Open questions
 
-- [ ] Backoff timings and maximum attempts (recorded in `DECISIONS.md` section 4).
+- [x] Backoff timings and maximum attempts (recorded in `DECISIONS.md` section 4). (Answered in
+  `reliability`: retry n waits a random 5–30 s × 2^(n−1), capped at 5 min; the default of 3 attempts
+  is kept.)
 - [x] Batch job crash behaviour (resume vs restart). (Moot: job groups replace the batch job type, and
   each job of a group recovers like any other job; see milestone 6.)

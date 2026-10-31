@@ -25,6 +25,7 @@ const JOB: Job = {
   result: null,
   error: null,
   groupId: GROUP_ID,
+  idempotencyKey: null,
   scheduledAt: null,
   startedAt: null,
   completedAt: null,

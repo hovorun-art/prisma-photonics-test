@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { createClient, type ClickHouseClient } from '@clickhouse/client';
 import {
   type ChangeJobStatusRequest,
+  type CreateJobRequest,
   ErrorBody,
   FINISHED_JOB_STATUSES,
   type FlightTransitJobResult,
@@ -44,7 +45,16 @@ import {
 import { JOB_LOG_STREAM, type JobLogStream } from '../../src/domain/job-log/job-log-stream.js';
 import { JOB_LOG_WRITER, type JobLogWriter } from '../../src/domain/job-log/job-log-writer.js';
 import { JOB_QUEUE, type JobQueue } from '../../src/domain/jobs/job-queue.js';
+import {
+  JOB_RECOVERY,
+  type JobRecovery,
+  type RunJobRecoveryResponse,
+} from '../../src/domain/jobs/job-recovery.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../src/domain/jobs/job-repository.js';
+import {
+  JOB_REQUEST_FINGERPRINT,
+  type JobRequestFingerprint,
+} from '../../src/domain/jobs/job-request-fingerprint.js';
 import { JOB_SERVICE_SETUP_STEPS } from '../../src/infra/bootstrap/job-service-bootstrap.js';
 import { ZodJobServiceConfigParser } from '../../src/infra/config/zod-job-service-config-parser.js';
 import { PrismaDatabase } from '../../src/infra/prisma/prisma-database.js';
@@ -64,6 +74,22 @@ export const TEST_CONFIG = {
   /** Not the defaults, so the tests show the configured windows reach the statistics. */
   statsRecentWindowMinutes: 60,
   statsThroughputWindowMinutes: 2,
+  /** The configured wait before an automatic retry: retry n draws from [min, max] x 2^(n-1), capped. */
+  retryMinDelayMs: 1_000,
+  retryMaxDelayMs: 2_000,
+  retryCapDelayMs: 5_000,
+  /** Not the defaults (and apart from each other), so each type's own limit reaches the internal job read. */
+  maxProcessingMsEmail: 12_345,
+  maxProcessingMsWebhook: 23_456,
+  maxProcessingMsFlightTransit: 34_567,
+  /**
+   * An hour, so the recovery timer never fires during a test: the recovery tests run one pass
+   * themselves (the timer has its own unit test). A job's time limit acts after its maximum plus
+   * this interval.
+   */
+  recoveryIntervalMs: 3_600_000,
+  /** Not the default: a pass looks only at jobs in their state for at least this long. */
+  recoveryMinAgeMs: 20_000,
 } as const;
 
 export const AUTHORIZATION = `${SERVICE_TOKEN_SCHEME} ${TEST_CONFIG.serviceToken}`;
@@ -133,6 +159,23 @@ export interface SeedRequest {
   error?: JobError;
   /** The group the job was submitted in; defaults to none. */
   groupId?: string;
+  /** The job's execution time; defaults to an hour ahead for a `scheduled` job, otherwise none. */
+  scheduledAt?: string;
+}
+
+export interface AgeRequest {
+  id: string;
+  /** How long ago the job's state last changed. */
+  changedAgoMs: number;
+  /** How long ago its current attempt started; left as it is when omitted. */
+  startedAgoMs?: number;
+  /** How long ago it was due (a scheduled job's `scheduledAt`); left as it is when omitted. */
+  dueAgoMs?: number;
+}
+
+export interface SeedKeyedRequest {
+  /** The submission as the contract parses it (defaults applied), with its `idempotencyKey`. */
+  request: CreateJobRequest;
 }
 
 export interface ChangeStatusRequest {
@@ -259,6 +302,16 @@ export class JobServiceUnderTest implements Closable {
         JOB_SERVICE_STATS_THROUGHPUT_WINDOW_MINUTES: String(
           TEST_CONFIG.statsThroughputWindowMinutes,
         ),
+        JOB_SERVICE_RETRY_MIN_DELAY_MS: String(TEST_CONFIG.retryMinDelayMs),
+        JOB_SERVICE_RETRY_MAX_DELAY_MS: String(TEST_CONFIG.retryMaxDelayMs),
+        JOB_SERVICE_RETRY_CAP_DELAY_MS: String(TEST_CONFIG.retryCapDelayMs),
+        JOB_SERVICE_MAX_PROCESSING_MS_EMAIL: String(TEST_CONFIG.maxProcessingMsEmail),
+        JOB_SERVICE_MAX_PROCESSING_MS_WEBHOOK: String(TEST_CONFIG.maxProcessingMsWebhook),
+        JOB_SERVICE_MAX_PROCESSING_MS_FLIGHT_TRANSIT: String(
+          TEST_CONFIG.maxProcessingMsFlightTransit,
+        ),
+        JOB_SERVICE_RECOVERY_INTERVAL_MS: String(TEST_CONFIG.recoveryIntervalMs),
+        JOB_SERVICE_RECOVERY_MIN_AGE_MS: String(TEST_CONFIG.recoveryMinAgeMs),
       },
     });
     if (!parsed.ok) throw new Error(parsed.problems);
@@ -485,12 +538,65 @@ export class JobServiceUnderTest implements Closable {
         maxAttempts: options.maxAttempts ?? 3,
         error: options.error ?? null,
         groupId: options.groupId ?? null,
-        scheduledAt: status === 'scheduled' ? new Date(Date.now() + 3_600_000).toISOString() : null,
+        scheduledAt:
+          options.scheduledAt ??
+          (status === 'scheduled' ? new Date(Date.now() + 3_600_000).toISOString() : null),
         startedAt: notStarted ? null : now,
         completedAt: finished ? (options.completedAt ?? now) : null,
       },
     });
     return job;
+  }
+
+  /**
+   * Stores a `pending` job as submitted with `request` (its key and fingerprint included, the
+   * fingerprint from the app's own port), as an earlier submission left it: a transit whose
+   * departure day is over now, which no route accepts any more.
+   */
+  async seedKeyed({ request }: SeedKeyedRequest): Promise<Job> {
+    const { fingerprint } = this.app
+      .get<JobRequestFingerprint>(JOB_REQUEST_FINGERPRINT)
+      .of({ job: request });
+    const { job } = await this.app.get<JobRepository>(JOB_REPOSITORY).create({
+      job: {
+        ...request,
+        status: 'pending',
+        attempts: 0,
+        result: null,
+        error: null,
+        groupId: request.groupId ?? null,
+        idempotencyKey: request.idempotencyKey ?? null,
+        requestFingerprint: fingerprint,
+        scheduledAt: request.scheduledAt ?? null,
+        startedAt: null,
+        completedAt: null,
+      },
+    });
+    return job;
+  }
+
+  /**
+   * Moves a job's last change (and, when given, its start and due time) into the past, as time
+   * would: no route can make a job old.
+   */
+  async age(req: AgeRequest): Promise<void> {
+    const ago = (ms: number): Date => new Date(Date.now() - ms);
+    const prisma = this.app.get(PrismaDatabase);
+    await prisma.$executeRaw`
+      UPDATE jobs SET updated_at = ${ago(req.changedAgoMs)} WHERE id = ${req.id}::uuid`;
+    if (req.startedAgoMs !== undefined) {
+      await prisma.$executeRaw`
+        UPDATE jobs SET started_at = ${ago(req.startedAgoMs)} WHERE id = ${req.id}::uuid`;
+    }
+    if (req.dueAgoMs !== undefined) {
+      await prisma.$executeRaw`
+        UPDATE jobs SET scheduled_at = ${ago(req.dueAgoMs)} WHERE id = ${req.id}::uuid`;
+    }
+  }
+
+  /** Runs one recovery pass, as the timer would. */
+  recover(): Promise<RunJobRecoveryResponse> {
+    return this.app.get<JobRecovery>(JOB_RECOVERY).run();
   }
 
   /** The type, a valid payload and (when completed) a valid result of a seeded job. */

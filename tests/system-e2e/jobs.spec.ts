@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   EmailJobResult,
   ErrorBody,
@@ -5,6 +7,7 @@ import {
   Job,
   type JobLogEntry,
   QueryJobLogResponse,
+  QueryJobsResponse,
   QueueStats,
   STATS_ROUTE,
 } from '@job-queue/contracts';
@@ -303,4 +306,99 @@ test('Retried job runs again on the full system: back to pending with zero attem
     .poll(async () => (await jobs.read({ id: failed.id })).job.status, { timeout: 60_000 })
     .toMatch(/^(completed|failed)$/);
   expect((await jobs.read({ id: failed.id })).job.attempts).toBe(1);
+});
+
+test.describe('reliability', () => {
+  test('Bulk retried after a lost answer on the full system: the same jobs answer 200, and exist once', async ({
+    request,
+  }) => {
+    const jobs = new StackJobs({ request });
+    const groupId = randomUUID();
+    const items = jobs.emailItems({ subject: 'Keyed', count: 3 }).items.map((item, index) => ({
+      ...item,
+      groupId,
+      idempotencyKey: `${groupId}-${index}`,
+    }));
+
+    const first = await jobs.submitBulk({ jobs: items });
+    const second = await jobs.submitBulk({ jobs: items });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(200);
+    expect(second.jobs.map((job) => job.id)).toEqual(first.jobs.map((job) => job.id));
+    const query = await request.get(`${JOB_SERVICE_URL}${JOBS_ROUTE}?groupId=${groupId}`);
+    expect(QueryJobsResponse.parse(await query.json()).total).toBe(items.length);
+  });
+
+  test('Cancel a job waiting for its retry on the full system: it stays cancelled once its retry time has passed', async ({
+    request,
+  }) => {
+    test.setTimeout(120_000);
+    const jobs = new StackJobs({ request });
+    const groupId = randomUUID();
+    // Enough webhook jobs that the stack's simulated failure rate fails some first attempts.
+    await jobs.submitBulk({
+      jobs: Array.from({ length: 40 }, (_value, index) => ({
+        type: 'webhook',
+        payload: { method: 'POST', url: `https://hooks.example.com/retry-${index}` },
+        maxAttempts: 3,
+        groupId,
+      })),
+    });
+    const waitingForRetry = `${JOB_SERVICE_URL}${JOBS_ROUTE}?groupId=${groupId}&status=scheduled&limit=10`;
+
+    // A job is caught while it waits for its retry: the cancel answers it with the start of the
+    // failed attempt, so no later attempt had begun. Another waiting job is tried otherwise.
+    let cancelled: Job | undefined;
+    await expect
+      .poll(
+        async () => {
+          const { items } = QueryJobsResponse.parse(
+            await (await request.get(waitingForRetry)).json(),
+          );
+          for (const candidate of items.filter((job) => job.error !== null)) {
+            const { response } = await jobs.changeStatus({ id: candidate.id, status: 'cancelled' });
+            if (response.status() !== 200) continue;
+            const job = Job.parse(await response.json());
+            if (job.startedAt === candidate.startedAt && job.attempts === candidate.attempts) {
+              cancelled = { ...job, scheduledAt: candidate.scheduledAt };
+              return true;
+            }
+          }
+          return false;
+        },
+        { timeout: 90_000, intervals: [100] },
+      )
+      .toBe(true);
+    if (cancelled === undefined) throw new Error('No job was caught waiting for its retry');
+    const { id, attempts } = cancelled;
+
+    // Past its retry time (plus a pass of the recovery) the next attempt has still not run.
+    const retryAt = Date.parse(cancelled.scheduledAt ?? '');
+    await expect
+      .poll(() => Date.now() > retryAt + 5_000, { timeout: 30_000, intervals: [500] })
+      .toBe(true);
+    expect((await jobs.read({ id })).job).toMatchObject({ status: 'cancelled', attempts });
+    // The next attempt's entry is still taken by a worker, which finds the job cancelled and skips
+    // it without starting it.
+    // A worker that read the job just before the cancel is refused its start instead; either way
+    // the attempt is skipped once.
+    const nextAttempt = attempts + 1;
+    const skipped = async (): Promise<number> => {
+      const messages = [
+        'Skipped: job is no longer startable',
+        'Skipped: job-service did not let this worker start the job',
+      ];
+      const lines = await Promise.all(
+        messages.map(async (msg) => (await jobs.workerLogged({ jobId: id, msg })).lines),
+      );
+      return lines.flat().filter((entry) => entry.attempt === nextAttempt).length;
+    };
+    await expect.poll(skipped, { timeout: 15_000, intervals: [500] }).toBe(1);
+    expect(
+      (await jobs.workerLogged({ jobId: id, msg: 'Job started' })).lines.filter(
+        (entry) => entry.attempt === nextAttempt,
+      ),
+    ).toEqual([]);
+  });
 });

@@ -19,20 +19,24 @@ or match `LANGUAGE_IGNORE` in `.claude/flow.conf`.
 
 ## Git
 
-- Never commit, amend, push, merge, rebase or reset without the user's explicit approval. When work
-  is ready to commit, show what will go in and the message; a hook makes Claude Code ask before each
-  such git command. One approval covers one command, not later ones. Never route around the prompt
-  (other tools, `--no-verify`, scripts).
+- Commits on a change or fix branch need no approval: the main agent and subagents commit their
+  own work there (the hook allows `git commit` and `git cherry-pick` off the main branch) and report
+  the commit (files and message) afterwards. Never commit on the main branch (`MAIN_BRANCH` in
+  `.claude/flow.conf`): the hook denies it, the main branch only receives merges.
+- Never push, merge, rebase, reset, amend or revert without the user's explicit approval; the hook
+  makes Claude Code ask before each such git command. One approval covers one command, not later
+  ones. Never route around the prompt (other tools, `--no-verify`, scripts).
 - New features are built on their own branch, never on the main branch (`MAIN_BRANCH` in
   `.claude/flow.conf`): one branch per change, named after the change (`<change>`), created before
   the first planning artifact. Planning (`openspec/changes/<change>/`), code and the archive all go on
   that branch; the main branch only receives the merge, which brings the code and the updated main
   specs together.
 - One commit per task group: when a group of `tasks.md` is done (its boxes checked, its test review
-  acted on, the checks green), propose its commit (the files, including the checked boxes, and a
-  Conventional Commits message for that group) before starting the next group. Groups are never
-  folded into one commit, and a group is not split across commits. With parallel groups, each
-  group's worktree changes are brought in and committed on their own.
+  acted on, the checks green), commit it (the files, including the checked boxes, with a
+  Conventional Commits message for that group) and report the commit before starting the next
+  group. Groups are never folded into one commit, and a group is not split across commits. With
+  parallel groups, each subagent commits its group in its worktree and the main agent cherry-picks
+  that commit onto the change branch.
 
 ## Testing (TDD)
 
@@ -157,6 +161,10 @@ apps/job-service            Job bounded context (owns the Job aggregate and job 
                             over one JobService; jobs table via Prisma, BullMQ queue behind JobQueue.
                             Job log: GET /v1/jobs/:id/logs (JobLogService); a JobLogWriter moves
                             entries from the Redis Stream `job-log` into ClickHouse (JobLogStore).
+                            Reliability: retry with backoff (a failed attempt becomes `scheduled`),
+                            idempotency keys on submit, and a JobRecovery pass on a timer
+                            (JobRecoverySchedule) that re-queues waiting jobs with no live entry and
+                            fails lost (WORKER_LOST) or timed-out (JOB_TIMEOUT) attempts.
                             src/{domain,infra,app}/ + main.ts; prisma/ (schema, migrations)
 apps/job-execution-service  Job Execution context: takes queued attempts (BullMQ behind JobQueueConsumer),
                             reads and reports jobs through job-service's internal API (JobRepository),
@@ -168,7 +176,7 @@ apps/job-execution-service  Job Execution context: takes queued attempts (BullMQ
 apps/job-group-service      Job Group context: groups of jobs a client follows as one (the answer to
                             the Batch job). /v1/groups: create (empty), get, query, delete (only
                             while job-service has no job with its id) over one JobGroupService; a
-                            JobGroupTracker polled by JobGroupPoll (@nestjs/schedule) counts each
+                            JobGroupTracker polled by JobGroupPoll (SchedulerIntervalTask) counts each
                             running group's jobs through job-service's public job query
                             (GroupChildJobs) and sets its status. Own Postgres schema `job_groups`
                             (JOB_GROUP_SERVICE_DATABASE_URL), no Redis, no service token; one instance.
@@ -191,8 +199,9 @@ packages/service-kit        shared NestJS pieces for the backends: NestServiceBo
                             INTERNAL_SERVICE_TOKEN, JOB_LOG_STREAM_MAX_LENGTH), logging with
                             redaction and the job log destination (pino lines naming a job go to
                             the Redis Stream `job-log`), Redis module, health
-                            module, config module, the ErrorResponseFilter, the Swagger setup step and
-                            DatabaseShutdown
+                            module, config module, the ErrorResponseFilter, the Swagger setup step,
+                            DatabaseShutdown and SchedulerIntervalTask (an interval on Nest's
+                            scheduler that skips a tick while one runs and waits for it on stop)
 tests/support               test-only helpers for the integration and e2e tests (Redis and Postgres
                             connection counters, Prisma migrate deploy for test databases,
                             unreachable addresses); a dev dependency, never in a runtime image
@@ -276,7 +285,7 @@ validated at the edge (HTTP and queue consumers); inner layers trust their types
 closed list `ERROR_CODES` in `packages/kernel` (a code outside it does not compile; contracts build
 the `ErrorCode` schema from the same list), plus structured `details`. A new failure adds its code to
 `ERROR_CODES` first (today: `INTERNAL_UNAUTHORIZED`, `ROUTE_NOT_FOUND`, `VALIDATION_FAILED`,
-`PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `JOB_NOT_FOUND`, `JOB_STATUS_CONFLICT`, `QUEUE_UNAVAILABLE`, `JOB_SERVICE_UNAVAILABLE`, `JOB_GROUP_NOT_FOUND`, `JOB_GROUP_NOT_EMPTY`, `LOG_STORE_UNAVAILABLE`, `JOB_LOG_STREAM_UNAVAILABLE`, `JOB_LOG_STREAM_GROUP_MISSING`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table (shared, in service-kit). Code handles errors by class or `code`, never by
+`PAYLOAD_TOO_LARGE`, `UNSUPPORTED_MEDIA_TYPE`, `JOB_NOT_FOUND`, `JOB_STATUS_CONFLICT`, `QUEUE_UNAVAILABLE`, `JOB_SERVICE_UNAVAILABLE`, `JOB_GROUP_NOT_FOUND`, `JOB_GROUP_NOT_EMPTY`, `LOG_STORE_UNAVAILABLE`, `JOB_LOG_STREAM_UNAVAILABLE`, `JOB_LOG_STREAM_GROUP_MISSING`, `IDEMPOTENCY_KEY_CONFLICT`, `INTERNAL_ERROR`); a code also needs its HTTP status in the filter's table (shared, in service-kit). Code handles errors by class or `code`, never by
 message text. `domain/` interfaces declare these errors and `infra/` code throws them; one exception filter per app maps
 codes to HTTP status and a uniform response body (`code`, `message`, `details`). Never throw strings
 or bare `Error` for expected failures; unknown errors, including framework errors with no code of

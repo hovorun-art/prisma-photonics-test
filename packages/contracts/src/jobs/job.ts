@@ -44,13 +44,14 @@ export const CANCELLABLE_JOB_STATUSES = [
 ] as const satisfies readonly JobStatus[];
 
 /**
- * Ranges and defaults of a job's priority (higher = more urgent) and max attempts, and how far ahead
- * a job may be scheduled.
+ * Ranges and defaults of a job's priority (higher = more urgent) and max attempts, how far ahead
+ * a job may be scheduled, and the length of an idempotency key.
  */
 export const JOB_LIMITS = {
   priority: { min: 1, max: 10, default: 5 },
   maxAttempts: { min: 1, max: 10, default: 3 },
   scheduledAt: { maxAheadDays: 30 },
+  idempotencyKey: { minLength: 1, maxLength: 255 },
 } as const;
 
 /** Length limits of an email job, shared by job-service validation and the job-ui form. */
@@ -204,6 +205,9 @@ const JobBase = z.object({
   error: JobError.nullable(),
   /** The group the job was submitted in; job-service gives it no other meaning. */
   groupId: z.uuid().nullable(),
+  /** The key the job was submitted with; `null` when it had none. */
+  idempotencyKey: z.string().nullable(),
+  /** When the job may run: the client's time, or the time of its next attempt after a failure. */
   scheduledAt: Timestamp.nullable(),
   startedAt: Timestamp.nullable(),
   completedAt: Timestamp.nullable(),
@@ -236,6 +240,20 @@ export type FlightTransitJob = z.infer<typeof FlightTransitJob>;
 export const Job = z.discriminatedUnion('type', [EmailJob, WebhookJob, FlightTransitJob]);
 export type Job = z.infer<typeof Job>;
 
+/** How long one attempt of the job may run before it is stopped and failed with `JOB_TIMEOUT`. */
+const MaxProcessingMs = z.int().positive();
+
+/**
+ * A job as `GET /internal/v1/jobs/:id` returns it to job-execution-service: the job with the
+ * maximum processing time of its type, so the worker and job-service use the same limit.
+ */
+export const InternalJob = z.discriminatedUnion('type', [
+  EmailJob.extend({ maxProcessingMs: MaxProcessingMs }),
+  WebhookJob.extend({ maxProcessingMs: MaxProcessingMs }),
+  FlightTransitJob.extend({ maxProcessingMs: MaxProcessingMs }),
+]);
+export type InternalJob = z.infer<typeof InternalJob>;
+
 /** Options every job type accepts on submit; omitted ones get the defaults of `JOB_LIMITS`. */
 const CreateJobOptions = z.object({
   priority: JobPriority.default(JOB_LIMITS.priority.default),
@@ -247,6 +265,15 @@ const CreateJobOptions = z.object({
    * `scheduled`; how far ahead is checked by job-service against its clock.
    */
   scheduledAt: z.iso.datetime({ offset: true }).optional(),
+  /**
+   * Makes the submission safe to repeat: a second submission with this key answers with the job
+   * the first one created (or a conflict when it asks for a different job).
+   */
+  idempotencyKey: z
+    .string()
+    .min(JOB_LIMITS.idempotencyKey.minLength)
+    .max(JOB_LIMITS.idempotencyKey.maxLength)
+    .optional(),
 });
 
 export const CreateEmailJobRequest = CreateJobOptions.extend({
@@ -275,9 +302,25 @@ export type CreateJobRequest = z.infer<typeof CreateJobRequest>;
 /**
  * Body of `POST /v1/jobs/bulk`: ordinary job submissions of any types. The configured maximum
  * number of jobs is checked by job-service, since it is runtime config; issue paths carry each
- * item's position (`jobs.3.payload.to`).
+ * item's position (`jobs.3.payload.to`). A bulk cannot ask for one job twice: every item that
+ * repeats an earlier item's idempotency key gets an issue.
  */
-export const CreateJobsBulkRequest = z.object({ jobs: z.array(CreateJobRequest).min(1) });
+export const CreateJobsBulkRequest = z
+  .object({ jobs: z.array(CreateJobRequest).min(1) })
+  .superRefine((bulk, ctx) => {
+    const seen = new Set<string>();
+    bulk.jobs.forEach((job, index) => {
+      if (job.idempotencyKey === undefined) return;
+      if (seen.has(job.idempotencyKey)) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['jobs', index, 'idempotencyKey'],
+          message: 'Repeats the idempotency key of an earlier item',
+        });
+      }
+      seen.add(job.idempotencyKey);
+    });
+  });
 export type CreateJobsBulkRequest = z.infer<typeof CreateJobsBulkRequest>;
 
 /** Answer of `POST /v1/jobs/bulk`: the created jobs in the order of the request. */
@@ -326,13 +369,20 @@ export const QueryJobsResponse = z.object({
 export type QueryJobsResponse = z.infer<typeof QueryJobsResponse>;
 
 /**
+ * The queue entry a report is about: the job's run and the attempt. job-service refuses a report
+ * whose run or attempt is no longer the job's current one (a worker whose attempt was recovered).
+ */
+const ReportedAttempt = z.object({ run: z.int().positive(), attempt: z.int().positive() });
+
+/**
  * Body of `PATCH /internal/v1/jobs/:id`: the status job-execution-service moves a job to, with what
- * that status needs. `result` is checked against the job type's result schema by job-service.
+ * that status needs and the run and attempt of its entry. `result` is checked against the job
+ * type's result schema by job-service.
  */
 export const UpdateJobRequest = z.discriminatedUnion('status', [
-  z.object({ status: z.literal('processing') }),
-  z.object({ status: z.literal('completed'), result: z.unknown() }),
-  z.object({ status: z.literal('failed'), error: JobError }),
+  ReportedAttempt.extend({ status: z.literal('processing') }),
+  ReportedAttempt.extend({ status: z.literal('completed'), result: z.unknown() }),
+  ReportedAttempt.extend({ status: z.literal('failed'), error: JobError }),
 ]);
 export type UpdateJobRequest = z.infer<typeof UpdateJobRequest>;
 

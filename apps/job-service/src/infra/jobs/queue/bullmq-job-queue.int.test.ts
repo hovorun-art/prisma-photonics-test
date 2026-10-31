@@ -358,6 +358,157 @@ describe('BullMqJobQueue against Redis', () => {
     });
   });
 
+  describe('state and requeue', () => {
+    const attemptOf = (jobId: string, attempt = 1) => ({ jobId, run: 1, attempt });
+    /** Takes the next entry as a worker would and keeps holding it (no finish). */
+    const holdNext = async (): Promise<void> => {
+      const held = (await taker.getNextJob(randomUUID(), { block: false })) as unknown;
+      expect(held).toBeDefined();
+    };
+    /** Takes the next entry and lets it go as failed. */
+    const failNext = async (): Promise<void> => {
+      const token = randomUUID();
+      const next = (await taker.getNextJob(token, { block: false })) as
+        Awaited<ReturnType<Worker['getNextJob']>> | undefined;
+      expect(next).toBeDefined();
+      await next?.moveToFailed(new Error('worker lost'), token, false);
+    };
+
+    it('answers waiting for a queued entry', async () => {
+      await queue.enqueue(entry(JOB_ID, 1));
+
+      await expect(queue.state(attemptOf(JOB_ID))).resolves.toEqual({ state: 'waiting' });
+    });
+
+    it('answers delayed for an entry whose time has not come', async () => {
+      clock.now.mockReturnValueOnce({ now: NOW });
+      await queue.enqueue(entry(JOB_ID, 1, { runAt: inMs(60_000) }));
+
+      await expect(queue.state(attemptOf(JOB_ID))).resolves.toEqual({ state: 'delayed' });
+    });
+
+    it('answers active for an entry a worker holds', async () => {
+      await queue.enqueue(entry(JOB_ID, 1));
+      await holdNext();
+
+      await expect(queue.state(attemptOf(JOB_ID))).resolves.toEqual({ state: 'active' });
+    });
+
+    it('answers finished for an entry a worker completed or failed', async () => {
+      const failedJobId = randomUUID();
+      await queue.enqueue(entry(JOB_ID, 1));
+      await takeNext();
+      await queue.enqueue(entry(failedJobId, 1));
+      await failNext();
+
+      await expect(queue.state(attemptOf(JOB_ID))).resolves.toEqual({ state: 'finished' });
+      await expect(queue.state(attemptOf(failedJobId))).resolves.toEqual({ state: 'finished' });
+    });
+
+    it('answers missing for an attempt that has no entry', async () => {
+      await queue.enqueue(entry(JOB_ID, 1));
+
+      await expect(queue.state(attemptOf(JOB_ID, 2))).resolves.toEqual({ state: 'missing' });
+    });
+
+    it('Finished entry of a waiting job is replaced: one entry under the same id, taken by a worker', async () => {
+      await queue.enqueue(entry(JOB_ID, 1));
+      await failNext();
+
+      await expect(queue.requeue(entry(JOB_ID, 1))).resolves.toEqual({});
+
+      await expect(queue.state(attemptOf(JOB_ID))).resolves.toEqual({ state: 'waiting' });
+      expect(await observer.getJobCountByTypes('waiting', 'prioritized', 'failed')).toBe(1);
+      await expect(takeAll(2)).resolves.toEqual([JOB_ID, undefined]);
+    });
+
+    it('requeue keeps the job priority: a requeued urgent entry overtakes a waiting low one', async () => {
+      const lowJobId = randomUUID();
+      await queue.enqueue(entry(JOB_ID, 1, { priority: JOB_LIMITS.priority.max }));
+      await failNext();
+      await queue.enqueue(entry(lowJobId, 1, { priority: JOB_LIMITS.priority.min }));
+
+      await queue.requeue(entry(JOB_ID, 1, { priority: JOB_LIMITS.priority.max }));
+
+      await expect(takeAll(2)).resolves.toEqual([JOB_ID, lowJobId]);
+    });
+
+    it('requeue gives up within the configured timeout while Redis stalls', async () => {
+      const warn = vi.fn();
+      const stalled = new BullMqJobQueue(
+        { logger: { warn }, clock },
+        { redisUrl: container.getConnectionUrl(), enqueueTimeoutMs: ENQUEUE_TIMEOUT_MS },
+      );
+      try {
+        await stalled.state(attemptOf(JOB_ID));
+        await pauseWrites();
+        const startedAt = performance.now();
+
+        await expect(stalled.requeue(entry(JOB_ID, 1))).rejects.toBeInstanceOf(
+          JobQueueUnavailableError,
+        );
+
+        expect(performance.now() - startedAt).toBeLessThan(ENQUEUE_TIMEOUT_MS * 4);
+        expect(warn).toHaveBeenCalledWith(
+          expect.objectContaining({ jobId: JOB_ID, run: 1, attempt: 1 }),
+          'Requeue failed',
+        );
+      } finally {
+        await unpauseWrites();
+        await stalled.close();
+      }
+    });
+
+    it('requeue adds the entry when there is none', async () => {
+      await queue.requeue(entry(JOB_ID, 1));
+
+      await expect(queue.state(attemptOf(JOB_ID))).resolves.toEqual({ state: 'waiting' });
+    });
+
+    it('requeue keeps the time of a scheduled entry', async () => {
+      clock.now.mockReturnValueOnce({ now: NOW });
+
+      await queue.requeue(entry(JOB_ID, 1, { runAt: inMs(60_000) }));
+
+      await expect(queue.state(attemptOf(JOB_ID))).resolves.toEqual({ state: 'delayed' });
+    });
+
+    it('requeue adds nothing while a worker holds the entry', async () => {
+      await queue.enqueue(entry(JOB_ID, 1));
+      await holdNext();
+
+      await queue.requeue(entry(JOB_ID, 1));
+
+      await expect(queue.state(attemptOf(JOB_ID))).resolves.toEqual({ state: 'active' });
+      expect(await observer.getJobCountByTypes('waiting', 'prioritized', 'active')).toBe(1);
+    });
+
+    it('requeue leaves a waiting entry as it is', async () => {
+      await queue.enqueue(entry(JOB_ID, 1));
+
+      await queue.requeue(entry(JOB_ID, 1));
+
+      expect(await observer.getJobCountByTypes('waiting', 'prioritized')).toBe(1);
+    });
+
+    it('state and requeue reject with JobQueueUnavailableError while Redis cannot be reached', async () => {
+      const unreachable = new BullMqJobQueue(
+        { logger: { warn: vi.fn() }, clock },
+        { redisUrl: UNREACHABLE_REDIS_URL, enqueueTimeoutMs: ENQUEUE_TIMEOUT_MS },
+      );
+      try {
+        await expect(unreachable.state(attemptOf(JOB_ID))).rejects.toBeInstanceOf(
+          JobQueueUnavailableError,
+        );
+        await expect(unreachable.requeue(entry(JOB_ID, 1))).rejects.toBeInstanceOf(
+          JobQueueUnavailableError,
+        );
+      } finally {
+        await unreachable.close();
+      }
+    });
+  });
+
   it('closes its queue and cancellations connections', async () => {
     const counter = new ClientListRedisConnectionCounter({
       redisUrl: container.getConnectionUrl(),

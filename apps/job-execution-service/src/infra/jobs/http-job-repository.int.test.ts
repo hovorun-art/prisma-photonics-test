@@ -18,6 +18,8 @@ import { HttpJobRepository } from './http-job-repository.js';
 
 const TOKEN = 'int-test-token';
 const TIMEOUT_MS = 300;
+const MAX_PROCESSING_MS = 30_000;
+const RUN_ATTEMPT = { run: 2, attempt: 3 };
 const JOB: Job = {
   id: randomUUID(),
   type: 'email',
@@ -29,12 +31,16 @@ const JOB: Job = {
   result: null,
   error: null,
   groupId: null,
+  idempotencyKey: null,
   scheduledAt: null,
   startedAt: null,
   completedAt: null,
   createdAt: '2026-10-29T11:00:00.000Z',
   updatedAt: '2026-10-29T11:00:00.000Z',
 };
+
+/** The body of the internal read: the job with its type's maximum processing time. */
+const INTERNAL_JOB = { ...JOB, maxProcessingMs: MAX_PROCESSING_MS };
 
 interface Received {
   method: string | undefined;
@@ -87,10 +93,13 @@ describe('HttpJobRepository against a stub job-service', () => {
     received = [];
   });
 
-  it('reads a job with the service token', async () => {
-    answer = respond(200, JOB);
+  it('reads the job with its maximum processing time', async () => {
+    answer = respond(200, INTERNAL_JOB);
 
-    await expect(api().get({ id: JOB.id })).resolves.toEqual({ job: JOB });
+    await expect(api().get({ id: JOB.id })).resolves.toEqual({
+      job: JOB,
+      maxProcessingMs: MAX_PROCESSING_MS,
+    });
     expect(received).toEqual([
       {
         method: 'GET',
@@ -101,18 +110,23 @@ describe('HttpJobRepository against a stub job-service', () => {
     ]);
   });
 
-  it('sends a state report and returns the updated job', async () => {
+  it('sends a state report with its run and attempt and returns the updated job', async () => {
     answer = respond(200, { ...JOB, status: 'processing', attempts: 1 });
 
-    const { job } = await api().update({ id: JOB.id, update: { status: 'processing' } });
+    const { job } = await api().update({
+      id: JOB.id,
+      update: { status: 'processing', ...RUN_ATTEMPT },
+    });
 
     expect(job.status).toBe('processing');
-    expect(received[0]).toMatchObject({
-      method: 'PATCH',
-      url: `${INTERNAL_JOBS_ROUTE}/${JOB.id}`,
-      authorization: `Bearer ${TOKEN}`,
-      body: { status: 'processing' },
-    });
+    expect(received).toEqual([
+      {
+        method: 'PATCH',
+        url: `${INTERNAL_JOBS_ROUTE}/${JOB.id}`,
+        authorization: `Bearer ${TOKEN}`,
+        body: { status: 'processing', run: 2, attempt: 3 },
+      },
+    ]);
   });
 
   it('passes through an accepted report whose job does not match the contract', async () => {
@@ -124,7 +138,10 @@ describe('HttpJobRepository against a stub job-service', () => {
     };
     answer = respond(200, corrupted);
 
-    const { job } = await api().update({ id: JOB.id, update: { status: 'processing' } });
+    const { job } = await api().update({
+      id: JOB.id,
+      update: { status: 'processing', ...RUN_ATTEMPT },
+    });
 
     expect(job).toEqual(corrupted);
   });
@@ -135,12 +152,36 @@ describe('HttpJobRepository against a stub job-service', () => {
     await expect(api().get({ id: JOB.id })).rejects.toBeInstanceOf(JobNotFoundError);
   });
 
-  it('maps 409 to JobStatusConflictError', async () => {
-    answer = respond(409, { code: 'JOB_STATUS_CONFLICT', message: 'x', details: {} });
+  it('maps 409 to JobStatusConflictError carrying the status job-service names', async () => {
+    answer = respond(409, {
+      code: 'JOB_STATUS_CONFLICT',
+      message: 'x',
+      details: { id: JOB.id, status: 'scheduled' },
+    });
 
+    const refused = api().update({
+      id: JOB.id,
+      update: { status: 'completed', result: {}, ...RUN_ATTEMPT },
+    });
+
+    await expect(refused).rejects.toBeInstanceOf(JobStatusConflictError);
+    await expect(refused).rejects.toMatchObject({
+      details: { id: JOB.id, status: 'scheduled' },
+    });
+  });
+
+  it.each([
+    { name: 'no status', details: {} },
+    { name: 'a status that is not a string', details: { status: 42 } },
+  ])('maps 409 with $name in its details to a conflict without a status', async ({ details }) => {
+    answer = respond(409, { code: 'JOB_STATUS_CONFLICT', message: 'x', details });
+
+    const refused = api().update({ id: JOB.id, update: { status: 'processing', ...RUN_ATTEMPT } });
+
+    await expect(refused).rejects.toBeInstanceOf(JobStatusConflictError);
     await expect(
-      api().update({ id: JOB.id, update: { status: 'processing' } }),
-    ).rejects.toBeInstanceOf(JobStatusConflictError);
+      refused.catch((error: unknown) => (error as JobStatusConflictError).details),
+    ).resolves.toEqual({ id: JOB.id });
   });
 
   it('maps a server error to JobServiceUnavailableError', async () => {
@@ -152,7 +193,7 @@ describe('HttpJobRepository against a stub job-service', () => {
   it('maps a slow answer past the timeout to JobServiceUnavailableError', async () => {
     answer = (res) =>
       setTimeout(() => {
-        respond(200, JOB)(res);
+        respond(200, INTERNAL_JOB)(res);
       }, TIMEOUT_MS * 3);
 
     await expect(api().get({ id: JOB.id })).rejects.toBeInstanceOf(JobServiceUnavailableError);
@@ -174,8 +215,19 @@ describe('HttpJobRepository against a stub job-service', () => {
     );
   });
 
+  it('rejects a read without the time limit as invalid', async () => {
+    answer = respond(200, JOB);
+
+    const read = api().get({ id: JOB.id });
+
+    await expect(read).rejects.toBeInstanceOf(InvalidJobError);
+    await expect(read).rejects.toMatchObject({
+      details: { id: JOB.id, issues: [expect.objectContaining({ path: ['maxProcessingMs'] })] },
+    });
+  });
+
   it('rejects a job that does not match the contract as invalid', async () => {
-    answer = respond(200, { ...JOB, payload: { to: 'not-an-email' } });
+    answer = respond(200, { ...INTERNAL_JOB, payload: { to: 'not-an-email' } });
 
     const read = api().get({ id: JOB.id });
 
@@ -191,7 +243,7 @@ describe('HttpJobRepository against a stub job-service', () => {
     });
 
     await expect(
-      api().update({ id: JOB.id, update: { status: 'completed', result: {} } }),
+      api().update({ id: JOB.id, update: { status: 'completed', result: {}, ...RUN_ATTEMPT } }),
     ).rejects.toBeInstanceOf(InvalidJobError);
   });
 });

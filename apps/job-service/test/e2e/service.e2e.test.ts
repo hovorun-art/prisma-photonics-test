@@ -97,10 +97,31 @@ describe('job-service health, docs and shutdown', () => {
 
       expect(jobs?.post?.requestBody?.content['application/json']?.schema).toBeDefined();
       expect(jobs?.post?.responses['201']?.content?.['application/json']?.schema).toBeDefined();
+      // A replay answers 200 and a key reused for another job 409, so clients see both.
+      expect(jobs?.post?.responses['200']?.content?.['application/json']?.schema).toBeDefined();
+      expect(Object.keys(jobs?.post?.responses ?? {}).sort()).toEqual(['200', '201', '400', '409']);
+      // The request schema, with the schemas it refers to, carries the idempotency key.
+      const seen = new Set<string>();
+      const texts = [JSON.stringify(jobs?.post?.requestBody?.content['application/json']?.schema)];
+      for (const text of texts) {
+        for (const [, name = ''] of text.matchAll(/"\$ref":"#\/components\/schemas\/([^"]+)"/g)) {
+          if (seen.has(name)) continue;
+          seen.add(name);
+          texts.push(JSON.stringify(components?.schemas?.[name]));
+        }
+      }
+      expect(texts.join(' ')).toContain('"idempotencyKey"');
       const bulk = paths[JOBS_BULK_ROUTE]?.post;
       expect(bulk?.requestBody?.content['application/json']?.schema).toBeDefined();
       expect(bulk?.responses['201']?.content?.['application/json']?.schema).toBeDefined();
-      expect(Object.keys(bulk?.responses ?? {}).sort()).toEqual(['201', '400', '413']);
+      expect(bulk?.responses['200']?.content?.['application/json']?.schema).toBeDefined();
+      expect(Object.keys(bulk?.responses ?? {}).sort()).toEqual([
+        '200',
+        '201',
+        '400',
+        '409',
+        '413',
+      ]);
       expect(jobs?.get?.parameters?.map((parameter) => parameter.name).sort()).toEqual([
         'groupId',
         'limit',

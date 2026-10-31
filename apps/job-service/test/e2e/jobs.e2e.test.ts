@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  type CreateJobRequest,
+  CreateJobsBulkResponse,
   EMAIL_LIMITS,
   JOB_LIMITS,
   JOBS_ROUTE,
@@ -37,6 +39,21 @@ const WEBHOOK_JOB = {
 
 describe('job-service public job routes', () => {
   let service: JobServiceUnderTest;
+
+  /** A worker's reports about the first attempt of the first run, or of the run/attempt given. */
+  const start = ({ run = 1, attempt = 1 } = {}) => ({ status: 'processing', run, attempt });
+  const complete = ({ run = 1, attempt = 1 } = {}) => ({
+    status: 'completed',
+    run,
+    attempt,
+    result: { messageId: 'm-1' },
+  });
+  const fail = ({ run = 1, attempt = 1 } = {}) => ({
+    status: 'failed',
+    run,
+    attempt,
+    error: ERROR,
+  });
 
   /** A submission rejected for `path`, after which nothing is stored or queued. */
   const expectRejected = async (body: unknown, path: unknown[]): Promise<void> => {
@@ -447,6 +464,284 @@ describe('job-service public job routes', () => {
       });
       expect(jobs.map((job) => job.status)).toEqual(['pending', 'pending']);
       for (const job of jobs) expect(await service.stored(job.id)).toEqual(job);
+    });
+  });
+
+  describe('idempotency key', () => {
+    const KEY = 'order-4711';
+    const keyed = (overrides: Record<string, unknown> = {}) => ({
+      ...EMAIL_JOB,
+      idempotencyKey: KEY,
+      ...overrides,
+    });
+    const expectConflict = async (response: Response, existingId: string): Promise<void> => {
+      const body = await service.errorBody({
+        response,
+        status: 409,
+        code: 'IDEMPOTENCY_KEY_CONFLICT',
+      });
+      expect(body.details).toEqual({ idempotencyKey: KEY, existingJobId: existingId });
+    };
+    /** Runs a job's only attempt to completion through the internal routes. */
+    const finish = async (job: Job): Promise<void> => {
+      expect((await service.report({ id: job.id, body: start() })).status).toBe(200);
+      expect((await service.report({ id: job.id, body: complete() })).status).toBe(200);
+    };
+    /** `iso` written with a +02:00 offset instead of `Z`: the same instant. */
+    const withOffset = (iso: string): string =>
+      new Date(Date.parse(iso) + 2 * 60 * MINUTE_MS).toISOString().replace('Z', '+02:00');
+
+    it('Job with a key', async () => {
+      const job = await service.submitted(keyed());
+
+      expect(job.idempotencyKey).toBe(KEY);
+      expect(Job.parse(await (await service.get(job.id)).json()).idempotencyKey).toBe(KEY);
+    });
+
+    it('Job without a key (New job has no idempotency key)', async () => {
+      const job = await service.submitted(EMAIL_JOB);
+
+      expect(job.idempotencyKey).toBeNull();
+      expect(Job.parse(await (await service.get(job.id)).json()).idempotencyKey).toBeNull();
+    });
+
+    it('Empty key', async () => {
+      await expectRejected(keyed({ idempotencyKey: '' }), ['idempotencyKey']);
+    });
+
+    it('Key too long', async () => {
+      const idempotencyKey = 'k'.repeat(JOB_LIMITS.idempotencyKey.maxLength + 1);
+
+      await expectRejected(keyed({ idempotencyKey }), ['idempotencyKey']);
+    });
+
+    it('Key at the maximum length is accepted', async () => {
+      const idempotencyKey = 'k'.repeat(JOB_LIMITS.idempotencyKey.maxLength);
+
+      const job = await service.submitted(keyed({ idempotencyKey }));
+
+      expect(job.idempotencyKey).toBe(idempotencyKey);
+    });
+
+    it('Identical replay', async () => {
+      service.queue.enqueue.mockResolvedValueOnce({});
+
+      const first = await service.submit(keyed());
+      const second = await service.submit(keyed());
+
+      expect(first.status).toBe(201);
+      expect(second.status).toBe(200);
+      const job = Job.parse(await first.json());
+      expect(Job.parse(await second.json())).toEqual(job);
+      expect(await service.total()).toBe(1);
+      expect(service.queue.enqueue).toHaveBeenCalledOnce();
+    });
+
+    it('Replay spelling out the defaults', async () => {
+      const job = await service.submitted({
+        type: 'email',
+        payload: EMAIL_JOB.payload,
+        idempotencyKey: KEY,
+      });
+
+      const replay = await service.submit({
+        type: 'email',
+        payload: { body: 'Hi Ada', subject: 'Hello', to: 'ada@example.com' },
+        priority: JOB_LIMITS.priority.default,
+        maxAttempts: JOB_LIMITS.maxAttempts.default,
+        idempotencyKey: KEY,
+      });
+
+      expect(replay.status).toBe(200);
+      expect(Job.parse(await replay.json())).toEqual(job);
+    });
+
+    it('Replay after a failed attempt', async () => {
+      service.queue.enqueue.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+      const job = await service.submitted(keyed());
+      expect((await service.report({ id: job.id, body: start() })).status).toBe(200);
+      const failure = await service.report({ id: job.id, body: fail() });
+      expect(failure.status).toBe(200);
+      const waiting = Job.parse(await failure.json());
+
+      const replay = await service.submit(keyed());
+
+      expect(replay.status).toBe(200);
+      const replayed = Job.parse(await replay.json());
+      expect(replayed).toEqual(waiting);
+      expect(replayed).toMatchObject({ status: 'scheduled', attempts: 1, error: ERROR });
+      expect(Date.parse(replayed.scheduledAt ?? '')).toBeGreaterThan(Date.parse(job.createdAt));
+      expect(await service.total()).toBe(1);
+      // The submission and the retry were queued; the replay queued nothing.
+      expect(service.queue.enqueue).toHaveBeenCalledTimes(2);
+    });
+
+    it('Replay of a flight transit after its departure day', async () => {
+      const request: CreateJobRequest = {
+        type: 'flight-transit',
+        payload: { origin: 'LHR', destination: 'JFK', departureDate: service.utcDate(-1) },
+        priority: JOB_LIMITS.priority.default,
+        maxAttempts: JOB_LIMITS.maxAttempts.default,
+        idempotencyKey: KEY,
+      };
+      const existing = await service.seedKeyed({ request });
+
+      const replay = await service.submit(request);
+
+      expect(replay.status).toBe(200);
+      expect(Job.parse(await replay.json())).toEqual(existing);
+      expect(await service.total()).toBe(1);
+    });
+
+    it('Replay of a scheduled job in another time zone notation', async () => {
+      const scheduledAt = fromNow(10 * MINUTE_MS);
+      const job = await service.submitted(keyed({ scheduledAt }));
+
+      const replay = await service.submit(keyed({ scheduledAt: withOffset(scheduledAt) }));
+
+      expect(replay.status).toBe(200);
+      expect(Job.parse(await replay.json())).toEqual(job);
+      expect(await service.total()).toBe(1);
+    });
+
+    it.each([
+      [
+        'Same key, different payload',
+        () => ({ payload: { ...EMAIL_JOB.payload, subject: 'Other' } }),
+      ],
+      ['Same key, different priority', () => ({ priority: EMAIL_JOB.priority + 1 })],
+      ['Same key, different group', () => ({ groupId: randomUUID() })],
+    ])('%s', async (_name, change) => {
+      const first = await service.submitted(keyed());
+
+      const second = await service.submit(keyed(change()));
+
+      await expectConflict(second, first.id);
+      expect(await service.total()).toBe(1);
+      expect(await service.stored(first.id)).toEqual(first);
+    });
+
+    it('Two submissions at the same time', async () => {
+      service.queue.enqueue.mockResolvedValueOnce({});
+
+      const responses = await Promise.all([service.submit(keyed()), service.submit(keyed())]);
+
+      expect(responses.map((response) => response.status).sort()).toEqual([200, 201]);
+      const [first, second] = await Promise.all(
+        responses.map(async (response) => Job.parse(await response.json())),
+      );
+      expect(first).toEqual(second);
+      expect(await service.total()).toBe(1);
+      expect(service.queue.enqueue).toHaveBeenCalledOnce();
+    });
+
+    it('Key reused after the job was deleted', async () => {
+      const first = await service.submitted(keyed());
+      await finish(first);
+      expect((await service.remove(first.id)).status).toBe(204);
+
+      const second = await service.submitted(keyed());
+
+      expect(second.idempotencyKey).toBe(KEY);
+      expect(second.id).not.toBe(first.id);
+      expect(await service.total()).toBe(1);
+    });
+
+    it('Key taken by a finished job', async () => {
+      const first = await service.submitted(keyed());
+      await finish(first);
+
+      const replay = await service.submit(keyed());
+
+      expect(replay.status).toBe(200);
+      expect(Job.parse(await replay.json())).toMatchObject({ id: first.id, status: 'completed' });
+      expect(await service.total()).toBe(1);
+    });
+
+    describe('in a bulk', () => {
+      const item = (key: string, subject = 'Hello') => ({
+        ...EMAIL_JOB,
+        payload: { ...EMAIL_JOB.payload, subject },
+        idempotencyKey: key,
+      });
+
+      it('Bulk items carry their keys', async () => {
+        const jobs = await service.submittedBulk([item('k-1'), EMAIL_JOB, item('k-3')]);
+
+        expect(jobs.map((job) => job.idempotencyKey)).toEqual(['k-1', null, 'k-3']);
+      });
+
+      it('One item already exists', async () => {
+        const existing = await service.submitted(item('k-2'));
+
+        const response = await service.submitBulk({ jobs: [item('k-1'), item('k-2'), EMAIL_JOB] });
+
+        expect(response.status).toBe(201);
+        const { items } = CreateJobsBulkResponse.parse(await response.json());
+        expect(items).toHaveLength(3);
+        expect(items[1]).toEqual(existing);
+        expect(items[0]).toMatchObject({ idempotencyKey: 'k-1', status: 'pending' });
+        expect(items[2]).toMatchObject({ idempotencyKey: null, status: 'pending' });
+        expect(new Set(items.map((job) => job.id)).size).toBe(3);
+        expect(await service.total()).toBe(3);
+        expect(service.queue.enqueueMany).toHaveBeenCalledExactlyOnceWith({
+          entries: [items[0]!, items[2]!].map((job) => ({
+            jobId: job.id,
+            run: 1,
+            attempt: 1,
+            priority: job.priority,
+            runAt: null,
+          })),
+        });
+      });
+
+      it('Every item already exists', async () => {
+        const created = await service.submittedBulk([item('k-1'), item('k-2')]);
+
+        const response = await service.submitBulk({ jobs: [item('k-1'), item('k-2')] });
+
+        expect(response.status).toBe(200);
+        expect(CreateJobsBulkResponse.parse(await response.json()).items).toEqual(created);
+        expect(await service.total()).toBe(2);
+        expect(service.queue.enqueueMany).toHaveBeenCalledOnce();
+      });
+
+      it('One item conflicts', async () => {
+        const existing = await service.submitted(item('k-2'));
+
+        const response = await service.submitBulk({
+          jobs: [item('k-1'), item('k-2', 'Another subject')],
+        });
+
+        const body = await service.errorBody({
+          response,
+          status: 409,
+          code: 'IDEMPOTENCY_KEY_CONFLICT',
+        });
+        expect(body.details).toEqual({ idempotencyKey: 'k-2', existingJobId: existing.id });
+        expect(await service.total()).toBe(1);
+        expect(service.queue.enqueueMany).not.toHaveBeenCalled();
+      });
+
+      it('Bulk item with a bad key', async () => {
+        const response = await service.submitBulk({ jobs: [item('k-1'), item('')] });
+
+        expect(await service.issuePaths(response)).toContainEqual(['jobs', 1, 'idempotencyKey']);
+        expect(await service.total()).toBe(0);
+        expect(service.queue.enqueueMany).not.toHaveBeenCalled();
+      });
+
+      it('Duplicate key within the bulk', async () => {
+        const response = await service.submitBulk({
+          jobs: [item('k-1'), item('k-2'), item('k-1')],
+        });
+
+        const paths = await service.issuePaths(response);
+        expect(paths).toContainEqual(['jobs', 2, 'idempotencyKey']);
+        expect(paths).not.toContainEqual(['jobs', 0, 'idempotencyKey']);
+        expect(await service.total()).toBe(0);
+        expect(service.queue.enqueueMany).not.toHaveBeenCalled();
+      });
     });
   });
 
@@ -1004,6 +1299,28 @@ describe('job-service public job routes', () => {
         expect(service.queue.cancel).toHaveBeenCalledExactlyOnceWith({ jobId: job.id });
       });
 
+      it('Cancel a job waiting for its retry', async () => {
+        service.queue.enqueue.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+        service.queue.cancel.mockResolvedValueOnce({});
+        const job = await service.submitted(EMAIL_JOB);
+        expect((await service.report({ id: job.id, body: start() })).status).toBe(200);
+        expect((await service.report({ id: job.id, body: fail() })).status).toBe(200);
+        expect((await service.stored(job.id)).status).toBe('scheduled');
+
+        const cancelled = await changed(await service.changeStatus({ id: job.id, body: CANCEL }));
+
+        expect(cancelled).toMatchObject({ status: 'cancelled', attempts: 1, error: ERROR });
+        expect(cancelled.completedAt).toEqual(expect.any(String));
+        expect(await service.stored(job.id)).toEqual(cancelled);
+        expect(service.queue.cancel).toHaveBeenCalledExactlyOnceWith({ jobId: job.id });
+        // The retry's entry may still fire: its start is refused and nothing changes.
+        await service.expectConflict({
+          response: await service.report({ id: job.id, body: start({ attempt: 2 }) }),
+          status: 'cancelled',
+        });
+        expect(await service.stored(job.id)).toEqual(cancelled);
+      });
+
       it('Cancel a finished job', async () => {
         const status = 'completed';
         const job = await service.seed({ status });
@@ -1040,7 +1357,7 @@ describe('job-service public job routes', () => {
 
         const responses = await Promise.all([
           service.changeStatus({ id: job.id, body: CANCEL }),
-          service.report({ id: job.id, body: { status: 'completed', result } }),
+          service.report({ id: job.id, body: { status: 'completed', run: 1, attempt: 1, result } }),
         ]);
 
         expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
@@ -1059,13 +1376,20 @@ describe('job-service public job routes', () => {
 
     describe('retry', () => {
       it('Retry a failed job', async () => {
-        service.queue.enqueue.mockResolvedValueOnce({});
-        const job = await service.seed({
-          status: 'failed',
-          attempts: 3,
-          maxAttempts: 3,
-          error: ERROR,
-        });
+        service.queue.enqueue.mockResolvedValueOnce({}).mockResolvedValueOnce({});
+        // A keyed job with an execution time, whose only attempt failed: the time stays on it.
+        const request = {
+          ...EMAIL_JOB,
+          maxAttempts: 1,
+          scheduledAt: fromNow(10 * MINUTE_MS),
+          idempotencyKey: 'order-4711',
+        };
+        const submitted = await service.submitted(request);
+        expect((await service.report({ id: submitted.id, body: start() })).status).toBe(200);
+        expect((await service.report({ id: submitted.id, body: fail() })).status).toBe(200);
+        const job = await service.stored(submitted.id);
+        expect(job).toMatchObject({ status: 'failed', error: ERROR });
+        expect(job.scheduledAt).not.toBeNull();
 
         const retried = await changed(await service.changeStatus({ id: job.id, body: RETRY }));
 
@@ -1075,12 +1399,19 @@ describe('job-service public job routes', () => {
           attempts: 0,
           error: null,
           result: null,
+          scheduledAt: null,
           startedAt: null,
           completedAt: null,
           updatedAt: retried.updatedAt,
         });
+        expect(retried.idempotencyKey).toBe('order-4711');
         expect(await service.stored(job.id)).toEqual(retried);
         expect(service.queue.cancel).not.toHaveBeenCalled();
+        // The original submission still finds the job, now retried.
+        const replay = await service.submit(request);
+        expect(replay.status).toBe(200);
+        expect(Job.parse(await replay.json())).toEqual(retried);
+        expect(await service.total()).toBe(1);
       });
 
       it('Retried job is queued', async () => {
@@ -1103,7 +1434,8 @@ describe('job-service public job routes', () => {
         const job = await service.seed({ status: 'failed', attempts: 3, maxAttempts: 3 });
         await changed(await service.changeStatus({ id: job.id, body: RETRY }));
 
-        const response = await service.report({ id: job.id, body: { status: 'processing' } });
+        // The retry started the job's second run.
+        const response = await service.report({ id: job.id, body: start({ run: 2 }) });
 
         expect(response.status).toBe(200);
         expect(Job.parse(await response.json())).toMatchObject({
@@ -1117,12 +1449,8 @@ describe('job-service public job routes', () => {
         for (let run = 2; run <= 3; run += 1) {
           service.queue.enqueue.mockResolvedValueOnce({});
           await changed(await service.changeStatus({ id: job.id, body: RETRY }));
-          expect(
-            (await service.report({ id: job.id, body: { status: 'processing' } })).status,
-          ).toBe(200);
-          expect(
-            (await service.report({ id: job.id, body: { status: 'failed', error: ERROR } })).status,
-          ).toBe(200);
+          expect((await service.report({ id: job.id, body: start({ run }) })).status).toBe(200);
+          expect((await service.report({ id: job.id, body: fail({ run }) })).status).toBe(200);
         }
 
         expect(service.queue.enqueue.mock.calls.map(([entry]) => entry)).toEqual([

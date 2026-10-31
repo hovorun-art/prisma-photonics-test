@@ -119,7 +119,12 @@ import { WebhookJobHandler } from '../../infra/webhooks/webhook-job-handler.js';
       useFactory: (config: ExecutionConfig): JobQueueConsumer =>
         new BullMqJobQueueConsumer(
           { logger: new Logger('JobQueue') },
-          { redisUrl: config.redisUrl, concurrency: config.concurrency },
+          {
+            redisUrl: config.redisUrl,
+            concurrency: config.concurrency,
+            lockDurationMs: config.lockDurationMs,
+            stalledIntervalMs: config.stalledIntervalMs,
+          },
         ),
       inject: [EXECUTION_CONFIG],
     },

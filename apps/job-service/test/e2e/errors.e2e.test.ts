@@ -236,7 +236,11 @@ describe('job-service error responses and internal access', () => {
 
       await expectUnauthorized(await service.read({ id: job.id, authorization: null }));
       await expectUnauthorized(
-        await service.report({ id: job.id, body: { status: 'processing' }, authorization: null }),
+        await service.report({
+          id: job.id,
+          body: { status: 'processing', run: 1, attempt: 1 },
+          authorization: null,
+        }),
       );
       expect(await service.stored(job.id)).toEqual(job);
     });
@@ -247,7 +251,11 @@ describe('job-service error responses and internal access', () => {
 
       await expectUnauthorized(await service.read({ id: job.id, authorization }));
       await expectUnauthorized(
-        await service.report({ id: job.id, body: { status: 'processing' }, authorization }),
+        await service.report({
+          id: job.id,
+          body: { status: 'processing', run: 1, attempt: 1 },
+          authorization,
+        }),
       );
       expect(await service.stored(job.id)).toEqual(job);
     });

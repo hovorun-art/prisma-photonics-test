@@ -23,6 +23,8 @@ const DEFAULTS = {
   reportRetryMaxDelayMs: 5_000,
   jobServiceTimeoutMs: 5_000,
   shutdownGraceMs: 10_000,
+  lockDurationMs: 30_000,
+  stalledIntervalMs: 30_000,
 } as const;
 
 const baseEnv = new ZodBaseEnvSchema({
@@ -90,6 +92,12 @@ const ExecutionEnv = baseEnv
       .int()
       .positive()
       .default(DEFAULTS.shutdownGraceMs),
+    JOB_QUEUE_LOCK_DURATION_MS: z.coerce.number().int().positive().default(DEFAULTS.lockDurationMs),
+    JOB_QUEUE_STALLED_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .positive()
+      .default(DEFAULTS.stalledIntervalMs),
   })
   .refine((env) => env.EMAIL_SEND_MIN_MS <= env.EMAIL_SEND_MAX_MS, {
     path: ['EMAIL_SEND_MIN_MS'],
@@ -120,6 +128,8 @@ const ExecutionEnv = baseEnv
     reportRetryMaxDelayMs: env.JOB_REPORT_RETRY_MAX_DELAY_MS,
     jobServiceTimeoutMs: env.JOB_SERVICE_TIMEOUT_MS,
     shutdownGraceMs: env.JOB_EXECUTION_SHUTDOWN_GRACE_MS,
+    lockDurationMs: env.JOB_QUEUE_LOCK_DURATION_MS,
+    stalledIntervalMs: env.JOB_QUEUE_STALLED_INTERVAL_MS,
   }));
 
 /** Validates the environment with the shared base schema extended by the service's own fields. */

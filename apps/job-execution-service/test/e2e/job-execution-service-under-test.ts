@@ -48,6 +48,8 @@ export const TEST_CONFIG = {
   reportRetryDelayMs: 1,
   reportRetryMaxDelayMs: 2,
   shutdownGraceMs: 5_000,
+  /** The time limit job-service sends with a job, unless a test names another. */
+  maxProcessingMs: 30_000,
 } as const;
 
 /** The id the instance under test puts on every log line. */
@@ -275,6 +277,7 @@ export class JobExecutionServiceUnderTest implements Closable {
       result: null,
       error: null,
       groupId: null,
+      idempotencyKey: null,
       scheduledAt: null,
       startedAt: null,
       completedAt: null,
@@ -295,10 +298,15 @@ export class JobExecutionServiceUnderTest implements Closable {
     };
   }
 
-  /** job-service sends the job when it is read, then accepts its start. */
+  /** job-service sends the job with the test time limit when it is read, then accepts its start. */
   readAndStart(job: Job): void {
-    this.jobs.get.mockResolvedValueOnce({ job });
-    this.acceptsReport({ ...job, status: 'processing', attempts: job.attempts + 1 });
+    this.readAndStartWithin({ job, maxProcessingMs: TEST_CONFIG.maxProcessingMs });
+  }
+
+  /** Like `readAndStart`, with the time limit job-service sends named. */
+  readAndStartWithin(req: { job: Job; maxProcessingMs: number }): void {
+    this.jobs.get.mockResolvedValueOnce(req);
+    this.acceptsReport({ ...req.job, status: 'processing', attempts: req.job.attempts + 1 });
   }
 
   /** job-service accepts the next state report and answers with this job. */

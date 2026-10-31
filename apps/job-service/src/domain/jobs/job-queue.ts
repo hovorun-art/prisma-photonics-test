@@ -23,6 +23,17 @@ export interface JobQueue extends Closable {
    * cannot be reached within the configured timeout.
    */
   cancel(req: CancelJobQueueRequest): Promise<CancelJobQueueResponse>;
+  /**
+   * Where the entry of one attempt stands. Rejects with `JobQueueUnavailableError` when the queue
+   * cannot be reached within the configured timeout.
+   */
+  state(req: StateJobQueueRequest): Promise<StateJobQueueResponse>;
+  /**
+   * Replaces a finished entry of the attempt with a new one under the same id, or adds it when there
+   * is none. Adds nothing while a worker holds the entry. Rejects with `JobQueueUnavailableError`
+   * when the queue cannot be reached within the configured timeout.
+   */
+  requeue(req: EnqueueJobQueueRequest): Promise<RequeueJobQueueResponse>;
 }
 
 export interface EnqueueJobQueueRequest {
@@ -50,5 +61,23 @@ export interface CancelJobQueueRequest {
 }
 
 export type CancelJobQueueResponse = Record<string, never>;
+
+export interface StateJobQueueRequest {
+  jobId: string;
+  run: number;
+  attempt: number;
+}
+
+/**
+ * `waiting`: ready for a worker; `delayed`: not before its time; `active`: a worker holds it;
+ * `finished`: a worker took it and let it go (completed or failed); `missing`: no such entry.
+ */
+export type JobQueueEntryState = 'waiting' | 'delayed' | 'active' | 'finished' | 'missing';
+
+export interface StateJobQueueResponse {
+  state: JobQueueEntryState;
+}
+
+export type RequeueJobQueueResponse = Record<string, never>;
 
 export const JOB_QUEUE = Symbol('JobQueue');

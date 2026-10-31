@@ -1327,6 +1327,23 @@ link back to Groups. An id that is not a UUID SHALL NOT be sent to the API.
 - **WHEN** a user opens `/groups/abc`
 - **THEN** the page shows "Group not found" and a link back to Groups, and no request for that group is made
 
+### Requirement: The job page shows the idempotency key
+The Details list of the job page SHALL show an "Idempotency key" row with the job's key when the
+job has one, and no such row when the job has none. The submit form does not change in this
+respect: it offers no working key field and generates no key.
+
+#### Scenario: Job with a key
+- **WHEN** a user opens the page of a job that was submitted with an idempotency key
+- **THEN** the Details list shows "Idempotency key" with that key
+
+#### Scenario: Job without a key
+- **WHEN** a user opens the page of a job that has no idempotency key
+- **THEN** the Details list shows no "Idempotency key" row
+
+#### Scenario: Submit form unchanged
+- **WHEN** a user opens the submit page
+- **THEN** the idempotency key field is still shown disabled with its "Coming soon" tooltip, and no key is sent with a submission
+
 ### Requirement: The new group page holds one tab per job
 The new group page SHALL follow the submit page's layout without a request preview: a breadcrumb
 "Groups / New group", a row of tabs, one per job of the group, and the open tab's job form below.

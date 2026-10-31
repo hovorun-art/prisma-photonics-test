@@ -24,6 +24,7 @@ export const HTTP_STATUS_BY_ERROR_CODE: Readonly<Record<ErrorCode, HttpStatus>> 
   JOB_SERVICE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
   JOB_GROUP_NOT_FOUND: HttpStatus.NOT_FOUND,
   JOB_GROUP_NOT_EMPTY: HttpStatus.CONFLICT,
+  IDEMPOTENCY_KEY_CONFLICT: HttpStatus.CONFLICT,
   LOG_STORE_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
   // Thrown only inside the job log destination at startup; the row keeps the table complete.
   JOB_LOG_STREAM_UNAVAILABLE: HttpStatus.SERVICE_UNAVAILABLE,
