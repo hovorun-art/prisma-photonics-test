@@ -1,941 +1,182 @@
 # Design Decisions
 
-<!-- Draft: filled in as decisions are made; the final structure follows the task's template. -->
-
-## 0. Stack and Architecture
-
-**NestJS (API and worker).** The API and worker are two apps sharing modules (job types, database
-access, queue adapter). Dependency injection lets tests swap the clock, randomness and the queue
-for fakes. Nest has first-party BullMQ and Swagger integrations. Note: `@nestjs/microservices` only
-provides message transports (Redis, RabbitMQ, Kafka); it has no retries, delays or priority, so it
-does not replace a job queue. *Trade-off:* more boilerplate than Fastify or Express, and decorators
-need an SWC build step to work with Vitest.
-
-**React + Vite (web).** The UI is a dashboard behind an API, so server-side rendering adds nothing.
-A static SPA in its own container is the simplest to build and deploy. *Trade-off:* none significant
-for this scope.
-
-**REST + OpenAPI instead of tRPC.** tRPC would give end-to-end types between the API and our UI
-for free, but it couples clients to TypeScript and to our router. A job queue service is
-infrastructure that other services (in any language) should be able to call, so we expose a plain
-REST API described by OpenAPI (Swagger). *Trade-off:* request/response types for the UI must be
-shared through a workspace package or generated from the OpenAPI spec instead of being inferred
-automatically.
-
-**Postgres (state) + Redis (queue).** Postgres is the source of truth for job state, results and
-idempotency keys: durable, queryable, with constraints and transactions. Redis holds the queue (and
-carries the job log stream). Job log entries live in ClickHouse, see "Job log" below.
-*Trade-off:* two stores to keep consistent; how we do that is described in the sections below.
-
-**BullMQ behind our own queue interface.** The task allows any queue technology. Our goal was a
-running system first, so we use BullMQ for the low-level mechanics: atomic pickup, stalled-job
-detection, priority, delays and backoff. It sits behind a small interface of our own (enqueue,
-claim, complete, fail, cancel), so the API and job handlers do not depend on it, and its internals
-can later be replaced with hand-written Redis logic. What we still own: keeping Postgres in sync with
-the queue, the status lifecycle, idempotency, races (cancel vs pickup, retry vs a running worker),
-reconciling state after crash recovery, and the job log.
-*Trade-off:* BullMQ hides the lowest-level concurrency logic. We gained speed and reliability and
-gave up writing that logic ourselves. Each section below says which part is BullMQ's and which is
-ours.
-
-**Alternatives considered.**
-- *Custom Redis queue* (sorted sets + Lua): shows the most low-level logic, but is the slowest
-  option and the most likely to have bugs. It is a possible later step behind the same interface.
-- *RabbitMQ*: acks and redelivery built in, and priority queues work, but delayed jobs need a
-  plugin or TTL/dead-letter tricks, queue stats are harder to get, and it adds a heavier service.
-- *Postgres-only queue* (`FOR UPDATE SKIP LOCKED`): one store and no dual-write problem, but
-  polling load on the database and less separation between state and queue.
-- *Kafka*: a log, not a job queue. No per-message priority, delays or per-job acks; operational
-  overhead far beyond this task.
-
-**Health checks report only the service itself.** `GET /health` on job-service and on
-job-execution-service answers 200 `{ "status": "ok" }` while the process runs. It does not probe
-Postgres, Redis or the other service. If health checks included related services, services that
-wait for each other's health (compose `depends_on: service_healthy`, orchestrator readiness) could
-form a circular dependency: A waits for B to be healthy, B reports unhealthy because A is not up,
-and nothing ever becomes healthy. A failing dependency also would get the healthy service restarted,
-which does not fix the dependency. *Trade-off:* `/health` does not tell an operator that Postgres or
-Redis is down; that shows up as errors and logs on the requests that need them. An earlier version
-probed dependencies and listed live execution instances through heartbeats; we removed it as more
-complexity than this stage needs.
-
-**Job state has one owner: job-service.** Only job-service has database access.
-job-execution-service will read and change job state only through job-service's `/internal` API,
-never by writing the jobs table. Two services sharing one table is the shared-database
-anti-pattern: a schema change breaks both, and the Job entity's rules can be bypassed. Clients get a
-narrow external update (cancel from pending/scheduled, retry from failed); the system's own changes
-(status, attempts, errors, results, logs) go through a separate internal update method.
-*Trade-off:* field-level internal attributes (as in gRPC services with per-field permissions) would
-express this more precisely; a second method is simpler and enough here. Every state change costs
-an HTTP hop from the execution service; timeouts and retries for it are designed with the first job
-flow.
-
-**Calls from the worker to job-service: a timeout, then retries with p-retry.** In
-job-execution-service the port to job-service is `JobRepository` (`HttpJobRepository` over the
-internal API): to the worker it is simply where jobs are read and saved. A call that cannot reach
-job-service (network error, timeout or 5xx) is retried a configured number of times (3). The wait
-starts at a configured delay (500 ms), doubles each time up to a configured maximum (5 s), and is
-randomized (1–2×) so workers that lost job-service together do not hammer it together when it
-comes back. A 404 or 409 is an answer, never retried. Shutdown aborts a wait through the library's
-`AbortSignal`. *Why a library:* a hand-written loop was replaced; retry timing is generic plumbing,
-and we choose such libraries from usage data. Candidates (npm weekly downloads, latest release):
-`retry` 158.5M (0.13.1, 2021), **p-retry 71.6M (8.0.1, 2026-09)**, exponential-backoff 55.0M
-(3.1.3, 2025-10), async-retry 48.3M (1.3.3, 2021), promise-retry 36.1M (2.0.1, 2020), cockatiel
-2.9M (4.0.0, 2026-05), backoff 1.4M (2.5.0, 2016). p-retry is the most used maintained one, ships
-its own types as ESM, and is the only widely used one that takes an `AbortSignal`, which the
-shutdown needs. *Trade-off:* its jitter is a 1–2× factor, not "full" jitter, which spreads load
-slightly less; cockatiel would add a circuit breaker, but nothing needs one yet.
-
-**Five operations per feature, lifecycle rules inside `update`.** The job API, `JobService` and
-`JobRepository` each have exactly create, get, query, update and delete. Starting, completing and
-failing a job are not methods of their own: job-execution-service sends one internal `PATCH` with
-the target status, and `JobService.update` decides the next state from the stored job (start only
-from pending and count the attempt; complete only from processing and check the result against the
-job type; fail only from processing, then retry or fail for good). *Why:* a small, uniform surface
-that maps one to one onto REST and onto a later remote service. *Trade-off:* `update` is one method
-with a branch per status instead of named methods; the request body (a union keyed by status) is
-what names the step.
-
-**Concurrent state changes: compare-and-set in Postgres.** `JobRepository.update` writes only while
-the job's status and attempts still equal what `JobService` read (`UPDATE ... WHERE id = $1 AND
-status = $2 AND attempts = $3`); `delete` only while the status is a finished one. When two workers
-report a start for the same job at the same time, Postgres' row lock lets one `UPDATE` match and the
-other match nothing, which becomes 409 `JOB_STATUS_CONFLICT`. Attempts are part of the condition
-because a job can go processing → pending → processing (another worker took the retry) between a
-read and a write; status alone would not notice. *Trade-off:* every report reads before it writes
-(one extra query), which `update` needs anyway to validate the result and decide on a retry.
-
-**Retry rule owned by job-service; an attempt is counted on start.** The worker only reports
-`failed` with an error. job-service sends the job back to pending (and queues the next attempt)
-while attempts are below max attempts, otherwise it fails the job for good. Counting on start means
-a worker that crashes mid-job still uses up an attempt, so a job that kills its worker cannot loop
-forever. In job-api the retry is immediate; backoff delays come with the retry-backoff change.
-
-**Queue entries carry only the job id, one entry per attempt.** job-service puts
-`{ jobId }` on the BullMQ queue under the entry id `<jobId>_<run>_<attempt>`; the worker reads the job
-from job-service, so Postgres stays the only copy of job data and a deleted or changed job is seen
-at once. BullMQ ignores an `add` with an id it already has, so the same attempt is never queued
-twice, while a retry (the next attempt) gets its own entry. `run` is 1 until a client retries the
-job by hand (see "Cancel and retry by hand"). (`:` would read better, but BullMQ rejects it in
-custom ids.) Ids themselves come from Postgres (`gen_random_uuid()`).
-
-**Enqueue failure leaves the job pending, not the request failed.** A job is stored first, then
-queued. If Redis is down or slower than the configured timeout, the submit (or the retry report)
-still succeeds, the job stays pending and a warning with the job id is logged. The recovery pass
-(section 2) queues such a job again once it has been pending for the configured minimum age (30 s),
-within one more interval. *Alternatives:* deleting the row and answering 503 (simple, but the client must resubmit and
-may not); a transactional outbox (a row in the same transaction, relayed to Redis until it
-succeeds), which is the robust answer and the one we would take with more time. *Trade-off:* a
-window in which a job is pending but not queued.
-
-**Cancel and retry by hand: one route, the same compare-and-set.** `PATCH /v1/jobs/:id` takes
-`{ "status": "cancelled" }` or `{ "status": "pending" }`, the only two statuses a client may set
-(the worker's reports go through `/internal`). Cancel is allowed from `scheduled`, `pending` and
-`processing`; retry only from `failed`, and it starts the job over: zero attempts, error, result and
-times cleared, queued again. Both are written with the conditional `UPDATE` above, so a cancel that
-races a worker's report, or two retries at once, leave exactly one winner and a 409 for the other.
-A wrong current status is 409 too, also for a job already in the target status, so a client always
-learns whether its own request changed the job. *Why:* the concept names the client update as
-"cancelled from pending or scheduled, pending from failed"; one route keeps the API to the statuses
-a client may set. *Trade-off:* `PATCH` on the job resource now means a status change; the later
-`job-update` change (priority, schedule) has to share it or use its own route.
-
-**Cancelling a running job: beyond the task, through Redis pub/sub.** The task only asks to cancel
-pending or scheduled jobs; we also cancel `processing` ones, because a user who cancels expects the
-work to stop. job-service writes `cancelled` first, then publishes `{ jobId }` on the
-`job-cancellations` Redis channel (through `JobQueue.cancel`, a connection of its own because
-BullMQ 6's client has no typed `publish`). Every worker listens (`JobCancellations`); the one running
-the job aborts its handler through the `AbortSignal` the handlers already take, and reports nothing.
-A worker registers a job before it reports the start, so a cancel right after the start was accepted
-is not missed. *Why pub/sub:* it is instant and needs nothing per job; polling the job from the
-worker would be slower than most jobs (1-3 s) and add load; BullMQ's own cancellation of active jobs
-is a BullMQ Pro feature. *Safety net:* pub/sub is fire and forget. If a worker misses the message
-(reconnecting, Redis down when job-service publishes), the handler runs to its end and its
-`completed` or `failed` report gets 409, because the job is no longer `processing`; the worker logs
-that as a lost race. The job stays `cancelled`; only the work is wasted. A failed publish is only
-logged; the cancel still answers 200. A publish waits for its connection to be ready (just after
-start, or while it reconnects) only within the enqueue timeout and is never sent later: a late
-announcement could stop a later run of the same job, after a retry.
-
-**Retry by hand: a run counter keeps queue entry ids new.** A retried job starts again at attempt
-1, but `<jobId>_1` is still in Redis (finished entries are kept for inspection), and BullMQ would
-ignore the new entry. So each job has a `run` column (1, plus one per manual retry), not part of the
-public job, and entry ids carry it. Entries queued before the column existed (`<jobId>_<attempt>`)
-are still read, as run 1. *Alternatives:* removing the old entries before re-adding (fails while an
-entry is still `active` just after its failure report, and the add is then silently ignored), or a
-random suffix per retry (failure retries inside one run need it too, so it must be stored anyway).
-*Trade-off:* one internal column, and an entry id format the job-ui never sees.
-
-**Query: offset pages over indexed columns.** `GET /v1/jobs?limit&offset` returns newest first,
-ordered by `(created_at DESC, id DESC)` so jobs created in the same millisecond keep a stable order
-across pages. Indexes: `(created_at DESC, id DESC)` for this order, `(status, created_at DESC)` for
-status filters, `(type, created_at DESC)` for type filters, and `(status, updated_at)` for the
-recovery pass (jobs in one status since before an instant). Default and
-maximum page size are configuration; a larger `limit` is a 400, not silently clamped.
-*Trade-off:* offset paging gets slower on deep pages and can repeat or skip rows while jobs are
-being inserted; keyset (cursor) paging fixes both but makes a numbered table in the UI harder.
-
-**Query filters: repeated parameters, `total` over the matches.** `GET /v1/jobs` filters by
-`status` and `type`; several values repeat the parameter (`?status=failed&status=cancelled`), the
-form OpenAPI describes for query arrays and `URLSearchParams` builds. The two filters combine with
-AND, the values of one with OR, and `total` counts the matching jobs, so paging works over the
-filtered list. An unknown or empty value is a 400 naming the field rather than an empty page, so a
-typo is visible. The shared Zod schema turns one value or several into a list without duplicates,
-and the generated docs list the allowed values. *Alternatives:* comma-separated values (custom
-parsing, weaker docs); an empty page for unknown values (hides client bugs). *Trade-off:* the
-existing indexes serve one value per filter well; several values or both filters together read
-the matches and sort them, and `COUNT` reads every match. Fine at this task's volume; no new index
-was added, the demo seed's volume mode measures it, and sort order and cursor paging are planned
-as optional polish changes that will redesign the indexes around the sort key.
-
-**Queue statistics: a separate route, counted from Postgres.** The task asks for a "health check
-with queue statistics". `GET /health` stays a plain liveness answer of its own process, so the
-container healthchecks never depend on Postgres; the statistics are a separate public route,
-`GET /v1/stats`. They count job state in Postgres, the source of truth, not BullMQ's queue counts
-in Redis: the numbers then agree with the jobs list, and "failed" means failed for good (a failed
-attempt that will be retried is back in `pending`). The answer holds the jobs pending, processing
-and scheduled now; the jobs completed and failed within a rolling recent window (default 24 h);
-and the throughput, jobs completed within a short window (default 5 min) divided by its minutes.
-Both windows are config and are part of the answer, so a client can label them. One `SELECT` of
-`count(*) FILTER (...)` columns gives every number from the same snapshot in one round trip; a new
-`(status, completed_at)` index keeps the windowed counts from scanning every finished job, since
-the table only grows until jobs are deleted. job-ui polls the route at the jobs list's interval,
-and the header's "API online / offline" pill reads the same request. *Alternatives:* adding the
-counts to `/health` (couples healthchecks to the database); BullMQ's `getJobCounts` (cheap, but
-knows only queue entries, not final failures or history); a server-side cache of the counts.
-*Trade-off:* one counting query per open UI per poll interval, with no cache; a short window makes
-the throughput jumpy. The demo seed's volume mode measures the query, and a few seconds of cache is
-the next step if it matters.
-
-**Filter counts: faceted, on the statistics route, from one group-by.** The jobs list's status
-and type buttons show how many jobs each would list. The counts are faceted: status counts respect
-the chosen type and type counts the chosen status, so a button's number is the list's `total` after
-clicking it. They are a `counts` part of `GET /v1/stats` (optional `status` and `type` parameters,
-one value each; a repeated, empty or unknown value is a 400 `VALIDATION_FAILED`), not of the job
-list response: the list's answer stays one page, and the UI already polls the statistics once per
-interval, so the cards, the buttons and the header pill still share one request. The filters
-change only `counts`; the cards stay unfiltered. job-service reads every job once with
-`SELECT status, type, count(*) ... GROUP BY status, type` (at most 6 × 3 rows, one snapshot) and the
-use case folds the cells into the two facets, so the facet rule is plain code under unit tests and
-the SQL stays trivial. Counts cover all jobs over all time, unlike the cards' windows. The "All"
-counts are sums the UI adds up, not fields of the answer. *Alternatives:* counts in
-`GET /v1/jobs` (mixes a page with aggregates and runs them on every page turn); two filtered
-`GROUP BY` queries in SQL (the facet rule only an integration test can see, and two snapshots);
-several values per filter (the UI picks one; `GET /v1/jobs` keeps its repeated filters).
-*Trade-off:* the group-by reads every row of `jobs` on every poll of every open list. Fine at this
-volume, though not measured yet; if the demo seed's volume mode shows it slow, a `(status, type)`
-index for an index-only scan, then a counter table updated with each status change (or a few
-seconds of cache), would be next.
-
-**job-ui: filters live only in the URL.** `/jobs?status=failed&type=webhook` is the single source
-of the chosen filters: a filtered list can be shared, survives a reload, and each change is a
-history step, so Back restores the previous filters. A value that is not a known status or type is
-treated as All and never sent. The list's paging belongs to one set of filters and starts again at
-the first page on any change. *Alternative:* component or global state (lost on reload, not
-shareable). *Trade-off:* the header pill reads the filters from the URL too, so it shares the
-list's statistics request.
-
-**Limits in the shared contract, page sizes in config.** Priority and max-attempts ranges and
-defaults and the email field lengths are constants in the shared Zod schemas, so the API and the
-UI form validate with the same rules. Values that operators tune (page sizes, enqueue timeout) are
-environment config of job-service.
-
-**Job groups instead of a Batch job type.** The task lists a Batch job that "processes multiple
-items with a small delay each, tracks progress percentage, returns a summary". We answer it with job
-groups: a client submits many real jobs at once (say an email campaign) and follows them as one
-group. The items are ordinary jobs of any type, so each one gets the system's pickup, retries,
-priority and recovery, instead of a second, smaller job system living inside one batch job.
-job-service only gains bulk submit and an opaque `groupId` on every job; following a group (status,
-counts per child outcome) is a separate service, `job-group-service`, with its own Postgres schema.
-*Trade-off, said plainly:* there is no `batch` job type and the Job's progress percentage from the
-task's data model stays unused; a group's progress is its children's statuses, not a percentage on
-one job. A crash inside a group costs nothing extra: each child recovers like any job.
-
-**Bulk submit: all or nothing, one statement, one queue call.** `POST /v1/jobs/bulk` takes
-`{ jobs: [...] }`, at most a configured number (default 100). Every item is validated (schema, then
-the flight transit departure-day rule) before anything is stored; one bad item answers 400 with
-issues naming its position (`jobs.3.payload.to`) and stores nothing, so a client never has to work
-out which half of a campaign exists. The jobs are stored with one `INSERT ... RETURNING` (a single
-statement, atomic on its own) and queued with one BullMQ `addBulk` (one Redis `MULTI`), so a bulk
-costs one round trip to each store instead of one per job. The answer lists the jobs in request
-order: Postgres returns the rows of a multi-row `VALUES` in the order given, and job-service stamps
-the jobs one millisecond apart so the newest-first list keeps that order too (the last of 100 jobs
-is stamped 99 ms "in the future"). If the queue is down or slower than the enqueue timeout, the
-answer is still 201 and the jobs stay pending, as for a single submit. A Redis that only stalls may
-still add the entries after we gave up, so "not queued" means "not known to be queued": the job runs
-or is swept later, never twice, since the entry id is per attempt. *Alternatives:* per-item results
-(207-style), rejected because a half-created group is harder to reason about than a 400;
-N single inserts in one transaction (N round trips).
-
-**`groupId` is the caller's, unchecked.** Any job submission may carry a `groupId` (a UUID); job-service
-stores and returns it and filters by it (`GET /v1/jobs?groupId=`, one value, AND with status and
-type, served by a `(group_id, created_at DESC)` index) but gives it no meaning. *Trade-off:* any
-client can add jobs to any group; there is no authentication in this project to tie a group to its
-owner, and job-group-service only reads the field.
-
-**job-group-service: a separate app with its own schema, a client of job-service.** Groups live in a
-third backend (`apps/job-group-service`, port 3002), not in job-service: job-service stays the owner
-of jobs and knows nothing about groups, and the group logic could be deployed, scaled or replaced
-on its own. Its data is a `job_groups` table in its own Postgres schema `job_groups` of the shared
-database (same container; each app has its own Prisma schema, migrations and migration history,
-and neither reads the other's tables). It reads jobs only through job-service's public API, as any
-client would: no service token, no `/internal`, no Redis. *Alternatives:* a second database or
-container (more isolation, more to run for a demo); groups inside job-service (simpler, but two
-aggregates and their polling in one service).
-
-**Creating a group is empty; the client submits the jobs.** `POST /v1/groups` creates a group with
-no jobs and answers its id; the client then submits its jobs to job-service (bulk or one by one)
-with that id as `groupId`. If the submit fails, the client deletes the group: `DELETE /v1/groups/:id`
-is allowed only while job-service reports no job with its id (409 `JOB_GROUP_NOT_EMPTY` otherwise,
-503 when job-service cannot be asked). job-group-service never submits, cancels, retries or deletes
-jobs. *Trade-off:* creating and filling a group are two calls, and a client that dies between them
-leaves an empty group running forever. A delete can also race the client's own submit: the delete
-sees no jobs, removes the group, and a bulk landing a moment later carries the id of a deleted
-group. Both are accepted: the client deletes only after its own submit failed.
-
-**Polling job-service, three count queries per open group.** At a configured interval (2 s) the
-service reads its open groups (`running` and `failed`, see the status rule) a page at a time
-(keyset by id, so groups that finish during the pass do not shift the pages) and, per group, asks `GET /v1/jobs?groupId=…&limit=1` three times,
-reading only `total`: all jobs, `status=completed`, and `status=failed&status=cancelled`. The cost
-does not grow with the group's size. The three answers are not one snapshot (they run in parallel),
-so `total` is raised to at least `completed + failed` and a child counted in neither only delays
-the result by one tick; finished statuses are final, so no child is counted twice. A failed poll
-(job-service down, a bad answer) keeps the group's last state, is logged with the group id, and is
-tried again at the next tick; one group's failure does not stop the others. The timer skips a tick
-while the previous one still runs and stops, waiting for the tick in flight, before the database
-pool closes on shutdown. `GET /v1/groups/:id` answers from the stored state (with `checkedAt`), so
-it works while job-service is down and costs job-service nothing. The timer is `@nestjs/schedule`
-(7.1M weekly downloads, 12.0.2 of Sep 2026, own types, ESM), chosen over `set-interval-async`
-(1.9M), `toad-scheduler` (164K) and a loop on our kernel `Sleeper`. *Next step, not built:* an
-event topic (job-service publishes child status changes, the group updates itself) would remove the
-polling load and the up-to-one-interval delay, at the price of a second channel between the
-services, delivery guarantees and replay after downtime; polling needs none of that.
-
-**One instance.** job-group-service runs as a single instance; nothing shares the poll between
-instances. Two instances would double the load on job-service and are not fully safe: the stats
-write is one conditional `UPDATE ... WHERE status <> 'completed'` with
-`total = GREATEST(total, $new)`, so a slower writer cannot lower the total or reopen a completed
-group, but it could write an older `running` over a newer `failed` (fixed by the next tick). The step to more
-instances is claiming groups per tick with `FOR UPDATE SKIP LOCKED` (and a lease), not built.
-
-**The status rule.** A group is `running` while it has no jobs or while `completed + failed <
-total`; once it has jobs and every one is finished it is `completed` if all completed, otherwise
-`failed`. `total` is the highest count job-service ever reported for the group; `failed` counts
-failed and cancelled jobs plus jobs missing from that highest count (deleted through job-service
-before the group finished), so a deleted job can never leave a group running forever. A completed
-group is final: it is no longer polled, and jobs added, retried or deleted later do not change it.
-A failed group is still polled, so retrying its failed job makes it `running` again (`finishedAt`
-cleared) and it finishes again like any group; while it stays failed it keeps the time it first
-failed. *The cost:* a failed group nobody retries is polled forever, three count queries per tick.
-Stopping after a while, or the event topic above, would end that; neither is built.
-A failed job does not cancel its siblings. *Said plainly:* a group finishes as soon as the jobs
-seen so far are done, so a client that submits a campaign in several requests must send the next
-one before the first finishes; a job deleted before any poll saw it is never counted; and a group
-that never gets a job stays `running`.
-
-**Duplicate jobs in a group are not this service's concern.** If a client retries a submit whose
-answer it lost, or crashes and submits again, the group gets the jobs twice: they are real jobs in
-job-service and the group counts what job-service holds. Preventing that is the job of submission
-idempotency in job-service (planned as its own change), not of the group. Retries of one job do not
-duplicate it: a job is one row however many attempts it takes.
-
-**One request body limit, raised to 1 MB.** A full bulk of large jobs does not fit the Express
-default of 100 KB. A limit for the bulk route only would need a path-scoped JSON parser; Nest's
-`useBodyParser` is global, and Express 5 ships no types, so it meant a new dev dependency:
-`@types/express` (5.0.6, Oct 2026, ~89M weekly downloads) for `express.json`, or `@types/body-parser`
-(1.19.6, ~74M, typed for body-parser 1.x while 2.4.0 is installed). We chose no new dependency and
-one configured limit (`JOB_SERVICE_BODY_LIMIT_BYTES`, default now 1 MB) for every route.
-*Trade-off:* single submits and internal reports also accept bodies up to 1 MB; the contract's
-per-field limits still bound what is stored.
-
-**job-ui: polling, not push.** The jobs list and the job page fetch again every 2 s (TanStack
-Query `refetchInterval`); a failed poll keeps the last data on screen with a "Connection lost,
-retrying" note, and polling itself is the retry. *Alternatives:* Server-Sent Events or WebSockets
-push changes at once and cost less per idle tab, but need a change feed from job-service (Postgres
-`LISTEN/NOTIFY` or queue events) and reconnect handling. *Trade-off:* up to one interval of delay
-and one request per open page per interval; SSE is the planned upgrade if time allows.
-
-**job-ui: the whole design laid out now, unbuilt parts disabled.** Filters, search, Cancel/Retry,
-queue statistics, the health pill, scheduling and idempotency fields are in place but disabled with
-a "Coming soon" tooltip; each later change enables its part (the statistics cards and the API
-status pill are live since `queue-stats-service`, the status and type filters since
-`job-list-filters-ui`, Cancel and Retry since `job-status-change`: Cancel asks for confirmation,
-since a running job's work is lost; Retry runs at once). *Why:* reviewers see the target UI,
-and later changes only wire behaviour. *Trade-off:* visible controls that do nothing yet.
-
-**job-ui: the form validates with the API's own schema.** The submit form uses `react-hook-form`
-with `zodResolver` on the shared `CreateEmailJobRequest` Zod schema before sending (chosen over
-`@tanstack/react-form` for its reach: ~62M against ~6M weekly downloads), and maps an API `VALIDATION_FAILED` answer to
-the same fields, so client and server rules cannot drift. Messages shown for client-side errors
-come from the locale file, not from Zod. The `VALIDATION_FAILED` issues are read through a shared
-`ValidationFailedDetails` schema; an issue that matches no field is shown in the form's alert
-rather than dropped.
-
-**job-ui: one form shell, one payload section per job type.** The submit page renders the form of
-the chosen type (`/jobs/new?type=webhook`, so the link can be shared and Back works); each type
-supplies its fields, starting values, form schema, messages and request preview, and the shell owns
-execution settings, submit and API error mapping. A type switch starts a fresh form and carries
-Priority and Max attempts over. *Alternatives:* one form over the union of all types (awkward
-typing and per-type validation in `react-hook-form`), or a page per type (repeats the shell).
-*Trade-off:* a small generic layer, which pays off as transit and batch are added.
-
-**job-ui: a webhook body is typed as text.** The "Body (JSON)" field holds what the user typed; the
-form schema treats blank text as "no body" and otherwise parses it and checks it with the
-contract's `JsonObject`, so invalid JSON and non-objects are caught under the field before
-anything is sent. *Alternative:* a structured key/value editor, which cannot express nested JSON
-without much more UI. *Trade-off:* the preview shows the raw text while it is not valid JSON.
-
-**job-ui: errors are contained per page with `react-error-boundary`.** Each page sits in an error
-boundary inside the app frame, so an unexpected error, or a failed first load of the list or a job,
-replaces only that page with "Something went wrong" and a Reload button; the header keeps working.
-TanStack Query's `QueryErrorResetBoundary` makes Reload load the failed data again. *Alternatives:*
-react-router's `errorElement` (only in its data-router mode, which the app does not use) or a
-hand-written class component. *Why this library:* v6, ~20M weekly downloads, typed, React 19
-support, and the pattern TanStack Query documents. *Trade-off:* one more dependency.
-
-**job-ui: airports are picked from a searchable list built on `cmdk`.** The transit form's origin
-and destination fields are comboboxes over the bundled airport list (shadcn's Command in a
-Popover), so only codes job-service accepts can be entered; the search matches code, name, city
-and country by plain substring rather than `cmdk`'s fuzzy ranking, so `jfk` shows JFK and nothing
-else. *Why this library:* `cmdk` v1.1.1, ~46M weekly downloads, typed, ESM, and the base of
-shadcn's Command, which matches the other `components/ui` primitives. *Alternatives:*
-`@headlessui/react` (v2.2.10, ~10M weekly; not part of shadcn), `downshift` (v9.4.0, ~6M weekly;
-hooks only, all markup by hand), `react-select` (v5.10.2, ~12M weekly; its own emotion styling).
-A free-text IATA field as in the design was rejected: it lets users type codes the API rejects.
-*Trade-off:* one more dependency for one field.
-
-**job-ui: one `/api` prefix, routed by path to two services.** The browser calls everything under
-`/api`; nginx (and the Vite dev proxy) send `/api/v1/groups*` to job-group-service and every other
-`/api` path to job-service, the prefix stripped. The UI keeps one base URL and no CORS setup, and
-a route can move between services without a UI change. *Alternatives:* a second prefix
-(`/groups-api`) makes the browser know which service owns which route; calling job-group-service
-on its own port needs CORS and a second configured URL. *Trade-off:* the proxy config now holds a
-small routing table; the job-ui container starts once job-group-service has started (not when it
-is healthy), and while it is down only the group pages show their error states.
-
-**job-ui: a group's cells come from paging through its jobs.** The group page shows one cell per
-child job (design "BatchJob"). job-service has no per-group summary of job statuses, so the page
-reads `GET /v1/jobs?groupId=` page after page at job-service's maximum page size (100, the UI's
-`groupJobsPageSize`) on every poll, drops a job a shifted page repeats, and shows the jobs oldest
-first; the counts above the cells come from the group itself. *Alternatives:* a job-service route
-returning every child's id and status in one call (cheaper, but a backend change outside this UI
-change); showing cells only for the first page (no full picture). *Trade-off:* a group of N jobs
-costs N/100 requests per poll, fine for groups of hundreds; for much larger groups that summary
-route is the fix. The cells and the counts can differ for up to one poll, since the counts are as
-of the group's last check.
-
-**job-ui: creating a group is two calls to two services, undone on failure.** The new group page
-(`/groups/new`, one tab per job, each the submit page's form) creates an empty group in
-job-group-service, then sends every job in one bulk submit to job-service with the group's id. There
-is no transaction across the two services, so when the bulk is rejected the page deletes the group
-it just made (it has no jobs, so the delete is allowed) and shows the bulk's error. If that delete
-fails too (job-group-service or job-service down at that moment), the page still shows only the
-bulk's error and an empty `running` group with no jobs is left behind; trying again creates a new
-group. *Alternatives:* a single "create group with jobs" route in job-group-service that calls the
-bulk itself (one call for the browser, but the same two-service gap moves into the backend and the
-service would need to submit jobs, which it deliberately does not); retrying the delete or a cleanup
-sweep for old empty groups (more moving parts for a rare double failure). *Trade-off:* a rare stray
-empty group, visible in the groups list. The page allows at most `maxGroupJobs` jobs (100), kept
-equal to job-service's default bulk maximum (`JOB_SERVICE_BULK_MAX_JOBS`); if job-service is
-configured lower, its `VALIDATION_FAILED` on `jobs` reaches the page's alert. Each tab keeps its own
-form mounted (hidden when not open), so values and errors survive switching tabs; field ids carry a
-per-tab prefix so labels point at their own form.
-
-**Internal API protected by a shared service token.** Routes under `/internal` require
-`Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
-docs. *Trade-off:* a shared secret in environment variables is weaker than service identity (mTLS,
-or gRPC with per-service credentials), but needs no certificate setup. It is replaceable behind the
-guard.
-The token is checked twice: by an Express middleware for every `/internal` path, which runs before
-the body parsers, and by the controllers' guard. Without the middleware a call with no token but a
-malformed or oversized body was answered 400 or 413, which tells an unauthenticated caller how the
-body is parsed; now it is 401 like any other call without the token. *Trade-off:* two places apply
-the same check (both go through one `InternalAccess` port, so the rule itself is written once).
-
-**Unreadable request bodies: 415 or 400, never 500.** A body in an encoding or charset the body
-parser does not support is answered 415 `UNSUPPORTED_MEDIA_TYPE`; a body that declares a supported
-encoding (e.g. `br`) but cannot be decompressed is malformed and is answered 400
-`VALIDATION_FAILED`, like invalid JSON. Before, both reached the error filter as unknown errors and
-were answered 500. *Why:* a 500 says the server failed, so clients and alerts would treat a client
-mistake as an outage.
-
-**Contracts through shared Zod schemas, not Pact.** Every request, response and error body is a
-Zod schema in `packages/contracts`, used by the server for validation and OpenAPI and by the tests
-to validate stubs and fixtures. In one repository this catches contract drift at compile and test
-time. *Trade-off:* no consumer-driven contract tests; if the services were split into separate
-repositories, Pact (or published schemas) would be the next step.
-
-**Code structure: layers first, an interface for every class.** Each app has `domain/` (interfaces
-and types only), `infra/` (every implementation) and `app/` (NestJS entry points and wiring).
-Every class implements an interface; constructors take a deps object and, when configured, a
-params object; every method with inputs takes one request object and returns one response object.
-Logic shared between the services lives once: framework-free in `packages/kernel` (graceful
-shutdown, fatal-error handling), NestJS-bound in `packages/service-kit` (bootstrap, base config,
-logging, Redis, health). ESLint enforces the layers and the class shapes. *Why:* any feature or
-domain module can later move into its own service without rewrites, and named request/response
-objects keep signatures stable as fields are added. *Trade-off:* noticeably more boilerplate
-(request/response types, interfaces with a single implementation, factory wiring in modules) than
-idiomatic NestJS.
-
-**Tests: each case once, at the lowest level that can see it.** Schema rules (limits, types,
-`null`, every edge of a range) are tested in the contract schemas' unit tests; one class's logic
-(state rules, retry arithmetic) in its unit test; an adapter against its real dependency
-(Testcontainers) in its integration test. The per-app e2e tests check each spec scenario once
-through HTTP, plus what only the running app can show: races between two callers, the order of
-middleware (token before body), body limits and a retry cycle through the routes. In job-service
-they run the real `AppModule` with the bootstrap's own setup steps on a migrated Postgres
-Testcontainer, and mock the services around it at our ports (the job queue and the Redis
-connection) with `mockDeep`. A queue outage is a stub that rejects once, not a second app pointed at
-a dead address. job-execution-service's e2e tests run its `AppModule` the same way, without a
-database: queue entries are handed in through the callback the app registers with the mocked queue
-consumer, and job-service's internal API, Redis, the sleeper and randomness are mocked, so handler
-times, failure draws and the shutdown grace period run without waiting. Their log lines (instance id
-on every line) are collected through a log destination that `LoggingModule` accepts for this. The
-tests are split into files by spec area, sharing one small setup class instead
-of a folder of launchers, fixtures and probe controllers. A separate reviewer agent
-(`test-case-reviewer`) checks each test area for missing corner cases and for duplicates of lower
-levels. *Trade-offs:* job-service's shutdown is tested in the test process (`app.close()` closes
-the database, the queue and Redis once); no test sends SIGTERM to a real job-service process or
-checks its exit code, so the signal wiring is covered only by service-kit's unit tests; the same
-holds for job-execution-service, whose "takes no new entries, waits for running ones" is the mocked
-consumer's behaviour here and is shown for real by the consumer's integration test and the system
-e2e. Nest's logger is process-wide, so all apps started in one e2e file write to one list of log
-lines, and the start log line is checked in the bootstrap's unit test, not by the e2e. Jobs in
-states no route can create are seeded through the app's own repository, so a mapping bug there would
-affect the seeded data and the read-back alike (the repository's integration test guards the
-mapping). Each e2e file starts its own Postgres container, which costs a few seconds per file and
-loads Docker when all suites run at once.
-
-**One large commit for the scaffold, small commits after it.** The task asks for small, clean
-commits, and the feature work follows that. The project scaffold (workspaces, tooling, shared
-packages, both services, Docker, CI, test levels) is deliberately one commit. While the
-infrastructure was being set up and the AI workflow tuned (code rules, layer and class lint rules,
-test levels, agent instructions), the same files were rewritten several times: the module layout
-moved to layers first, health went from dependency probes and heartbeats to a plain 200, and
-duplicated code moved into shared packages. Committing each intermediate state would have recorded
-mostly churn that the next step overwrote. *Trade-off:* the scaffold's history is not reviewable
-step by step; the reasoning behind each turn is kept instead in this file, in the OpenSpec change
-(`openspec/changes/project-scaffold/`: decisions, design and tasks) and in the AI chat logs.
-
-**One error shape for every job type (webhook failures).** The UI design shows a failed webhook's
-error as `{ code, message, status, attempt, retryable }`. We keep the shared
-`JobError { code, message, details }` instead: the HTTP status of the failed call goes into
-`details.statusCode`, the attempt number is the job's `attempts`, and "retryable" is
-`attempts < maxAttempts`, so the UI derives both from fields every job already has. *Why:* one
-error schema for all job types, and no second copy of state the job already holds. *Trade-off:*
-`details` is untyped per job type, so the UI must read `details.statusCode` defensively. The webhook
-type was added to job-service one change before its handler in job-execution-service
-(`webhook-job-execution`), so for one commit a queued webhook job failed as `UNSUPPORTED_JOB_TYPE`.
-
-**Simulated webhook calls.** A webhook job never calls its URL. The handler waits a fixed
-configured time (`WEBHOOK_CALL_MS`, 1500 ms), then fails the attempt at the configured rate
-(`WEBHOOK_FAILURE_RATE`, 0.2) with a random 500, 502, 503 or 504, or answers 200 with
-`{ received: true, requestId }`. The failure is drawn after the wait, so a failed call costs as much
-time as a real one; the wait and the draw come through the `Sleeper` and `Random` ports, so tests
-set the outcome. *Why:* the concept asks for a simulated webhook with random failures to exercise
-retries; a fixed wait keeps the processing state easy to watch. *Trade-off:* with the default rate
-and 3 attempts about 0.8% of webhook jobs fail for good, which is the point; set the rate to 0 for
-demos that need every job to succeed.
-
-**Handlers return expected failures instead of throwing them.** A `JobHandler` returns
-`{ outcome: 'completed', result }` or `{ outcome: 'failed', error }`, and the worker reports the
-error as is, `details` included. Thrown errors stay for the unexpected (`DomainError` code, or
-`HANDLER_ERROR`). *Why not a `DomainError` with a new code:* `ERROR_CODES` is the closed list of API
-errors, each mapped to an HTTP status by the exception filter; `WEBHOOK_HTTP_ERROR` is data about a
-job attempt, not an answer of our API, so it lives with the job failure codes of job-execution-service
-(`WEBHOOK_JOB_ERROR_CODES` next to `JOB_ERROR_CODES`). *Trade-off:* two failure paths in the worker,
-one for returned and one for thrown failures; both end in the same `failed` report.
-
-**Flight transit: a bundled airport list in the contracts.** A transit job names two airports from
-a static list of 56 major hubs on every inhabited continent (`AIRPORTS` in `packages/contracts`,
-with IATA code, name, city, country, coordinates and IANA time zone). The payload schema accepts
-only those codes (`z.enum`), so `lhr`, `LH` and `XXX` all answer 400 on the field, and OpenAPI
-lists the allowed codes. *Why:* the task forbids an external API, and one typed constant serves
-job-service's validation, the later report generator and the UI's airport pickers alike. *Why not a
-JSON file loaded at runtime:* it would need a loader in the browser and would lose the literal
-union of codes. *Trade-off:* adding an airport means a release of the contracts, and a 56-value
-enum makes the OpenAPI document and the error message long.
-
-**Flight transit: the departure-day rule runs in job-service, in UTC.** A transit job is accepted
-while its `departureDate` (UTC) is not over at job-service's time: today passes, yesterday answers
-400 on `payload.departureDate`. The shared schema only checks the form (`YYYY-MM-DD`, a real
-calendar date); `JobServiceImpl.create` checks the day against the injected `Clock` and throws
-`InvalidJobPayloadError` (`VALIDATION_FAILED`, so the API answer looks like any schema failure).
-*Why not a Zod refine reading the time:* the contracts are shared by the browser and stay free of
-time, and a schema that reads `new Date()` cannot be tested deterministically. *Trade-off:* a client
-late in its local evening may already be on the next UTC day (or still on the previous one), so
-"today" is UTC's, not the user's.
-
-**Flight transit: job-service checks the report's shape, not its content.** A completed transit
-job's report must match `FlightTransitJobResult` (coordinates in range, no negative numbers, at
-least two path points and two waypoints), but job-service does not check that it names the
-payload's airports or date. *Why:* as for webhook, job-service owns state and shape; the worker owns
-the content it generates. *Trade-off:* a buggy generator could store a report for the wrong route;
-its own tests guard that. The type was added one change before its handler
-(`flight-transit-job-execution`), so for those commits a queued transit job failed as
-`UNSUPPORTED_JOB_TYPE` after its attempts. Postgres
-stores the type as `flight-transit`; Prisma names the enum value `flight_transit` (no `-` allowed),
-so the repository maps between the two.
-
-**Flight transit: a made-up flight on the real great circle.** job-execution-service generates the
-report from the bundled airports alone. The distance is the great-circle distance on a 6371 km
-sphere; the path is the configured number of evenly spaced points on that great circle
-(`FLIGHT_TRANSIT_PATH_POINTS`, 64), with longitudes wrapped into [-180, 180] on routes across the
-antimeridian. The flight leaves at a random whole five minutes of the departure date in the origin
-airport's own time zone. The aircraft fits the distance: a narrow-body (A320neo, B737 MAX) below
-`FLIGHT_TRANSIT_LONG_HAUL_KM` (4000 km), a wide-body (A350-900, B787-9, B777-300ER) from there on,
-each with its own cruise speed and altitude; flight number and registration are drawn from small
-bundled lists. The waypoints follow a climb-cruise-descent profile (`FLIGHT_TRANSIT_CLIMB_KM` 200,
-`FLIGHT_TRANSIT_DESCENT_KM` 250, `FLIGHT_TRANSIT_CRUISE_WAYPOINTS` 4): Departure, Top of climb,
-Cruise 1..N, Top of descent, Arrival; a flight shorter than climb plus descent (LHR-CDG) gets a
-single lower `Peak` instead. Speed changes linearly on climb and descent, so `durationMin` and every
-waypoint's time come from the same profile, and the last waypoint lands exactly at `arrivalAt`.
-*Why:* the map needs a plausible route and hover details that agree with each other, not real
-schedules; all randomness goes through the `Random` port in a fixed draw order, so every scenario is
-pinned in unit tests. *Trade-off:* every attempt draws a new report (no seed), so a retried job may
-show a different flight than a failed earlier attempt would have; only the completed report is
-stored. The generator (`TurfTransitReportGenerator`) sits behind its own `TransitReportGenerator`
-port, so the simulated wait and failure are tested apart from the geometry, and a real data source
-(`flight-transit-real-data`) can replace it later.
-
-**Flight transit: simulated data-source failures.** Like webhook, a transit attempt waits a fixed
-configured time (`FLIGHT_TRANSIT_GENERATE_MS`, 2000 ms) and then fails at the configured rate
-(`FLIGHT_TRANSIT_FAILURE_RATE`, 0.1) with `FLIGHT_TRANSIT_DATA_UNAVAILABLE` ("Flight data for
-LHR-JFK is unavailable", details `{ origin, destination }`), as if an upstream flight-data source
-had nothing for the route. *Why:* retries are exercised on this type too; a lower rate than webhook
-keeps most transit jobs completing on the first try. *Trade-off:* about 0.1% of transit jobs fail for
-good with 3 attempts; set the rate to 0 for demos. Found while building it: the job a handler gets
-was read before job-service counts the attempt on start, so handlers now also receive the queue's
-attempt number for their log lines instead of reading the stale `job.attempts`.
-
-**Flight transit: libraries for time zones and geometry.** Node 26 has no native `Temporal`, so a
-local time in an IANA zone becomes a UTC instant with `@date-fns/tz` (1.5.0, May 2026, ~41.5M weekly
-downloads, own types, ESM); chosen over `temporal-polyfill` (1.0.6, ~6.7M, the standard API but
-young) and `luxon` (3.7.2, ~57.7M, but a larger library with its own date type and separate types).
-The great-circle distance and the points along the route come from `@turf/distance` and
-`@turf/along` (7.4.0, Aug 2026, ~6.3M and ~3.0M weekly downloads, own types, ESM); chosen over
-`@turf/great-circle` (~2.4M, gives the whole line at once but splits it into a MultiLineString at the
-antimeridian, and still needs `@turf/distance`) and `geolib` (~0.86M, CJS, no point-along-route helper).
-Turf measures in radians here so the spec's 6371 km radius holds (its own kilometres use 6371.0088).
-
-**Job log: a store made for logs (ClickHouse).** Every step of a job's life and every attempt gets
-log entries (job id, attempt, level, message, metadata, time, source and worker instance), readable
-at `GET /v1/jobs/:id/logs` and shown on the job page. Logs are a different kind of data from job
-state: append-only, written far more often than read, read per job in time order, and removed by
-age. So they are stored in ClickHouse, not Postgres: column storage with high compression, fast
-batch inserts, `ORDER BY (job_id, position)` makes "one job's entries in order" a primary-key range
-read, and a `TTL` clause removes entries after the configured retention (`JOB_LOG_RETENTION_DAYS`,
-30); reads also skip entries past it, since the TTL only applies when ClickHouse merges. Deleting a job leaves its entries to that retention (the route answers 404 once the job is
-gone), since deleting rows is costly in a store built for appends. *Honestly:* at this task's volume a Postgres table would do; ClickHouse is here to show how the
-log would scale beyond it. *Alternatives:* a Postgres table partitioned by time (no new technology,
-partitions by hand), TimescaleDB (Postgres with retention policies), Loki (cheap, but a job id as a
-label has far too many values for it), Elasticsearch (full-text search we do not need, heavy).
-*Trade-off:* one more container (~0.5-1 GB RAM) and a second client library. The client is
-`@clickhouse/client` (1.24.1, Oct 2026, ~4.55M weekly downloads, own types, CJS and ESM), the
-official one; chosen over `clickhouse` (2.6.0, last release 2022, ~49k) and
-`@depyronick/clickhouse-client` (2.1.0, ~1.4k). Its tests use `@testcontainers/clickhouse` (12.2.1,
-~349k).
-
-**Job log: owned by job-service, for now.** The log is its own feature (`domain/job-log`,
-`infra/job-log`, `app/job-log`) behind `JobLogStore`, `JobLogWriter` and `JobLogService`, but it runs
-inside job-service, and job-ui reads it through job-service's API. *Trade-off:* this saves
-scaffolding a fourth service. The better design is a separate log service with its own API and
-store; the producers would not change, since they only append to a stream.
-
-**Job log: entries come from the existing log lines.** There is no second logging API. Every pino
-line at info or above that names a job (`jobId`) also becomes a job log entry: pino writes to its
-normal output and, through its built-in `multistream`, to a destination that appends the entry to a
-Redis Stream. Level and message come from the line, `attempt` and `instanceId` become entry fields,
-and the other fields become metadata after the usual redaction. An error keeps only its type and
-code, never its message or stack, since those can carry internal details such as a host; the full
-error stays in the service's own log. *Why:* one call per step, so the job log and the operator log
-never disagree. *Trade-off:* a log line written for operators is now also something API clients
-read, so lines that name a job were reviewed for what they carry.
-
-**Job log: written asynchronously, in batches, once.** Writing an entry never blocks or fails a
-job: the destination appends to the stream without waiting (its own Redis connection, no offline
-queue, no retries). job-service reads the stream through a consumer group and stores up to
-`JOB_LOG_BATCH_SIZE` (1000) entries or what arrived within `JOB_LOG_FLUSH_INTERVAL_MS` (1 s) in one
-insert, and confirms them on the stream only after the insert. While ClickHouse is down the writer
-retries the same batch with a growing wait (`JOB_LOG_STORE_RETRY_DELAY_MS` 500 up to
-`..._MAX_DELAY_MS` 30000; both the batch retry and the retry of a failed round are `p-retry`
-without a limit, as in job-execution-service, and stopping the writer ends a wait) and reads nothing new, so entries wait in Redis; the log route answers 503
-`LOG_STORE_UNAVAILABLE` meanwhile, and every other route keeps working. A ClickHouse that is down at
-startup delays the log, not the service: the writer creates the table itself, with the same retry,
-and the consumer group starts at the beginning of the stream, so entries written before it existed
-are still stored. Only connection errors and timeouts count as "store unavailable"; an SQL error
-is a bug and surfaces as a logged 500, not a 503. Two exceptions to "errors are handled by class
-or code, never by message", both because the library gives no class or code: the ClickHouse client
-raises its request timeout as a plain `Error('Timeout error.')`, so that exact text (one constant)
-marks a timeout as "store unavailable"; and `RedisJobLogStream` recognises the Redis replies
-`BUSYGROUP` (the group exists) and `NOGROUP` (the group is gone) by the error code word that starts
-the reply, which is Redis's own error code (ioredis exposes no `code` field).
-*No duplicates:* a batch read again after a writer crash is the same rows, and the table is a
-`ReplacingMergeTree` keyed by job, position and entry id, read with `FINAL`, so each entry appears
-once. *Order:* entries are ordered by their stream id, which Redis assigns on arrival, not by the
-producers' clocks; the cursor of the log route is that id, so a client polling for newer entries
-never skips one. That holds because one writer stores at a time: a lease in Redis
-(`JOB_LOG_WRITER_LEASE_MS`) makes other job-service instances wait. *Where it can lose entries:*
-when Redis is down while a line is written (the entry is dropped and a warning goes to the normal
-log), and when the stream is trimmed past entries not stored yet (`JOB_LOG_STREAM_MAX_LENGTH`,
-100000, trimmed approximately). *Scaling path:* several streams sharded by job id, each with its own
-writer, instead of the single lease.
-*Main-thread cost:* writing and storing never wait on I/O (the Redis append is fire and forget; the
-writer's reads, inserts and retry waits are async). The synchronous work is the producer's parse,
-Zod check and stringify of each line inside pino's write (tens of microseconds per job log line, on
-the logging call in both services) and the writer's parse and validation of each batch (a few
-milliseconds per batch of up to 1000, on job-service's thread). At this task's volume that is not
-worth a worker thread; the ways out are pino's worker-thread transport for the producer, or the
-writer in its own process (the separate log service).
+The stack in one line: NestJS services in TypeScript, Postgres for job state, Redis with BullMQ for
+the queue, a React UI; the services and how they talk are in the [README](README.md#architecture).
+The rule behind most answers below: **Postgres decides, the queue only delivers.** BullMQ is fast at
+handing out work, but every decision about a job's state is one conditional write in Postgres, made
+by job-service, the only service with database access.
 
 ---
 
 ## 1. Job Pickup Strategy
 
-**Approach chosen:** two layers. BullMQ hands each queue entry (one per attempt, id
-`<jobId>_<run>_<attempt>`) to one worker at a time: its atomic move from waiting to active is what spreads
-work over instances and over the in-process concurrency slots (5 per instance by default). That
-alone is not trusted to prevent a double run, so the worker then asks job-service to start the job
-(`PATCH /internal/v1/jobs/:id` with `processing` and the entry's run and attempt). job-service reads
-the job, checks it is `pending` or `scheduled` in that run and that the attempt is the next one, and
-writes the start in one conditional `UPDATE` that only matches while the job still has the status
-and attempts job-service itself just read (compare-and-set). A start that loses the write is read
-again: if the job is now `processing` in that same run and attempt, the start answers 200 (the same
-worker repeating a start whose answer it lost); anything else is 409, and the worker drops the entry
-without running anything. Before starting, the worker reads the job and skips it when it is no
-longer startable (finished, cancelled, deleted, or already started), so stale entries cost one read.
-Every later report (`completed`, `failed`) also names its run and attempt, and job-service refuses
-one that is not the job's current attempt, so a worker that was declared lost (section 2) can never
-complete or fail the attempt that replaced it.
+**Approach chosen:** two layers. BullMQ hands each queue entry (one per attempt) to one worker at a
+time through its atomic move from waiting to active. That alone is not trusted. Before running, the
+worker asks job-service to start the job, naming the entry's run and attempt; job-service writes the
+start as a compare-and-set (`UPDATE ... WHERE status = <what it just read> AND attempts = <what it
+just read>`). One writer wins; the loser gets 409 and drops the entry without running anything.
+Every later report (`completed`, `failed`) names its attempt too, so a worker that was declared lost
+can never finish the attempt that replaced it.
 
-**Why:** BullMQ's pickup is fast and battle-tested, but a queue entry is not the source of truth;
-the job's real state lives in Postgres. Putting the final "may I run this?" decision into one
-conditional write in Postgres makes duplicate-free execution independent of queue behaviour, timing
-or the number of instances. BullMQ never runs an entry twice by itself here: its own retries are off
-(one try per entry), and a stalled entry is never redelivered (`maxStalledCount: 0`, section 2);
-job-service owns the retry rule and queues a new entry for the next attempt.
+**Why:** a queue entry is not the source of truth; the job in Postgres is. Putting the final "may I
+run this?" into one conditional write makes duplicate-free execution independent of queue
+behaviour, timing or the number of workers. BullMQ's own retries are off and a stalled entry is
+never redelivered, so the queue never runs an entry twice by itself either.
 
-**Proof:** an integration test runs two of our queue consumers on one real Redis and hands them 40
-entries: every entry is executed exactly once, and both consumers take some. Another holds an entry
-in a worker that stops renewing its lock and shows the second worker never runs it. In job-service,
-two simultaneous starts of one pending (and of one scheduled) job both answer 200 and leave exactly
-one attempt and one start time, through the real database write. The system e2e submits 60 jobs to
-three execution instances: each completes with exactly one attempt, the workers' own logs show each
-picked up once, and more than one instance took part.
+**Trade-offs:** every job costs two extra calls to job-service before it runs (read, start), and a
+job-service outage stops all progress, since workers never touch the database. In return there is
+one place that decides a job's state. Proven by tests: two consumers on one real Redis run 40
+entries exactly once; two simultaneous starts of one job leave one attempt; the system e2e runs 60
+jobs on three workers, each exactly once.
 
-**Trade-offs:** every job costs two extra calls to job-service before it runs (read, start). A
-worker never touches the database, so a job-service outage stops all progress; calls are retried a
-configured number of times, then given up. Ordering across the queue is BullMQ's: higher priority
-first, first in first out within one priority (section 3).
-
-**Idempotent submission.** The task's sixth critical detail. A submission (single, or each item of a
-bulk) may carry an `idempotencyKey` of 1–255 characters in its body; a body field rather than an
-`Idempotency-Key` header, so each bulk item can carry its own and the key is stored and shown with
-the job. The key is unique on the jobs table, so Postgres, not a read-then-write, decides that one
-key holds one job; it stays taken as long as its job exists and is freed when the job is deleted
-(nothing expires on a timer). With the key job-service stores a fingerprint of the request: SHA-256
-of the canonical request (type, payload, priority, max attempts, scheduled instant, group; defaults
-applied, timestamps normalised to UTC, object keys sorted), serialised with `safe-stable-stringify`
-(3.0.0, 2026-10-15, ~91.5M weekly npm downloads, own types; chosen over fast-json-stable-stringify,
-more downloads but last released in 2019, json-stable-stringify and canonicalize). A repeated
-submission with the same fingerprint answers **200** with the existing job in its current state (201
-means "created"); the same key with a different request answers **409 `IDEMPOTENCY_KEY_CONFLICT`**
-with the existing job's id, because silently returning another job would hide a client bug. The
-fingerprint, not the stored job, is compared, since a backoff retry rewrites the job's
-`scheduledAt`. The key is looked up before the time-dependent rules, so a replay of a request that
-was valid when first sent (a flight transit whose departure day has passed since) still answers 200.
-Two simultaneous submissions with a new key create one job: the loser's insert hits the unique index,
-re-reads and answers 200. In a bulk, items whose key matches answer their existing job at their
-position, the others are created, and the bulk answers 201 if it created one, 200 if none; a
-conflicting key rejects the whole bulk (nothing stored), and a key repeated within one bulk is a
-400. A bulk that keeps losing key races to concurrent bulks (three tries) answers a generic 500,
-logged; no public code for a race that needs several bulks to collide on one key within
-milliseconds. *Trade-offs:* keys are one namespace for every client (there is no authentication to
-scope them); a key is remembered for the job's whole life, so a client cannot reuse it for a new
-job without deleting the old one; the fingerprint and key cost two columns.
+**Idempotency (the sixth critical detail).** A submission may carry an `idempotencyKey`. The key is
+unique in the jobs table, so Postgres, not a read-then-write, guarantees one job per key, also for
+two simultaneous submissions. With the key we store a fingerprint of the request: the same key with
+the same request answers 200 with the existing job; the same key with a different request answers
+409 `IDEMPOTENCY_KEY_CONFLICT`, because silently returning another job would hide a client bug.
+*Trade-off:* keys are one namespace for all clients (there is no authentication to scope them), and
+a key stays taken for as long as its job exists.
 
 ---
 
 ## 2. Worker Crash Recovery
 
 **Approach chosen:** no heartbeat of our own. BullMQ's lock on an active entry is the worker's
-liveness signal: a living worker renews it every half lock duration (`lockDuration` 30 s), and any
-worker's stalled check (`stalledInterval` 30 s) moves an entry whose lock expired out of `active`.
-With `maxStalledCount: 0` BullMQ 6.5.1 marks such an entry with a deferred failure and fails it,
-unrun, at the next worker that takes it; a stalled entry is never run again. job-service then
-reconciles Postgres with the queue in one **recovery pass** every 30 s, over jobs that have been in
-their state for at least 30 s (so a submit whose enqueue is still in flight is not touched), in
-bounded batches:
-- a `pending` job, or a `scheduled` one whose time has passed, with no live entry (waiting, delayed
-  or held) for its next attempt is queued again; an entry of that attempt that already finished is
-  replaced under the same id;
-- a `processing` job whose start is older than its type's maximum processing time plus one interval
-  fails its attempt with `JOB_TIMEOUT`, whatever its entry;
-- a `processing` job whose current entry exists but is no longer held (back in waiting after a
-  stall, failed or completed) fails its attempt with `WORKER_LOST`;
-- a `processing` job with no entry at all (Redis lost its data while the worker may still run it) is
-  left to the time limit.
+liveness signal: a living worker renews it, and an entry whose lock expired is taken out of
+`active` and never run again. job-service then **reconciles Postgres with the queue** in a recovery
+pass every 30 s:
+- a `processing` job whose entry is no longer held fails its attempt with `WORKER_LOST`;
+- a `processing` job running longer than its type's time limit fails its attempt with `JOB_TIMEOUT`;
+- a `pending` job, or a `scheduled` one whose time has passed, with no entry on the queue is queued
+  again (an enqueue that failed, or Redis that lost its data).
 
-A failed attempt goes through the same `JobService.update` a worker's failure report uses, so one
-rule decides: while attempts remain the job is `scheduled` for its next attempt after the retry
-delay (section 4), otherwise it fails for good. That write is conditional on the state the pass
-read, so a worker report or another job-service instance that changed the job first wins, and the
-pass logs the refusal at info level and moves on. Every recovery is logged at warn level with the
-job id, run, attempt and reason, and shows in the job's log. A queue outage ends the pass with one
-warn line instead of one timeout per job.
+A failed attempt goes through the same rule as a worker's own failure report: retried with backoff
+while attempts remain (section 4), failed for good otherwise. The write is conditional, so if a
+worker's report arrives first, it wins.
 
-The time limit (email 30 s, webhook 30 s, flight transit 60 s; configured in job-service only) also
-reaches the worker with the job it reads: the worker aborts a handler that runs longer and reports
-`JOB_TIMEOUT` itself. The pass only acts one interval later, so in normal operation the worker's own
-report wins and the pass is the backstop for a worker that is gone. A cancel or a shutdown still
-stops a handler without any report; only the timeout reports.
+**Why:** the worker changes state only through job-service, so it holds nothing worth saving; what
+a crash loses is the attempt it was running, and Postgres knows that attempt. One comparison of
+Postgres with the queue covers every way a job gets stuck: a killed worker, a shutdown past its
+grace period, a report that never arrived, a failed enqueue, lost Redis data.
 
-**Why:** state is changed only through job-service, so the worker holds nothing that needs saving;
-what a crash loses is the attempt it was running, and Postgres knows that attempt. BullMQ already
-renews and checks a lock per entry, so a heartbeat of our own would be a second liveness protocol
-with its own timeouts. Comparing Postgres with the queue from job-service covers every way a job
-gets stuck with one mechanism: a crashed or killed worker, a shutdown past its grace period, a start
-or result report that never arrived, an enqueue that failed, and Redis losing its data.
+**What happens if a worker crashes mid-job:** its lock stops being renewed; another worker's stalled
+check takes the entry out of `active`, and the next recovery pass fails the attempt with
+`WORKER_LOST`, about one to one and a half minutes after the crash with the default timings. The job is retried after its backoff delay on a living worker. The
+attempt was counted when it started, so a job that crashes its worker every time uses up its
+attempts and fails instead of looping. The system e2e kills one of three workers with `docker kill`
+mid-run: every job completes, the lost ones on a second attempt.
 
-**What happens if a worker crashes mid-job:** its lock stops being renewed; within one lock duration
-plus one stalled interval another worker's stalled check takes the entry out of `active`, and the
-next recovery pass fails the attempt with `WORKER_LOST`. With the defaults that is about one to one
-and a half minutes after the crash, plus the retry delay (5–30 s for a first retry) before the next
-attempt runs on a living worker. The attempt was counted when it started, so a job that kills its
-worker every time uses up its attempts and fails instead of looping. On SIGTERM a worker still stops
-taking entries and lets running jobs finish and report for up to the grace period (10 s); a job
-still running then is recovered the same way. The system e2e kills one of three instances with
-`docker kill` while it runs jobs: every job completes, the lost ones on a second attempt, and
-job-service logged `WORKER_LOST` for them.
-
-**Trade-offs:**
-- *At-least-once, not exactly-once.* A worker that was only slow (its lock expired while its event
-  loop was blocked), or one whose result report never reached job-service, has its attempt failed and
-  the job runs again; its late report is refused by the attempt check. Exactly-once would need the
-  handler's side effect and the report in one transaction, which a worker without a database cannot
-  have; handlers that touch the outside world should be idempotent.
-- *No worker alive.* BullMQ's stalled check runs only inside workers, so with every worker down a
-  lost entry stays `active` and only the time limit acts (after its maximum plus one interval); the
-  job then waits, `scheduled`, for a worker to come back.
-- *Redis data loss while jobs run:* their entries are gone, so only the time limit recovers them;
-  waiting jobs are queued again by the next pass.
-- *Several job-service instances* are safe (the conditional write lets one recover a job), but each
-  runs its own pass; at scale one would elect a single runner.
+**Trade-offs:** at-least-once, not exactly-once. A worker that was only slow, or whose result never
+reached job-service, has its attempt failed and the job runs again; its late report is refused.
+Exactly-once would need the side effect and the report in one transaction, which a worker without a
+database cannot have, so handlers that touch the outside world should be idempotent. With every
+worker down, only the time limit recovers a running job.
 
 ---
 
 ## 3. Priority Queue Implementation
 
-**Approach chosen:** BullMQ's own priority, set on every queue entry. A job's priority is 1–10,
-higher = more urgent (the task's rule, and the scale the API and UI use). BullMQ's scale runs the
-other way (1 is its most urgent), so the adapter maps ours as `11 - priority`: 10 → 1, 1 → 10. Every
-entry gets a priority, the default 5 included, because BullMQ hands out entries *without* one before
-all prioritised entries; a single entry without a priority would jump the whole queue. Within one
-priority BullMQ keeps the order entries were added (first in, first out). A retry is a new entry
-with the job's own priority, so a failed high-priority job goes back ahead of waiting lower ones.
+**Approach chosen:** BullMQ's own priority, set on every entry. Our scale is 1–10, higher = more
+urgent; BullMQ's runs the other way, so the adapter maps it as `11 - priority`. Every entry gets a
+priority, the default included, because BullMQ hands out entries without one before all prioritised
+ones: one entry without a priority would jump the whole queue. Within a priority, first in, first
+out. A retry keeps the job's priority.
 
-**Why:** pickup is already BullMQ's atomic move from waiting to active (section 1), so ordering has
-to happen in the same place: a priority kept anywhere else (Postgres, a second queue) would be read
-by a worker only after BullMQ had already chosen an entry. BullMQ's prioritised set is one sorted
-set in Redis, so taking the most urgent entry stays one atomic step. What is ours: the scale and its
-mapping, the rule that every entry carries a priority, and that a retry keeps it. Integration tests
-against a real Redis take entries one at a time and check the order (highest first, FIFO on ties, a
-due scheduled entry slots in by its priority).
+**Why:** pickup is BullMQ's atomic move (section 1), so ordering has to happen in the same place; a
+priority kept anywhere else would be read only after BullMQ had already chosen an entry.
 
-**Trade-offs:** strict priority without ageing. Under a steady stream of high-priority jobs, low-
-priority jobs wait for as long as the stream lasts; ageing (raising a job's priority while it
-waits) is the fix if that ever matters. A job's priority cannot be changed once it is queued
-(editing jobs is its own change). *Alternatives considered:* one queue per priority level, polled
-from high to low (more of our own logic and up to ten Redis round trips per pickup); ordering in
-Postgres with `ORDER BY priority DESC, created_at ... FOR UPDATE SKIP LOCKED` (moves pickup out of
-BullMQ, a redesign of section 1).
+**Trade-offs:** strict priority without ageing: a steady stream of urgent jobs starves the rest for
+as long as it lasts. *Alternatives:* one queue per priority level (more of our own logic, up to ten
+round trips per pickup), or ordering in Postgres with `FOR UPDATE SKIP LOCKED` (a different pickup
+design altogether).
 
-**Scheduled jobs.** The task's fifth critical detail has no section of its own in this template, so
-it is here. A job submitted with a `scheduledAt` in the future is stored as `scheduled`, and its
-first queue entry is a BullMQ *delayed* entry (delay = `scheduledAt` minus job-service's clock),
-with the job's priority. When the time comes BullMQ moves the entry into the prioritised set, where
-it competes by priority like any other; a worker starts the job straight from `scheduled` to
-`processing`, as the task's lifecycle diagram allows, with the same single-winner conditional write
-as a pending job. A `scheduledAt` now or in the past runs at once (`pending`); one more than 30 days
-ahead is rejected, so a typo cannot park an entry in Redis for years. An automatic retry uses the
-same mechanism: the job becomes `scheduled` again, at the time of its next attempt (section 4).
-*Why delayed entries:* exact timing with no extra moving part. The alternative was a loop in
-job-service that every second moves due `scheduled` jobs to `pending` in one atomic `UPDATE` and
-queues them; it keeps the schedule in Postgres but adds a loop and up to one interval of lateness.
-*What we gave up:* the schedule lives in Redis. If Redis loses its data, or the delayed entry
-cannot be queued at submit (Redis down), the job stays `scheduled` with nothing on the queue to
-wake it; the submit is logged and still succeeds. The recovery pass (section 2) queues such a job
-again from Postgres once its time has passed, the same way it handles `pending` jobs whose entry
-never landed.
-Clock skew between job-service and Redis only shifts the start by that skew; a worker does not
-check the time again, because a second check could drop a due entry over a few milliseconds and
-leave the job stuck.
-*In job-ui:* the submit page's "At a specific time" is a native `<input type="datetime-local">`,
-read in the browser's time zone (named in a hint under it) and sent as the same instant in UTC.
-We chose it over a calendar picker (shadcn's Calendar on react-day-picker 10.0.2, ~45M weekly
-npm downloads, TypeScript types, ESM) because it adds no dependency, is keyboard-accessible and is
-local time by definition; it looks slightly different per browser and has minute precision, which
-is enough for a schedule. The form checks the time with the API's rules before sending (set, later
-than now, at most 30 days ahead), on submit, so a time that passed while the page was open is
-caught. *Trade-off:* the form checks against the browser's clock, the API against job-service's;
-a time a few seconds ahead can pass the form and still be created `pending` by the API (it then
-runs at once). The API stays the authority. The jobs list shows a `scheduled` job's run time under
-its status badge, and the job page shows "Scheduled for" and a Lifecycle that starts at
-`scheduled` instead of `pending` for a job created to wait.
+**Scheduled jobs (the fifth critical detail).** A job with a future `scheduledAt` is stored as
+`scheduled`, and its entry is a BullMQ *delayed* entry; when it is due, it competes by priority
+like any other and starts straight from `scheduled`. At most 30 days ahead, so a typo cannot park
+an entry for years. *Trade-off:* the schedule lives in Redis; if Redis loses it, the recovery pass
+queues the job again from Postgres once its time has passed.
 
 ---
 
 ## 4. Retry Backoff Strategy
 
-**Approach chosen:** exponential backoff with jitter, applied by job-service when an attempt fails
-while attempts remain (a worker's `failed` report, `WORKER_LOST` or `JOB_TIMEOUT` from the recovery
-pass: one rule for all). The job becomes `scheduled` with `scheduledAt` = now + the delay, its error
-is stored, and the entry of its next attempt is queued as a BullMQ delayed entry for that time, with
-the job's priority. So a retry is a scheduled job: no separate retry status or loop, the job's
-`scheduledAt` tells a client when the next attempt starts, it counts as scheduled in the statistics,
-and it can be cancelled like any scheduled job. BullMQ's own retry options stay off. Every failure is
-retried while attempts remain, `INVALID_PAYLOAD` and `UNSUPPORTED_JOB_TYPE` included, since the
-failure may come from a worker that is older than the job's payload or type. The last allowed attempt
-fails the job for good. A client's manual retry (`failed` → `pending`) runs at once, without backoff,
-and clears the old `scheduledAt`.
+**Approach chosen:** **a retry is a scheduled job.** When an attempt fails and attempts remain
+(a worker's failure, `WORKER_LOST` or `JOB_TIMEOUT`: one rule for all), job-service stores the error
+and sets the job to `scheduled` with `scheduledAt` = now + the backoff delay, and its next entry
+goes on the queue as a delayed entry. So there is no separate retry status, retry loop or retry
+timer: a client sees when the next attempt starts, the job counts as scheduled in the statistics,
+it can be cancelled like any scheduled job, and the recovery pass already covers a retry whose
+entry was lost. BullMQ's own retry options stay off. A manual retry of a failed job runs at once.
 
-**Timing:** retry *n* waits a random time drawn uniformly from [5 s, 30 s] × 2^(n−1), each bound
-capped at 5 minutes: retry 1 waits 5–30 s, retry 2 10–60 s, retry 3 20–120 s, retry 4 40–240 s, and
-from retry 5 on 80–300 s, then 5 min flat. With the default of 3 attempts a job is retried at most
-twice. All three numbers are configuration (`JOB_SERVICE_RETRY_MIN_DELAY_MS`, `..._MAX_DELAY_MS`,
-`..._CAP_DELAY_MS`); the system e2e runs with 1–2 s.
-
-**Why:** the range grows so a failing dependency gets more room each time, and it is drawn at random
-so jobs that failed together (an outage) do not all come back at the same instant. Reusing the
-scheduled-job path means the retry time lives in the same place as a client's schedule, and the
-recovery pass already covers a retry whose delayed entry was lost. The computation is three lines
-(`ExponentialJitterRetryDelay`, with randomness through the `Random` port), not a library: it is a
-stored schedule time, not a retry loop. *Trade-offs:* a retry overwrites the job's original
-`scheduledAt` (that time has passed anyway); the delayed entry lives in Redis, so the retry's timing
-is as reliable as the scheduled-job timing of section 3.
+**Timing:** exponential backoff with jitter. Retry *n* waits a random time between
+5 s × 2^(n−1) and 30 s × 2^(n−1), each bound capped at 5 minutes: retry 1 waits 5–30 s, retry 2
+10–60 s, retry 3 20–120 s, and so on up to 5 minutes. With the default of 3 attempts a job is
+retried at most twice. All three numbers are configuration. The range grows so a failing dependency
+gets more room each time, and the randomness keeps jobs that failed together (an outage) from
+coming back at the same instant.
 
 ---
 
 ## 5. One Thing I Would Do Differently With More Time
 
-**Events between services instead of polling.** job-group-service learns about its groups by asking
-job-service every 2 s: three count queries per open group per tick, and since a retry can reopen a
-failed group, a failed group nobody retries is polled forever. With many groups the services spend
-their time querying each other; we are, in effect, DDoSing ourselves. I would have job-service
-publish job status changes (a Redis Stream, as job log entries already travel, or a real broker)
-and let job-group-service update a group when one of its jobs changes. That removes the polling
-load and the delay of up to one interval. The price is what polling gets for free: at-least-once
-delivery with idempotent updates, and replaying missed events after downtime. See "Polling
-job-service" and "The status rule" above.
+**Events instead of polling, between services and to the client.** job-group-service learns about
+its groups by asking job-service every 2 s: three count queries per open group per tick, and since a
+retry can reopen a failed group, a failed group nobody retries is polled forever. The UI does the
+same: every open page asks job-service again every 2 s, whether anything changed or not. With many
+groups and open pages the system spends its time answering questions about nothing; we are, in
+effect, DDoSing ourselves. I would have job-service publish job status changes (a Redis Stream, as
+job log entries already travel, or a real broker): job-group-service would update a group when one
+of its jobs changes, and the UI would receive the changes it shows through Server-Sent Events
+instead of asking. The price is what polling gets for free: at-least-once delivery with idempotent
+updates, replaying missed events after a restart or a dropped connection, and keeping a connection
+open per page.
 
 Two smaller ones, said plainly:
 
-- **Own services for what now lives inside job-service.** The job log (writer, store and API) and
-  the queue statistics run inside job-service to save scaffolding more services. I would give them
-  their own services with their own APIs and storage; the producers would not change, since they
-  already only append to a stream. See "Job log: owned by job-service, for now".
+- **Own services for what now lives inside job-service.** The job log and the queue statistics run
+  inside job-service to save scaffolding more services. I would give them their own services with
+  their own APIs and storage.
 - **A lighter, step-by-step verification flow.** The spec-driven flow (decisions, specs, a test
   review per task group, a verifier at the end of a change) caught real gaps, but one heavy
-  verification pass at the end cost a lot of time, and gaps it found late were fixed after
-  everything else was built. I would check and save progress per task group, so each step is
-  verified and committed on its own, and scale the ceremony to the size of the change.
+  verification pass at the end cost a lot of time. I would check and save progress per task group,
+  and scale the ceremony to the size of the change.
+
+---
+
+## Other Trade-offs
+
+- **BullMQ behind our own queue interface.** BullMQ does the low-level mechanics (atomic pickup,
+  locks, priority, delays); it sits behind a small interface of ours, so it could be replaced. What
+  we own: keeping Postgres and the queue in sync, the lifecycle, idempotency, the races and the
+  recovery. *Alternatives:* a Postgres-only queue with `SKIP LOCKED` (one store, no dual write, but
+  polling load on the database), RabbitMQ (delays need plugins), a custom Redis queue in Lua (most
+  low-level code, most bugs).
+- **One owner of job state, no shared database.** The worker is a separate service that reads and
+  changes jobs only through job-service's internal API (with a service token). Two services writing
+  one table would couple their schemas and let the job's rules be bypassed. *Cost:* an HTTP hop per
+  state change.
+- **A failed enqueue leaves the job pending, not the request failed.** A job is stored first, then
+  queued; if Redis is down, the submit still succeeds and the recovery pass queues the job later.
+  *Better, not built:* a transactional outbox, which closes the window in which a job is stored but
+  not queued.
+- **Cancelling a running job,** beyond what the task asks: job-service writes `cancelled`, then
+  announces it on a Redis pub/sub channel, and the worker running the job aborts it. Pub/sub is fire
+  and forget; a worker that misses the message runs the job to its end, and its report is refused
+  because the job is no longer running. The job stays cancelled; only the work is wasted.
+- **Job groups instead of a Batch job type.** A batch is many ordinary jobs submitted at once with a
+  shared `groupId`, followed as one group by job-group-service. Each item gets the system's pickup,
+  retries, priority and recovery, instead of a second, smaller job system inside one job. *Said
+  plainly:* there is no `batch` type, and the Job's progress percentage from the task's data model
+  is unused; a group's progress comes from its jobs' statuses.
+- **Job log in ClickHouse.** Logs are append-only, written far more than read and removed by age, so
+  they go through a Redis Stream into ClickHouse, in batches; writing a log entry never blocks or
+  fails a job. *Honestly:* at this task's volume a Postgres table would do; ClickHouse shows how the
+  log would scale, at the cost of one more container.
+- **Health checks report only their own process.** If `/health` included other services, services
+  that wait for each other's health could deadlock at startup. A down database shows up as errors on
+  the requests that need it, not on `/health`.
+- **REST + OpenAPI with shared Zod schemas, not tRPC.** Other services must be able to call the API;
+  the same schemas validate requests, generate the API docs and type the UI, so they cannot drift.
+- **Simulated work.** Emails and webhooks are never sent; the handlers sleep, and webhook and
+  transit jobs fail at a configured rate to exercise retries. Transit reports are generated from a
+  bundled airport list, with no external API.
