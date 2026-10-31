@@ -17,12 +17,14 @@ test('Instances scaled: every execution instance is healthy', async () => {
   }
 });
 
-test('Instance started: each execution instance logged that it started, under its own instance id', async () => {
-  const { lines } = await stack.logs({ service: SERVICE });
+test('Instance started: each execution instance logged that it started, under its own instance id', async ({
+  request,
+}) => {
+  const { entries } = await new StackJobs({ request }).logEntries({ service: SERVICE });
 
-  const started = lines
-    .map((line) => JSON.parse(line) as { msg?: string; instanceId?: string })
-    .filter((entry) => entry.msg?.includes('job-execution-service started') === true);
+  const started = entries.filter(
+    (entry) => typeof entry.msg === 'string' && entry.msg.includes('job-execution-service started'),
+  );
   expect(started).toHaveLength(EXECUTION_INSTANCES);
   expect(new Set(started.map((entry) => entry.instanceId)).size).toBe(EXECUTION_INSTANCES);
 });
@@ -44,9 +46,9 @@ test('Many jobs on several instances complete once each: one attempt, picked up 
 
   for (const job of finished) expect(job).toMatchObject({ status: 'completed', attempts: 1 });
   // The workers' own log: every job was picked up once, and the jobs were spread over instances.
-  const pickups = (await stack.logs({ service: SERVICE })).lines
-    .map((line) => JSON.parse(line) as { msg?: string; jobId?: string; instanceId?: string })
-    .filter((entry) => entry.msg === 'Attempt picked up' && ids.includes(entry.jobId ?? ''));
+  const pickups = (await jobs.logEntries({ service: SERVICE })).entries.filter(
+    (entry) => entry.msg === 'Attempt picked up' && ids.includes(String(entry.jobId)),
+  );
   expect(pickups.map((entry) => entry.jobId).sort()).toEqual([...ids].sort());
   expect(new Set(pickups.map((entry) => entry.instanceId)).size).toBeGreaterThan(1);
 });

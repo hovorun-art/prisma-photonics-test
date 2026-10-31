@@ -4,7 +4,8 @@ import { JOB_UI_URL } from './support/stack-settings.js';
 
 /**
  * System e2e: the whole docker compose stack under its own project name (see `support/`), started
- * by the `stack-up` project and removed by `stack-down` even when a test fails.
+ * by the `stack-up` project and removed by `stack-down` even when a test fails. `recovery` runs the
+ * tests that break the stack, after all the others.
  */
 export default defineConfig({
   testDir: '.',
@@ -20,8 +21,15 @@ export default defineConfig({
     {
       name: 'system',
       testMatch: '*.spec.ts',
+      testIgnore: 'recovery.spec.ts',
       dependencies: ['stack-up'],
       use: { ...devices['Desktop Chrome'] },
+    },
+    // Breaks the stack on purpose (kills an instance, wipes Redis), so it runs after every other test.
+    {
+      name: 'recovery',
+      testMatch: 'recovery.spec.ts',
+      dependencies: ['stack-up', 'system'],
     },
   ],
 });

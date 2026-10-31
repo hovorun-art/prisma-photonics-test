@@ -15,7 +15,7 @@ import { EXECUTION_INSTANCES, JOB_SERVICE_URL } from './stack-settings.js';
  * Jobs each execution instance runs at once: the stack's default `JOB_EXECUTION_CONCURRENCY`
  * (`.env.example`); keep the two in step, or the backlog of `waiting()` shrinks.
  */
-const CONCURRENCY_PER_INSTANCE = 5;
+export const CONCURRENCY_PER_INSTANCE = 5;
 
 /** Email jobs submitted ahead of a job that must still wait: many times what the stack runs at once. */
 const QUEUE_AHEAD = CONCURRENCY_PER_INSTANCE * EXECUTION_INSTANCES * 6;
@@ -75,6 +75,16 @@ export interface FinishedStackJobsApiResponse {
   jobs: Job[];
 }
 
+export interface LogEntriesStackJobsApiRequest {
+  /** The compose service whose log is read. */
+  service: string;
+}
+
+export interface LogEntriesStackJobsApiResponse {
+  /** Its JSON log lines, parsed; lines that are not JSON (a line a kill cut short) are skipped. */
+  entries: Record<string, unknown>[];
+}
+
 export interface WorkerLoggedStackJobsApiRequest {
   jobId: string;
   /** The exact message of the job-execution-service log line. */
@@ -100,6 +110,7 @@ export interface StackJobsApi {
   waiting(): Promise<WaitingStackJobsApiResponse>;
   running(): Promise<JobStackJobsApiResponse>;
   failed(): Promise<JobStackJobsApiResponse>;
+  logEntries(req: LogEntriesStackJobsApiRequest): Promise<LogEntriesStackJobsApiResponse>;
   workerLogged(req: WorkerLoggedStackJobsApiRequest): Promise<WorkerLoggedStackJobsApiResponse>;
 }
 
@@ -223,14 +234,25 @@ export class StackJobs implements StackJobsApi {
     return { job: failed };
   }
 
+  async logEntries(req: LogEntriesStackJobsApiRequest): Promise<LogEntriesStackJobsApiResponse> {
+    const { lines } = await stack.logs({ service: req.service });
+    return {
+      entries: lines.flatMap((line) => {
+        try {
+          return [JSON.parse(line) as Record<string, unknown>];
+        } catch {
+          return [];
+        }
+      }),
+    };
+  }
+
   async workerLogged(
     req: WorkerLoggedStackJobsApiRequest,
   ): Promise<WorkerLoggedStackJobsApiResponse> {
-    const { lines } = await stack.logs({ service: 'job-execution-service' });
+    const { entries } = await this.logEntries({ service: 'job-execution-service' });
     return {
-      lines: lines
-        .map((line) => JSON.parse(line) as Record<string, unknown>)
-        .filter((entry) => entry.jobId === req.jobId && entry.msg === req.msg),
+      lines: entries.filter((entry) => entry.jobId === req.jobId && entry.msg === req.msg),
     };
   }
 }
