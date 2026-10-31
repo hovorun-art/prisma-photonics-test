@@ -16,18 +16,13 @@ const WORKERS = 'job-execution-service';
 const BUSY_ENOUGH = CONCURRENCY_PER_INSTANCE * (EXECUTION_INSTANCES - 1) + 1;
 
 test.describe('breaking the stack', () => {
-  const emailItem = (subject: string, index: number): Record<string, unknown> => ({
-    type: 'email',
-    payload: { to: 'ada@example.com', subject: `${subject} ${index}`, body: 'Hi Ada' },
-  });
-
   test("Killed worker's job is recovered on the full system: every job completes, a lost attempt is run again", async ({
     request,
   }) => {
     test.setTimeout(240_000);
     const jobs = new StackJobs({ request });
     const { jobs: submitted } = await jobs.submitBulk({
-      jobs: Array.from({ length: 30 }, (_value, index) => emailItem('Survives a crash', index)),
+      jobs: jobs.emailItems({ subject: 'Survives a crash', count: 30 }).items,
     });
     const ids = submitted.map((job) => job.id);
     const { containers } = await stack.containers({ service: WORKERS });
@@ -81,7 +76,7 @@ test.describe('breaking the stack', () => {
     test.setTimeout(180_000);
     const jobs = new StackJobs({ request });
     const { jobs: submitted } = await jobs.submitBulk({
-      jobs: Array.from({ length: 40 }, (_value, index) => emailItem('Lost entry', index)),
+      jobs: jobs.emailItems({ subject: 'Lost entry', count: 40 }).items,
     });
     const ids = submitted.map((job) => job.id);
     const flushedAt = Date.now();

@@ -309,19 +309,13 @@ test('Retried job runs again on the full system: back to pending with zero attem
 });
 
 test.describe('reliability', () => {
-  /** An email job of a bulk, numbered so the jobs of one test are told apart. */
-  const emailItem = (subject: string, index: number): Record<string, unknown> => ({
-    type: 'email',
-    payload: { to: 'ada@example.com', subject: `${subject} ${index}`, body: 'Hi Ada' },
-  });
-
   test('Bulk retried after a lost answer on the full system: the same jobs answer 200, and exist once', async ({
     request,
   }) => {
     const jobs = new StackJobs({ request });
     const groupId = randomUUID();
-    const items = [0, 1, 2].map((index) => ({
-      ...emailItem('Keyed', index),
+    const items = jobs.emailItems({ subject: 'Keyed', count: 3 }).items.map((item, index) => ({
+      ...item,
       groupId,
       idempotencyKey: `${groupId}-${index}`,
     }));

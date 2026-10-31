@@ -53,6 +53,17 @@ export interface WaitingStackJobsApiResponse {
   job: Job;
 }
 
+export interface EmailItemsStackJobsApiRequest {
+  /** Put in front of each item's number, so the jobs of one test are told apart. */
+  subject: string;
+  count: number;
+}
+
+export interface EmailItemsStackJobsApiResponse {
+  /** Email job submissions numbered from 0, ready for `submitBulk`. */
+  items: Record<string, unknown>[];
+}
+
 export interface SubmitBulkStackJobsApiRequest {
   /** The items of `POST /v1/jobs/bulk`. */
   jobs: unknown[];
@@ -103,6 +114,7 @@ export interface WorkerLoggedStackJobsApiResponse {
  */
 export interface StackJobsApi {
   submit(req: SubmitStackJobsApiRequest): Promise<JobStackJobsApiResponse>;
+  emailItems(req: EmailItemsStackJobsApiRequest): EmailItemsStackJobsApiResponse;
   submitBulk(req: SubmitBulkStackJobsApiRequest): Promise<SubmitBulkStackJobsApiResponse>;
   read(req: ReadStackJobsApiRequest): Promise<JobStackJobsApiResponse>;
   finished(req: FinishedStackJobsApiRequest): Promise<FinishedStackJobsApiResponse>;
@@ -128,6 +140,15 @@ export class StackJobs implements StackJobsApi {
     });
     expect(response.status()).toBe(201);
     return { job: Job.parse(await response.json()) };
+  }
+
+  emailItems(req: EmailItemsStackJobsApiRequest): EmailItemsStackJobsApiResponse {
+    return {
+      items: Array.from({ length: req.count }, (_value, index) => ({
+        type: 'email',
+        payload: { to: 'ada@example.com', subject: `${req.subject} ${index}`, body: 'Hi Ada' },
+      })),
+    };
   }
 
   async submitBulk(req: SubmitBulkStackJobsApiRequest): Promise<SubmitBulkStackJobsApiResponse> {
@@ -173,10 +194,7 @@ export class StackJobs implements StackJobsApi {
    * at once, so the jobs ahead of it keep the workers busy for a while.
    */
   async waiting(): Promise<WaitingStackJobsApiResponse> {
-    const jobs = Array.from({ length: QUEUE_AHEAD + 1 }, (_value, index) => ({
-      type: 'email',
-      payload: { to: 'ada@example.com', subject: `Queued ${index}`, body: 'Hi Ada' },
-    }));
+    const { items: jobs } = this.emailItems({ subject: 'Queued', count: QUEUE_AHEAD + 1 });
     const response = await this.d.request.post(`${JOB_SERVICE_URL}${JOBS_BULK_ROUTE}`, {
       data: { jobs },
     });

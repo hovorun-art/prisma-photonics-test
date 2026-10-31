@@ -35,10 +35,7 @@ test('Many jobs on several instances complete once each: one attempt, picked up 
   test.setTimeout(180_000);
   const jobs = new StackJobs({ request });
   const { jobs: submitted } = await jobs.submitBulk({
-    jobs: Array.from({ length: MANY_JOBS }, (_value, index) => ({
-      type: 'email',
-      payload: { to: 'ada@example.com', subject: `Once ${index}`, body: 'Hi Ada' },
-    })),
+    jobs: jobs.emailItems({ subject: 'Once', count: MANY_JOBS }).items,
   });
   const ids = submitted.map((job) => job.id);
 
