@@ -12,6 +12,10 @@ export interface Stack {
   stop(req: StopStackRequest): Promise<StopStackResponse>;
   /** Starts a stopped service again, returning once it is healthy. */
   start(req: StartStackRequest): Promise<StartStackResponse>;
+  /** Kills one container at once (SIGKILL), as a crash would: no shutdown, no reports. */
+  kill(req: KillStackRequest): Promise<KillStackResponse>;
+  /** Runs a command inside one service's container and returns its output. */
+  exec(req: ExecStackRequest): Promise<ExecStackResponse>;
 }
 
 export interface UpStackRequest {
@@ -55,3 +59,18 @@ export interface StartStackRequest {
   service: string;
 }
 export type StartStackResponse = Record<string, never>;
+
+export interface KillStackRequest {
+  /** The container's name, as `containers` lists it. */
+  container: string;
+}
+export type KillStackResponse = Record<string, never>;
+
+export interface ExecStackRequest {
+  service: string;
+  command: string[];
+}
+
+export interface ExecStackResponse {
+  stdout: string;
+}

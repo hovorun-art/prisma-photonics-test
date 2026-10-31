@@ -23,6 +23,7 @@ export class PendingEmailE2eJobs implements E2eJobs {
       result: null,
       error: null,
       groupId: null,
+      idempotencyKey: null,
       scheduledAt: null,
       startedAt: null,
       completedAt: null,

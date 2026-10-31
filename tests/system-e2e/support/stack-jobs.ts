@@ -53,6 +53,28 @@ export interface WaitingStackJobsApiResponse {
   job: Job;
 }
 
+export interface SubmitBulkStackJobsApiRequest {
+  /** The items of `POST /v1/jobs/bulk`. */
+  jobs: unknown[];
+}
+
+export interface SubmitBulkStackJobsApiResponse {
+  /** The bulk's HTTP status: 201 when it created a job, 200 when every item already existed. */
+  status: number;
+  jobs: Job[];
+}
+
+export interface FinishedStackJobsApiRequest {
+  ids: string[];
+  /** How long to wait for the last job to finish. */
+  timeoutMs: number;
+}
+
+export interface FinishedStackJobsApiResponse {
+  /** The jobs as read once every one had finished, in the order of `ids`. */
+  jobs: Job[];
+}
+
 export interface WorkerLoggedStackJobsApiRequest {
   jobId: string;
   /** The exact message of the job-execution-service log line. */
@@ -71,7 +93,9 @@ export interface WorkerLoggedStackJobsApiResponse {
  */
 export interface StackJobsApi {
   submit(req: SubmitStackJobsApiRequest): Promise<JobStackJobsApiResponse>;
+  submitBulk(req: SubmitBulkStackJobsApiRequest): Promise<SubmitBulkStackJobsApiResponse>;
   read(req: ReadStackJobsApiRequest): Promise<JobStackJobsApiResponse>;
+  finished(req: FinishedStackJobsApiRequest): Promise<FinishedStackJobsApiResponse>;
   changeStatus(req: ChangeStatusStackJobsApiRequest): Promise<ChangeStatusStackJobsApiResponse>;
   waiting(): Promise<WaitingStackJobsApiResponse>;
   running(): Promise<JobStackJobsApiResponse>;
@@ -93,6 +117,29 @@ export class StackJobs implements StackJobsApi {
     });
     expect(response.status()).toBe(201);
     return { job: Job.parse(await response.json()) };
+  }
+
+  async submitBulk(req: SubmitBulkStackJobsApiRequest): Promise<SubmitBulkStackJobsApiResponse> {
+    const response = await this.d.request.post(`${JOB_SERVICE_URL}${JOBS_BULK_ROUTE}`, {
+      data: { jobs: req.jobs },
+    });
+    expect([200, 201]).toContain(response.status());
+    const { items } = CreateJobsBulkResponse.parse(await response.json());
+    return { status: response.status(), jobs: items };
+  }
+
+  async finished(req: FinishedStackJobsApiRequest): Promise<FinishedStackJobsApiResponse> {
+    let jobs: Job[] = [];
+    await expect
+      .poll(
+        async () => {
+          jobs = await Promise.all(req.ids.map(async (id) => (await this.read({ id })).job));
+          return jobs.filter((job) => !FINISHED.includes(job.status)).length;
+        },
+        { timeout: req.timeoutMs, intervals: [500] },
+      )
+      .toBe(0);
+    return { jobs };
   }
 
   async read(req: ReadStackJobsApiRequest): Promise<JobStackJobsApiResponse> {

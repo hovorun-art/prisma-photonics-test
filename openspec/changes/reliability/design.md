@@ -214,8 +214,10 @@ See proposal.md for the motivation and decisions.md for every behaviour choice; 
   with raw SQL through the app's own `PrismaDatabase`. Jobs reach their stuck state through the
   routes wherever one can (submit, start report) before they are aged; worker e2e (`job-execution.e2e.test.ts`: timeout, recovered refusal).
 - System e2e: `EXECUTION_INSTANCES` becomes 3. `STACK_ENV` adds short settings passed through compose
-  (`${VAR:-default}` entries): recovery interval and min age 2 s, lock duration and stalled interval
-  2 s, retry delays 500–1000 ms (cap 2 s). `Stack` gains `kill(req: { container })` (`docker kill`)
+  (`${VAR:-default}` entries): recovery interval and min age 2 s, stalled interval 2 s, lock
+  duration 3 s (changed during apply from 2 s, so a second of busy event loop cannot make a live
+  worker look dead), retry delays 1–2 s, cap 4 s (changed from 0.5–1 s, so a test can catch a job
+  while it waits for its retry). `Stack` gains `kill(req: { container })` (`docker kill`)
   and `exec(req: { service, command })` (`docker compose exec`). Tests: "Many jobs on several
   instances complete once each" (a bulk of 60 email jobs, every one `completed` with attempts 1);
   "Killed worker's job is recovered on the full system" (a bulk larger than the stack's concurrency,

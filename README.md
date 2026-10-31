@@ -55,7 +55,15 @@ curl -s -X POST http://localhost:3000/v1/jobs \
   -d '{"type":"email","payload":{"to":"ada@example.com","subject":"Hello","body":"Hi Ada"}}'
 # {"id":"<uuid>","status":"pending","priority":5,"attempts":0,"maxAttempts":3,...,"type":"email",...}
 
+# Safe to send twice: with an idempotencyKey the same request answers 200 with the job it created
+# (201 the first time); the same key with a different request answers 409 IDEMPOTENCY_KEY_CONFLICT
+curl -s -i -X POST http://localhost:3000/v1/jobs \
+  -H 'content-type: application/json' \
+  -d '{"type":"email","idempotencyKey":"order-4821-receipt","payload":{"to":"ada@example.com","subject":"Receipt","body":"Thanks"}}'
+# HTTP/1.1 201 Created, then HTTP/1.1 200 OK with the same "id" on a repeat
+
 # Read it back: within a few seconds it is "completed" with a result {"messageId":"<uuid>"}
+# (a failed attempt with attempts left is "scheduled" again, its scheduledAt the time of the retry)
 curl -s http://localhost:3000/v1/jobs/<uuid>
 
 # Its log, oldest first: each step from job-service and the worker (entries arrive in batches,

@@ -1,10 +1,14 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   EmailJobResult,
   ErrorBody,
+  JOB_ERROR_CODES,
   JOBS_ROUTE,
   Job,
   type JobLogEntry,
   QueryJobLogResponse,
+  QueryJobsResponse,
   QueueStats,
   STATS_ROUTE,
 } from '@job-queue/contracts';
@@ -303,4 +307,180 @@ test('Retried job runs again on the full system: back to pending with zero attem
     .poll(async () => (await jobs.read({ id: failed.id })).job.status, { timeout: 60_000 })
     .toMatch(/^(completed|failed)$/);
   expect((await jobs.read({ id: failed.id })).job.attempts).toBe(1);
+});
+
+test.describe('reliability', () => {
+  /** An email job of a bulk, numbered so the jobs of one test are told apart. */
+  const emailItem = (subject: string, index: number): Record<string, unknown> => ({
+    type: 'email',
+    payload: { to: 'ada@example.com', subject: `${subject} ${index}`, body: 'Hi Ada' },
+  });
+
+  /** job-service's log lines, parsed. */
+  // Its JSON log lines; the few that are not JSON (output before the logger is up) are skipped.
+  const jobServiceLog = async (): Promise<Record<string, unknown>[]> =>
+    (await stack.logs({ service: 'job-service' })).lines.flatMap((line) => {
+      try {
+        return [JSON.parse(line) as Record<string, unknown>];
+      } catch {
+        return [];
+      }
+    });
+
+  test('Bulk retried after a lost answer on the full system: the same jobs answer 200, and exist once', async ({
+    request,
+  }) => {
+    const jobs = new StackJobs({ request });
+    const groupId = randomUUID();
+    const items = [0, 1, 2].map((index) => ({
+      ...emailItem('Keyed', index),
+      groupId,
+      idempotencyKey: `${groupId}-${index}`,
+    }));
+
+    const first = await jobs.submitBulk({ jobs: items });
+    const second = await jobs.submitBulk({ jobs: items });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(200);
+    expect(second.jobs.map((job) => job.id)).toEqual(first.jobs.map((job) => job.id));
+    const query = await request.get(`${JOB_SERVICE_URL}${JOBS_ROUTE}?groupId=${groupId}`);
+    expect(QueryJobsResponse.parse(await query.json()).total).toBe(items.length);
+  });
+
+  test('Cancel a job waiting for its retry on the full system: it stays cancelled once its retry time has passed', async ({
+    request,
+  }) => {
+    test.setTimeout(120_000);
+    const jobs = new StackJobs({ request });
+    const groupId = randomUUID();
+    // Enough webhook jobs that the stack's simulated failure rate fails some first attempts.
+    await jobs.submitBulk({
+      jobs: Array.from({ length: 40 }, (_value, index) => ({
+        type: 'webhook',
+        payload: { method: 'POST', url: `https://hooks.example.com/retry-${index}` },
+        maxAttempts: 3,
+        groupId,
+      })),
+    });
+    const waitingForRetry = `${JOB_SERVICE_URL}${JOBS_ROUTE}?groupId=${groupId}&status=scheduled&limit=10`;
+
+    // A job is caught while it waits for its retry: the cancel answers it with the start of the
+    // failed attempt, so no later attempt had begun. Another waiting job is tried otherwise.
+    let cancelled: Job | undefined;
+    await expect
+      .poll(
+        async () => {
+          const { items } = QueryJobsResponse.parse(
+            await (await request.get(waitingForRetry)).json(),
+          );
+          for (const candidate of items.filter((job) => job.error !== null)) {
+            const { response } = await jobs.changeStatus({ id: candidate.id, status: 'cancelled' });
+            if (response.status() !== 200) continue;
+            const job = Job.parse(await response.json());
+            if (job.startedAt === candidate.startedAt && job.attempts === candidate.attempts) {
+              cancelled = { ...job, scheduledAt: candidate.scheduledAt };
+              return true;
+            }
+          }
+          return false;
+        },
+        { timeout: 90_000, intervals: [100] },
+      )
+      .toBe(true);
+    if (cancelled === undefined) throw new Error('No job was caught waiting for its retry');
+    const { id, attempts } = cancelled;
+
+    // Past its retry time (plus a pass of the recovery) the next attempt has still not run.
+    const retryAt = Date.parse(cancelled.scheduledAt ?? '');
+    await expect
+      .poll(() => Date.now() > retryAt + 5_000, { timeout: 30_000, intervals: [500] })
+      .toBe(true);
+    expect((await jobs.read({ id })).job).toMatchObject({ status: 'cancelled', attempts });
+    // The next attempt's entry is still taken by a worker, which finds the job cancelled and skips
+    // it without starting it.
+    const nextAttempt = attempts + 1;
+    await expect
+      .poll(
+        async () =>
+          (
+            await jobs.workerLogged({ jobId: id, msg: 'Skipped: job is no longer startable' })
+          ).lines.filter((entry) => entry.attempt === nextAttempt),
+        { timeout: 15_000, intervals: [500] },
+      )
+      .toEqual([expect.objectContaining({ status: 'cancelled' })]);
+    expect(
+      (await jobs.workerLogged({ jobId: id, msg: 'Job started' })).lines.filter(
+        (entry) => entry.attempt === nextAttempt,
+      ),
+    ).toEqual([]);
+  });
+
+  test("Killed worker's job is recovered on the full system: every job completes, a lost attempt is run again", async ({
+    request,
+  }) => {
+    test.setTimeout(240_000);
+    const jobs = new StackJobs({ request });
+    const { jobs: submitted } = await jobs.submitBulk({
+      jobs: Array.from({ length: 30 }, (_value, index) => emailItem('Survives a crash', index)),
+    });
+    const ids = submitted.map((job) => job.id);
+    const { containers } = await stack.containers({ service: 'job-execution-service' });
+    const victim = containers[0];
+    if (victim === undefined) throw new Error('No execution instance is running');
+
+    try {
+      // Kill an instance while every instance is busy: most of the stack's slots are taken.
+      await expect
+        .poll(
+          async () => {
+            const read = await Promise.all(
+              ids.map(async (jobId) => (await jobs.read({ id: jobId })).job),
+            );
+            return read.filter((job) => job.status === 'processing').length;
+          },
+          { timeout: 60_000, intervals: [100] },
+        )
+        .toBeGreaterThanOrEqual(12);
+      await stack.kill({ container: victim.name });
+
+      const { jobs: finished } = await jobs.finished({ ids, timeoutMs: 180_000 });
+
+      for (const job of finished) expect(job).toMatchObject({ status: 'completed', error: null });
+      const rerun = finished.filter((job) => job.attempts > 1);
+      expect(rerun.length).toBeGreaterThan(0);
+      const lost = (await jobServiceLog()).filter(
+        (entry) => entry.reason === JOB_ERROR_CODES.workerLost && ids.includes(String(entry.jobId)),
+      );
+      expect(lost.map((entry) => entry.jobId)).toEqual(
+        expect.arrayContaining(rerun.map((job) => job.id)),
+      );
+    } finally {
+      // The rest of the suite expects every instance up again.
+      await stack.start({ service: 'job-execution-service' });
+    }
+  });
+
+  test('Pending job recovers on the full system: jobs whose queue entries were lost are queued again and complete', async ({
+    request,
+  }) => {
+    test.setTimeout(180_000);
+    const jobs = new StackJobs({ request });
+    const { jobs: submitted } = await jobs.submitBulk({
+      jobs: Array.from({ length: 40 }, (_value, index) => emailItem('Lost entry', index)),
+    });
+    const ids = submitted.map((job) => job.id);
+
+    // The queue loses everything it held, while most of the jobs still wait.
+    await stack.exec({ service: 'redis', command: ['redis-cli', 'FLUSHALL'] });
+
+    const { jobs: finished } = await jobs.finished({ ids, timeoutMs: 150_000 });
+
+    for (const job of finished) expect(job.status).toBe('completed');
+    const requeued = (await jobServiceLog()).filter(
+      (entry) =>
+        entry.msg === 'Recovery: waiting job queued again' && ids.includes(String(entry.jobId)),
+    );
+    expect(requeued.length).toBeGreaterThan(0);
+  });
 });
