@@ -15,13 +15,14 @@ import {
 } from '../../domain/config/job-service-config.js';
 import { JOB_COUNTS, type JobCounts } from '../../domain/jobs/job-counts.js';
 import { JOB_QUEUE, type JobQueue } from '../../domain/jobs/job-queue.js';
+import { JOB_RECOVERY, type JobRecovery } from '../../domain/jobs/job-recovery.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../domain/jobs/job-repository.js';
 import {
   JOB_REQUEST_FINGERPRINT,
   type JobRequestFingerprint,
 } from '../../domain/jobs/job-request-fingerprint.js';
 import { RETRY_DELAY, type RetryDelay } from '../../domain/jobs/retry-delay.js';
-import { JOB_SERVICE } from '../../domain/jobs/job-service.js';
+import { JOB_SERVICE, type JobService } from '../../domain/jobs/job-service.js';
 import { JOB_STATISTICS } from '../../domain/jobs/job-statistics.js';
 import { JobServiceImpl } from '../../infra/jobs/job-service.impl.js';
 import { Sha256JobRequestFingerprint } from '../../infra/jobs/idempotency/sha256-job-request-fingerprint.js';
@@ -29,17 +30,19 @@ import { JobStatisticsImpl } from '../../infra/jobs/job-statistics.impl.js';
 import { PrismaJobCounts } from '../../infra/jobs/prisma/prisma-job-counts.js';
 import { PrismaJobRepository } from '../../infra/jobs/prisma/prisma-job-repository.js';
 import { BullMqJobQueue } from '../../infra/jobs/queue/bullmq-job-queue.js';
+import { JobRecoveryImpl } from '../../infra/jobs/recovery/job-recovery.impl.js';
 import { ExponentialJitterRetryDelay } from '../../infra/jobs/retry/exponential-jitter-retry-delay.js';
 import { PrismaDatabase } from '../../infra/prisma/prisma-database.js';
 import { InternalAccessModule } from '../internal-access/internal-access.module.js';
 import { PrismaModule } from '../prisma/prisma.module.js';
 import { InternalJobsController } from './internal-jobs.controller.js';
+import { JobRecoverySchedule } from './job-recovery-schedule.js';
 import { JobsController } from './jobs.controller.js';
 import { StatsController } from './stats.controller.js';
 
 /**
- * The job feature: public and internal routes over one `JobService`, and the queue statistics;
- * closes the queue on shutdown.
+ * The job feature: public and internal routes over one `JobService`, the queue statistics, and the
+ * recovery pass on its timer; closes the queue on shutdown.
  */
 @Module({
   imports: [PrismaModule, InternalAccessModule],
@@ -102,6 +105,27 @@ import { StatsController } from './stats.controller.js';
         JOB_SERVICE_CONFIG,
       ],
     },
+    {
+      provide: JOB_RECOVERY,
+      useFactory: (
+        repository: JobRepository,
+        queue: JobQueue,
+        jobs: JobService,
+        clock: Clock,
+        config: JobServiceConfig,
+      ): JobRecovery =>
+        new JobRecoveryImpl(
+          { repository, queue, jobs, clock, logger: new Logger('JobRecovery') },
+          {
+            minAgeMs: config.recovery.minAgeMs,
+            intervalMs: config.recovery.intervalMs,
+            batchSize: config.recovery.batchSize,
+            maxProcessingMs: config.maxProcessingMs,
+          },
+        ),
+      inject: [JOB_REPOSITORY, JOB_QUEUE, JOB_SERVICE, CLOCK, JOB_SERVICE_CONFIG],
+    },
+    JobRecoverySchedule,
     {
       provide: JOB_COUNTS,
       useFactory: (prisma: PrismaDatabase): JobCounts => new PrismaJobCounts({ prisma }),

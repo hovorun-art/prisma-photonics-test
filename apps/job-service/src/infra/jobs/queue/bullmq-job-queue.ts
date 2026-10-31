@@ -8,7 +8,7 @@ import {
 } from '@job-queue/contracts';
 import type { Clock, CloseClosableResponse } from '@job-queue/kernel';
 import type { LoggerService } from '@nestjs/common';
-import { type JobsOptions, Queue } from 'bullmq';
+import { type JobState, type JobsOptions, Queue } from 'bullmq';
 import { Redis } from 'ioredis';
 
 import { JobQueueUnavailableError } from '../../../domain/jobs/errors/job-queue-unavailable.error.js';
@@ -20,7 +20,23 @@ import type {
   EnqueueManyJobQueueRequest,
   EnqueueManyJobQueueResponse,
   JobQueue,
+  JobQueueEntryState,
+  RequeueJobQueueResponse,
+  StateJobQueueRequest,
+  StateJobQueueResponse,
 } from '../../../domain/jobs/job-queue.js';
+
+/** Our view of BullMQ's entry states: what matters is whether a worker can still run the entry. */
+const ENTRY_STATES: Readonly<Record<JobState | 'unknown', JobQueueEntryState>> = {
+  waiting: 'waiting',
+  prioritized: 'waiting',
+  'waiting-children': 'waiting',
+  delayed: 'delayed',
+  active: 'active',
+  completed: 'finished',
+  failed: 'finished',
+  unknown: 'missing',
+};
 
 export interface BullMqJobQueueDeps {
   logger: Pick<LoggerService, 'warn'>;
@@ -28,8 +44,8 @@ export interface BullMqJobQueueDeps {
   clock: Clock;
 }
 
-interface WithinSignalRequest {
-  work: Promise<unknown>;
+interface WithinSignalRequest<T> {
+  work: Promise<T>;
   signal: AbortSignal;
 }
 
@@ -40,7 +56,7 @@ interface OptionsRequest {
 
 export interface BullMqJobQueueParams {
   redisUrl: string;
-  /** How long `enqueue`, `enqueueMany` and `cancel` wait for Redis before they give up. */
+  /** How long `enqueue`, `enqueueMany`, `cancel`, `state` and `requeue` wait for Redis before they give up. */
   enqueueTimeoutMs: number;
 }
 
@@ -145,6 +161,46 @@ export class BullMqJobQueue implements JobQueue {
     return {};
   }
 
+  async state(req: StateJobQueueRequest): Promise<StateJobQueueResponse> {
+    const attempt = { jobId: req.jobId, run: req.run, attempt: req.attempt };
+    try {
+      const found = await this.withinTimeout(this.queue.getJobState(this.entryId(req)));
+      return { state: ENTRY_STATES[found] };
+    } catch {
+      // The recovery pass, the only caller, logs one line for the whole pass.
+      throw new JobQueueUnavailableError(attempt);
+    }
+  }
+
+  /**
+   * A finished entry is removed first, since BullMQ ignores an `add` under an id it still has. A
+   * live entry (waiting, delayed, or held by a worker) is left alone; BullMQ also refuses to remove
+   * an entry a worker took meanwhile, and then nothing is added.
+   */
+  async requeue(req: EnqueueJobQueueRequest): Promise<RequeueJobQueueResponse> {
+    const attempt = { jobId: req.jobId, run: req.run, attempt: req.attempt };
+    const id = this.entryId(req);
+    try {
+      await this.withinTimeout(
+        (async () => {
+          const state = ENTRY_STATES[await this.queue.getJobState(id)];
+          if (state === 'finished' && (await this.queue.remove(id)) === 0) return;
+          if (state === 'finished' || state === 'missing') {
+            await this.queue.add(
+              id,
+              { jobId: req.jobId },
+              this.options({ entry: req, now: this.now(req) }),
+            );
+          }
+        })(),
+      );
+    } catch (err) {
+      this.d.logger.warn({ err, ...attempt }, 'Requeue failed');
+      throw new JobQueueUnavailableError(attempt);
+    }
+    return {};
+  }
+
   /** BullMQ's id, priority and delay for one entry; `now` is only needed for a `runAt`. */
   private options({ entry, now }: OptionsRequest): JobsOptions {
     const delay =
@@ -158,7 +214,7 @@ export class BullMqJobQueue implements JobQueue {
     };
   }
 
-  private entryId(entry: EnqueueJobQueueRequest): string {
+  private entryId(entry: StateJobQueueRequest): string {
     return JobQueueEntryId.encode({ jobId: entry.jobId, run: entry.run, attempt: entry.attempt });
   }
 
@@ -167,20 +223,20 @@ export class BullMqJobQueue implements JobQueue {
     return entry.runAt === null ? null : this.d.clock.now().now;
   }
 
-  /** Rejects when `work` has not settled within the configured enqueue timeout. */
-  private async withinTimeout(work: Promise<unknown>): Promise<void> {
-    await this.withinSignal({ work, signal: AbortSignal.timeout(this.p.enqueueTimeoutMs) });
+  /** `work`'s value, or a rejection when it has not settled within the configured enqueue timeout. */
+  private withinTimeout<T>(work: Promise<T>): Promise<T> {
+    return this.withinSignal({ work, signal: AbortSignal.timeout(this.p.enqueueTimeoutMs) });
   }
 
-  /** Rejects when `signal` aborts before `work` has settled. */
-  private async withinSignal({ work, signal }: WithinSignalRequest): Promise<void> {
+  /** `work`'s value, or a rejection when `signal` aborts before it has settled. */
+  private async withinSignal<T>({ work, signal }: WithinSignalRequest<T>): Promise<T> {
     signal.throwIfAborted();
     const aborted = new Promise<never>((_resolve, reject) => {
       signal.addEventListener('abort', () => {
         reject(signal.reason as Error);
       });
     });
-    await Promise.race([work, aborted]);
+    return Promise.race([work, aborted]);
   }
 
   /**

@@ -45,6 +45,11 @@ import {
 import { JOB_LOG_STREAM, type JobLogStream } from '../../src/domain/job-log/job-log-stream.js';
 import { JOB_LOG_WRITER, type JobLogWriter } from '../../src/domain/job-log/job-log-writer.js';
 import { JOB_QUEUE, type JobQueue } from '../../src/domain/jobs/job-queue.js';
+import {
+  JOB_RECOVERY,
+  type JobRecovery,
+  type RunJobRecoveryResponse,
+} from '../../src/domain/jobs/job-recovery.js';
 import { JOB_REPOSITORY, type JobRepository } from '../../src/domain/jobs/job-repository.js';
 import {
   JOB_REQUEST_FINGERPRINT,
@@ -77,6 +82,14 @@ export const TEST_CONFIG = {
   maxProcessingMsEmail: 12_345,
   maxProcessingMsWebhook: 23_456,
   maxProcessingMsFlightTransit: 34_567,
+  /**
+   * An hour, so the recovery timer never fires during a test: the recovery tests run one pass
+   * themselves (the timer has its own unit test). A job's time limit acts after its maximum plus
+   * this interval.
+   */
+  recoveryIntervalMs: 3_600_000,
+  /** Not the default: a pass looks only at jobs in their state for at least this long. */
+  recoveryMinAgeMs: 20_000,
 } as const;
 
 export const AUTHORIZATION = `${SERVICE_TOKEN_SCHEME} ${TEST_CONFIG.serviceToken}`;
@@ -146,6 +159,16 @@ export interface SeedRequest {
   error?: JobError;
   /** The job's execution time; defaults to an hour ahead for a `scheduled` job, otherwise none. */
   scheduledAt?: string;
+}
+
+export interface AgeRequest {
+  id: string;
+  /** How long ago the job's state last changed. */
+  changedAgoMs: number;
+  /** How long ago its current attempt started; left as it is when omitted. */
+  startedAgoMs?: number;
+  /** How long ago it was due (a scheduled job's `scheduledAt`); left as it is when omitted. */
+  dueAgoMs?: number;
 }
 
 export interface SeedKeyedRequest {
@@ -285,6 +308,8 @@ export class JobServiceUnderTest implements Closable {
         JOB_SERVICE_MAX_PROCESSING_MS_FLIGHT_TRANSIT: String(
           TEST_CONFIG.maxProcessingMsFlightTransit,
         ),
+        JOB_SERVICE_RECOVERY_INTERVAL_MS: String(TEST_CONFIG.recoveryIntervalMs),
+        JOB_SERVICE_RECOVERY_MIN_AGE_MS: String(TEST_CONFIG.recoveryMinAgeMs),
       },
     });
     if (!parsed.ok) throw new Error(parsed.problems);
@@ -545,6 +570,30 @@ export class JobServiceUnderTest implements Closable {
       },
     });
     return job;
+  }
+
+  /**
+   * Moves a job's last change (and, when given, its start and due time) into the past, as time
+   * would: no route can make a job old.
+   */
+  async age(req: AgeRequest): Promise<void> {
+    const ago = (ms: number): Date => new Date(Date.now() - ms);
+    const prisma = this.app.get(PrismaDatabase);
+    await prisma.$executeRaw`
+      UPDATE jobs SET updated_at = ${ago(req.changedAgoMs)} WHERE id = ${req.id}::uuid`;
+    if (req.startedAgoMs !== undefined) {
+      await prisma.$executeRaw`
+        UPDATE jobs SET started_at = ${ago(req.startedAgoMs)} WHERE id = ${req.id}::uuid`;
+    }
+    if (req.dueAgoMs !== undefined) {
+      await prisma.$executeRaw`
+        UPDATE jobs SET scheduled_at = ${ago(req.dueAgoMs)} WHERE id = ${req.id}::uuid`;
+    }
+  }
+
+  /** Runs one recovery pass, as the timer would. */
+  recover(): Promise<RunJobRecoveryResponse> {
+    return this.app.get<JobRecovery>(JOB_RECOVERY).run();
   }
 
   /** The type, a valid payload and (when completed) a valid result of a seeded job. */

@@ -151,10 +151,14 @@ See proposal.md for the motivation and decisions.md for every behaviour choice; 
 - A `JobQueueUnavailableError` from `state`, `requeue` or `enqueue` ends the pass with one warn
   line, so a Redis outage costs one timeout per tick, not one per job. Each query takes at most
   `batchSize` jobs per tick (`JOB_SERVICE_RECOVERY_BATCH_SIZE`, 100); the rest waits for the next.
-- Timer: `JobRecoverySchedule` in `app/jobs/`, a Nest lifecycle class like `JobGroupPoll`: registers
-  an interval with `SchedulerRegistry` on bootstrap, skips a tick while one runs, and on shutdown
-  removes the interval and awaits the tick in flight before the database closes. `@nestjs/schedule`
-  joins job-service's dependencies (already used by job-group-service, same version).
+- Timer: the interval logic of job-group-service's `JobGroupPoll` (register an interval with
+  `SchedulerRegistry`, skip a tick while one runs, log a failed run, on stop remove the interval and
+  await the run in flight) moves into service-kit as `SchedulerIntervalTask` behind an
+  `IntervalTask` port (decided during apply: no logic written twice), with `JobGroupPoll`'s tests.
+  `JobGroupPoll` and the new `JobRecoverySchedule` (`app/jobs/`) are thin Nest lifecycle hooks around
+  it: start on bootstrap, stop in `onModuleDestroy`, before the database closes. `@nestjs/schedule`
+  joins the dependencies of service-kit and job-service (already used by job-group-service, same
+  version); job-service imports `ScheduleModule.forRoot()`.
 - Config: `JOB_SERVICE_RECOVERY_INTERVAL_MS` (30000), `JOB_SERVICE_RECOVERY_MIN_AGE_MS` (30000),
   `JOB_SERVICE_MAX_PROCESSING_MS_EMAIL` (30000), `..._WEBHOOK` (30000), `..._FLIGHT_TRANSIT` (60000).
   `JobServiceConfig` gains `recovery: { intervalMs, minAgeMs, batchSize }`, `retryDelay: { minMs,
@@ -202,7 +206,13 @@ See proposal.md for the motivation and decisions.md for every behaviour choice; 
   (run/attempt, idempotent start, backoff `scheduledAt` with the real `SystemRandom` asserted within
   the configured range, `maxProcessingMs` on the read), a new `recovery.e2e.test.ts` (the pass
   driven by calling the `JobRecovery` use case from the container once, with the mocked `JobQueue`
-  answering `state`); worker e2e (`job-execution.e2e.test.ts`: timeout, recovered refusal).
+  answering `state`; the harness's recovery interval is an hour so the timer never fires during a
+  test, and one test checks the running app registers it). Two deliberate exceptions to the e2e
+  rules: the pass has no HTTP route, so it is run through its use case; and a stuck job needs an old
+  last change, which neither a route nor the repository can produce (Prisma's `@updatedAt` sets it
+  on every write), so the harness's `age` moves `updated_at`, `started_at` and `scheduled_at` back
+  with raw SQL through the app's own `PrismaDatabase`. Jobs reach their stuck state through the
+  routes wherever one can (submit, start report) before they are aged; worker e2e (`job-execution.e2e.test.ts`: timeout, recovered refusal).
 - System e2e: `EXECUTION_INSTANCES` becomes 3. `STACK_ENV` adds short settings passed through compose
   (`${VAR:-default}` entries): recovery interval and min age 2 s, lock duration and stalled interval
   2 s, retry delays 500–1000 ms (cap 2 s). `Stack` gains `kill(req: { container })` (`docker kill`)
