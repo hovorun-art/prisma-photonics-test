@@ -13,6 +13,8 @@ be grouped and followed as one (the project's answer to the Batch job).
 Requirements: Docker with Compose v2. For local development also Node 26 and npm.
 
 ```bash
+git clone https://github.com/hovorun-art/prisma-photonics-test.git
+cd prisma-photonics-test
 docker compose up --build --wait
 ```
 
