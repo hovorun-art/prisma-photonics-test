@@ -91,7 +91,11 @@ rejected, a new runtime dependency for one script when the packages already buil
     question's marker (or the closing quote before the trailing sentence). Matching on the known
     question texts keeps quotes inside answers safe; free-text answers and notes stay as written.
   - `Agent` call whose id is a subagent's `toolUseId` → `subagent`, with the subagent file read
-    the same way (its first prompt is the task the main agent gave it).
+    the same way (its first prompt is the task the main agent gave it). ferry rejects subagent
+    files, whose records are all `isSidechain: true`, so the reader clears that flag before the
+    import. A subagent's final report is not a text reply but the `message` of its
+    `SubagentHandback` tool call; the reader shows it as the subagent's reply. A subagent whose
+    `Agent` call is not found is added at the end of its session.
   - `startedAt` is the thread's `createdAt`; `title` is the thread title, or the first prompt's
     first line when there is none.
 - `PatternTextMask` (params: `homeDir`, `email`): replaces the home path with `~`, the email with
@@ -120,12 +124,12 @@ written. `main.ts` wires the classes.
 `AI_CHAT.md` in CLAUDE.md, `docs/concept.md` and the roadmap item; README gets a short "AI chat
 export" note with the command.
 
-**Tests:** unit tests per class with `mockDeep` ports (`ChatExportImpl`, `ExportChatsCommand`),
-`PatternTextMask` and `MarkdownChatRenderer` on plain values; the fs, git and ferry adapters
-against temporary folders and small JSONL fixtures written by the test itself (records shaped
-like the observed ones: a prompt with injected tags, a slash command, hook feedback, a task
-notification, a tool call and result, thinking, an `AskUserQuestion` call and result in both
-lead-in formats, an `Agent` call with a subagent file and meta). No real transcripts in tests.
+**Tests:** an internal tool, so the tests are kept small (user decision): `ClaudeProjectFolders`
+and `FerrySessionReader` are tested against temporary folders and JSONL fixtures written by the
+test itself (records shaped like the observed ones), and `PatternTextMask` on plain strings, since
+a masking gap would publish personal data. These are `*.int.test.ts` where they touch the disk.
+The renderer, the file writer, the git adapter, the use case and the command are checked by the
+real run (task 5.3), not by tests. The change has no spec (`skip_specs`).
 
 ## Risks / Trade-offs
 

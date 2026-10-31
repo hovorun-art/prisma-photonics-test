@@ -1,7 +1,9 @@
 import { defineConfig } from 'vitest/config';
 
-import { packageProjects } from '../../tooling/vitest/presets.js';
+import { nestPackageProjects } from '../../tooling/vitest/presets.js';
 
+// Unit and integration projects (the adapters run against the real filesystem and git); no
+// plugins, since there is no NestJS code here.
 export default defineConfig({
-  test: { projects: packageProjects('ai-chat-export') },
+  test: { projects: nestPackageProjects('ai-chat-export', []) },
 });

@@ -18,8 +18,8 @@ them. (Retention is not a risk: the user's Claude Code settings keep transcripts
 ## Capabilities
 
 ### New Capabilities
-- `ai-chat-export`: exporting this project's Claude Code sessions into one Markdown file in the
-  repository (which sessions, what the file shows, what is left out or masked).
+- None: an internal tool, so the change has no spec (`skip_specs: true`, user decision in
+  decisions.md).
 
 ### Modified Capabilities
 - None.

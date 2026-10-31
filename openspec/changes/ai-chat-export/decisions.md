@@ -19,7 +19,7 @@
 - Hook feedback that Claude Code feeds back as a user turn (e.g. "Stop hook feedback: ...") is left out, like other system messages (user confirmed assumption)
 - A question Claude asked is shown as each question with the option the user picked and any note they added; the options not picked are left out (user confirmed assumption)
 - The email address to mask is read from the repository's git `user.email`, and the home path from the operating system (user confirmed assumption)
-- The change has a spec (`ai-chat-export`), since the export's output is observable and every scenario gets a test named after it. (user confirmed assumption)
+- ~~The change has a spec~~ - replaced: the export is an internal tool kept as simple as possible; the change has no spec (`skip_specs`), and tests are limited to the transcript adapters already written and the masking; no `test-case-reviewer` runs and no `change-verifier` run. (user)
 - ~~Title slug in file names: `@sindresorhus/slugify`~~ - chosen by the user (~6.3M weekly, v3.0.1), then made unnecessary by the single file; see Assumed. (user)
 - `@sindresorhus/slugify` is dropped: with one file there are no file names to build, and the contents link to explicit anchors (`<a id="...">` from the session id) instead of GitHub's generated heading ids (user confirmed assumption)
 - `AI_CHAT.md` is added to the English-only check's `LANGUAGE_IGNORE` (in place of `docs/ai-chats/`) and to `.prettierignore`, and `docs/ai-chats/` is replaced by `AI_CHAT.md` in CLAUDE.md, the concept and the roadmap (user confirmed assumption)
