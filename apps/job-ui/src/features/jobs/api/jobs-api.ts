@@ -19,8 +19,8 @@ export interface JobListFilters {
 
 export interface QueryJobsApiRequest extends JobListFilters {
   readonly offset: number;
-  /** Only the jobs of this group. */
-  readonly groupId?: string;
+  /** Only the jobs of this group, or (`null`) only the jobs submitted without one. */
+  readonly groupId?: string | null;
   /** Page size; left out means job-service's default. */
   readonly limit?: number;
 }
@@ -38,6 +38,14 @@ export interface CreateJobsApiRequest {
 }
 export interface CreateJobsApiResponse {
   readonly job: Job;
+}
+
+export interface CreateBulkJobsApiRequest {
+  readonly jobs: readonly CreateJobRequest[];
+}
+export interface CreateBulkJobsApiResponse {
+  /** The created jobs, in the order of the request. */
+  readonly jobs: readonly Job[];
 }
 
 export interface ChangeStatusJobsApiRequest {
@@ -66,7 +74,10 @@ export interface LogsJobsApiRequest {
 }
 export type LogsJobsApiResponse = QueryJobLogResponse;
 
-export type StatsJobsApiRequest = JobListFilters;
+export interface StatsJobsApiRequest extends JobListFilters {
+  /** Counts only this group's jobs, or (`null`) only the jobs submitted without one. */
+  readonly groupId?: string | null;
+}
 
 export interface StatsJobsApiResponse {
   readonly stats: QueueStats;
@@ -80,6 +91,8 @@ export interface JobsApi {
   query(req: QueryJobsApiRequest): Promise<QueryJobsApiResponse>;
   get(req: GetJobsApiRequest): Promise<GetJobsApiResponse>;
   create(req: CreateJobsApiRequest): Promise<CreateJobsApiResponse>;
+  /** Submits many jobs in one request (`POST /v1/jobs/bulk`), stored all or nothing. */
+  createBulk(req: CreateBulkJobsApiRequest): Promise<CreateBulkJobsApiResponse>;
   /** Cancels or retries a job (`PATCH /v1/jobs/:id`), answering the updated job. */
   changeStatus(req: ChangeStatusJobsApiRequest): Promise<ChangeStatusJobsApiResponse>;
   delete(req: DeleteJobsApiRequest): Promise<DeleteJobsApiResponse>;

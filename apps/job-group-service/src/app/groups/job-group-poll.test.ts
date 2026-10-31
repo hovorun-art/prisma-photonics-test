@@ -4,13 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockDeep, mockReset } from 'vitest-mock-extended';
 
 import type {
-  CheckRunningJobGroupTrackerResponse,
+  CheckOpenJobGroupTrackerResponse,
   JobGroupTracker,
 } from '../../domain/groups/job-group-tracker.js';
 import { JOB_GROUP_POLL_INTERVAL_NAME, JobGroupPoll } from './job-group-poll.js';
 
 const INTERVAL_MS = 1_000;
-const CHECKED: CheckRunningJobGroupTrackerResponse = { checked: 1, failedChecks: 0 };
+const CHECKED: CheckOpenJobGroupTrackerResponse = { checked: 1, failedChecks: 0 };
 
 // How ticks are skipped, failures logged and shutdown awaited is SchedulerIntervalTask's
 // (service-kit); these tests show the poll is wired to it.
@@ -32,20 +32,20 @@ describe('JobGroupPoll', () => {
   });
 
   it('checks the running groups once per configured interval after bootstrap, under its name', async () => {
-    tracker.checkRunning.mockResolvedValueOnce(CHECKED).mockResolvedValueOnce(CHECKED);
+    tracker.checkOpen.mockResolvedValueOnce(CHECKED).mockResolvedValueOnce(CHECKED);
 
     poll.onApplicationBootstrap();
     await vi.advanceTimersByTimeAsync(INTERVAL_MS);
     await vi.advanceTimersByTimeAsync(INTERVAL_MS);
 
-    expect(tracker.checkRunning).toHaveBeenCalledTimes(2);
+    expect(tracker.checkOpen).toHaveBeenCalledTimes(2);
     expect(registry.getIntervals()).toEqual([JOB_GROUP_POLL_INTERVAL_NAME]);
   });
 
   it('logs a failed check as the job group poll', async () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementationOnce(() => undefined);
     const failure = new Error('database gone');
-    tracker.checkRunning.mockRejectedValueOnce(failure);
+    tracker.checkOpen.mockRejectedValueOnce(failure);
 
     poll.onApplicationBootstrap();
     await vi.advanceTimersByTimeAsync(INTERVAL_MS);
@@ -57,8 +57,8 @@ describe('JobGroupPoll', () => {
   });
 
   it('stops on shutdown and waits for the check in flight', async () => {
-    let finish: (value: CheckRunningJobGroupTrackerResponse) => void = () => undefined;
-    tracker.checkRunning.mockImplementationOnce(
+    let finish: (value: CheckOpenJobGroupTrackerResponse) => void = () => undefined;
+    tracker.checkOpen.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finish = resolve;

@@ -27,7 +27,7 @@ import { PrismaModule } from '../prisma/prisma.module.js';
 import { JobGroupPoll } from './job-group-poll.js';
 import { JobGroupsController } from './job-groups.controller.js';
 
-/** The group feature: the public routes over one `JobGroupService`, and the poll of running groups. */
+/** The group feature: the public routes over one `JobGroupService`, and the poll of open groups. */
 @Module({
   imports: [PrismaModule],
   controllers: [JobGroupsController],

@@ -79,6 +79,17 @@ describe('AppRoutes', () => {
     expect(screen.getByRole('heading', { level: 1, name: en.submit.title })).toBeVisible();
   });
 
+  it('Direct link to the new group page: /groups/new shows the new group page, not a group page', () => {
+    render(
+      <TestProviders path="/groups/new">
+        <AppRoutes />
+      </TestProviders>,
+    );
+
+    expect(screen.getByRole('heading', { level: 1, name: en.newGroup.title })).toBeVisible();
+    expect(screen.queryByText(en.group.notFoundTitle)).toBeNull();
+  });
+
   it('Back returns to the list: Back after opening a job shows the list again', async () => {
     const user = userEvent.setup();
     render(

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import { JOBS_ROUTE, QueryJobsResponse } from '@job-queue/contracts';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -119,6 +121,31 @@ describe('job-service queue statistics', () => {
     });
   });
 
+  it('Statistics of the jobs without a group for groupId=null', async () => {
+    await service.seed({ status: 'pending' });
+    await service.seed({ status: 'completed' });
+    await service.seed({ status: 'pending', groupId: randomUUID() });
+    await service.seed({ status: 'processing', groupId: randomUUID() });
+    await service.seed({ status: 'scheduled', groupId: randomUUID() });
+    await service.seed({ status: 'completed', groupId: randomUUID() });
+    await service.seed({ status: 'failed', groupId: randomUUID() });
+
+    expect(await service.stats([['groupId', 'null']])).toEqual({
+      pending: 1,
+      processing: 0,
+      scheduled: 0,
+      recent: { windowMinutes: RECENT_WINDOW_MINUTES, completed: 1, failed: 0 },
+      throughput: {
+        windowMinutes: THROUGHPUT_WINDOW_MINUTES,
+        perMinute: 1 / THROUGHPUT_WINDOW_MINUTES,
+      },
+      counts: {
+        status: { ...NO_STATUS_COUNTS, pending: 1, completed: 1 },
+        type: { ...NO_TYPE_COUNTS, email: 2 },
+      },
+    });
+  });
+
   it('Database unavailable', async () => {
     vi.spyOn(service.app.get<JobCounts>(JOB_COUNTS), 'count').mockRejectedValueOnce(
       new Error('connection refused'),
@@ -149,6 +176,17 @@ describe('job-service queue statistics', () => {
       expect((await service.stats()).counts).toEqual({
         status: { ...NO_STATUS_COUNTS, failed: 2, completed: 1, pending: 1 },
         type: { ...NO_TYPE_COUNTS, webhook: 2, email: 2 },
+      });
+    });
+
+    it('Counts of the jobs without a group for groupId=null', async () => {
+      await service.seed({ status: 'failed', type: 'webhook' });
+      await service.seed({ status: 'failed', type: 'webhook', groupId: randomUUID() });
+      await service.seed({ status: 'pending', groupId: randomUUID() });
+
+      expect((await service.stats([['groupId', 'null']])).counts).toEqual({
+        status: { ...NO_STATUS_COUNTS, failed: 1 },
+        type: { ...NO_TYPE_COUNTS, webhook: 1 },
       });
     });
 
@@ -240,6 +278,10 @@ describe('job-service queue statistics', () => {
 
     it('Empty filter value on statistics', async () => {
       expect(await rejectedFields([['type', '']])).toEqual(['type']);
+    });
+
+    it('Invalid group filter on statistics', async () => {
+      expect(await rejectedFields([['groupId', 'campaign-1']])).toEqual(['groupId']);
     });
 
     it('Filter given twice on statistics', async () => {

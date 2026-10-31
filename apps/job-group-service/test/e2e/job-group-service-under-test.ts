@@ -26,7 +26,7 @@ import {
   type JobGroupRepository,
 } from '../../src/domain/groups/job-group-repository.js';
 import {
-  type CheckRunningJobGroupTrackerResponse,
+  type CheckOpenJobGroupTrackerResponse,
   JOB_GROUP_TRACKER,
   type JobGroupTracker,
 } from '../../src/domain/groups/job-group-tracker.js';
@@ -177,8 +177,8 @@ export class JobGroupServiceUnderTest implements Closable {
   // --- The poll ---------------------------------------------------------------------------------
 
   /** One poll of the running groups, as the app's timer runs it, taken from the DI container. */
-  poll(): Promise<CheckRunningJobGroupTrackerResponse> {
-    return this.app.get<JobGroupTracker>(JOB_GROUP_TRACKER).checkRunning();
+  poll(): Promise<CheckOpenJobGroupTrackerResponse> {
+    return this.app.get<JobGroupTracker>(JOB_GROUP_TRACKER).checkOpen();
   }
 
   /** Lets the clock move on, so groups created one after another get different creation times. */

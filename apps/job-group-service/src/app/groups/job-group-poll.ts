@@ -32,7 +32,7 @@ export class JobGroupPoll implements OnApplicationBootstrap, OnModuleDestroy {
     @Inject(JOB_GROUP_SERVICE_CONFIG) config: Pick<JobGroupServiceConfig, 'pollIntervalMs'>,
   ) {
     this.task = new SchedulerIntervalTask(
-      { scheduler, logger: new Logger(JobGroupPoll.name), work: () => tracker.checkRunning() },
+      { scheduler, logger: new Logger(JobGroupPoll.name), work: () => tracker.checkOpen() },
       {
         name: JOB_GROUP_POLL_INTERVAL_NAME,
         intervalMs: config.pollIntervalMs,

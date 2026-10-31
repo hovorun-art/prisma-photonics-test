@@ -1,0 +1,16 @@
+{
+  "name": "@job-queue/ai-chat-export",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Exports this repository's Claude Code sessions (main checkout, worktrees and their subagents) into AI_CHAT.md",
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint . --max-warnings 0",
+    "test": "vitest run --passWithNoTests"
+  },
+  "dependencies": {
+    "@kontourai/ferry": "0.6.0"
+  }
+}

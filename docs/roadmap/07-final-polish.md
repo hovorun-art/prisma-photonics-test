@@ -7,7 +7,7 @@ reviewer can follow, honest `DECISIONS.md` and `AI_USAGE.md`, and the AI chat tr
 
 | Change | Intent | Depends on |
 |---|---|---|
-| `ai-chat-export` | Script that converts Claude Code sessions into Markdown under `docs/ai-chats/`. Collects the transcripts of every worktree's project folder, not only the main checkout's. Done early, so no session is lost before the end | - |
+| `ai-chat-export` | Script that converts Claude Code sessions into one Markdown file, `AI_CHAT.md`. Collects the transcripts of every worktree's project folder, not only the main checkout's. Done early, so no session is lost before the end | - |
 | `ai-usage-notes` | Not a change but a running log, started now: concrete cases for `AI_USAGE.md` (what helped, what had to be fixed, especially around concurrency, what AI struggled with), written down as they happen | - |
 | `concurrency-proof` | System-level stress and chaos test: several workers, a few hundred jobs of mixed priority, workers killed mid-job (`docker kill`) and stopped (`docker stop`); asserts every job finishes and none runs twice. Its numbers back `DECISIONS.md` sections 1 and 2 | milestone 5 |
 | `test-review` | Review the per-app and system e2e suites against the testing rules (one file per spec area, coverage, flakiness) and check across all merged changes that every spec scenario has a test named after it; fix the gaps | all earlier milestones |
@@ -25,7 +25,7 @@ reviewer can follow, honest `DECISIONS.md` and `AI_USAGE.md`, and the AI chat tr
 | `job-list-cursor-paging` | Optional: cursor-based paging of the job list, stable while jobs change, in API and UI | `job-list-sort-order` |
 | `live-updates-sse` | Optional: push job updates to the UI with Server-Sent Events instead of polling | `job-ui-crud` |
 | `flight-transit-real-data` | Optional, last: take aircraft transit data from a real external API next to the generated data; the generator stays the default and the fallback, and the API key is optional | `flight-transit-job-execution` |
-| `submission-docs` | Final README, DECISIONS.md and AI_USAGE.md: Swagger examples for every job type, a green CI run on the final commit, and the `.claude/` spec-driven flow (hooks, verifier, TDD gate) presented in `AI_USAGE.md` | `requirements-check`, `concurrency-proof` |
+| `submission-docs` | Final README, DECISIONS.md and AI_USAGE.md: Swagger examples for every job type, and the `.claude/` spec-driven flow (hooks, verifier, TDD gate) presented in `AI_USAGE.md` | `requirements-check`, `concurrency-proof` |
 | `fresh-clone-check` | Clone the repository into an empty folder and follow only the README: no `.env`, no cached images, default ports. Fix anything that needs knowledge the README does not give | `submission-docs` |
 
 ## Open questions

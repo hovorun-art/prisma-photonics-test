@@ -13,14 +13,15 @@ export interface JobGroupRepository {
   query(req: QueryJobGroupRepositoryRequest): Promise<QueryJobGroupRepositoryResponse>;
   /** Removes the group; `deleted` is false when no group had the id. */
   delete(req: DeleteJobGroupRepositoryRequest): Promise<DeleteJobGroupRepositoryResponse>;
-  /** Up to `limit` running groups with an id above `afterId` (all when omitted), ordered by id. */
-  listRunning(
-    req: ListRunningJobGroupRepositoryRequest,
-  ): Promise<ListRunningJobGroupRepositoryResponse>;
   /**
-   * Stores the result of one poll of a running group. `total` never decreases: the larger of the
-   * stored and the given one is kept. A group that is no longer running, or no longer exists, is
-   * left as it is and `recorded` is false.
+   * Up to `limit` open groups (`running` or `failed`: a failed child can still be retried) with an
+   * id above `afterId` (all when omitted), ordered by id.
+   */
+  listOpen(req: ListOpenJobGroupRepositoryRequest): Promise<ListOpenJobGroupRepositoryResponse>;
+  /**
+   * Stores the result of one poll of an open group. `total` never decreases: the larger of the
+   * stored and the given one is kept. A completed group, or one that no longer exists, is left as
+   * it is and `recorded` is false.
    */
   recordCheck(
     req: RecordCheckJobGroupRepositoryRequest,
@@ -57,12 +58,12 @@ export interface DeleteJobGroupRepositoryResponse {
   deleted: boolean;
 }
 
-export interface ListRunningJobGroupRepositoryRequest {
+export interface ListOpenJobGroupRepositoryRequest {
   limit: number;
   afterId?: string;
 }
 
-export interface ListRunningJobGroupRepositoryResponse {
+export interface ListOpenJobGroupRepositoryResponse {
   groups: JobGroup[];
 }
 

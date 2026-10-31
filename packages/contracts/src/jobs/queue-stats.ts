@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { JobStatus, JobType } from './job.js';
+import { GroupIdFilter, JobStatus, JobType } from './job.js';
 
 export const STATS_ROUTE = '/v1/stats';
 
@@ -9,11 +9,13 @@ const WindowMinutes = z.number().int().positive();
 
 /**
  * Query string of `GET /v1/stats`: at most one status and one type. They narrow only `counts`,
- * each the other facet (see `QueueStats`); a repeated or empty value fails the enum.
+ * each the other facet (see `QueueStats`); a repeated or empty value fails the enum. `groupId`
+ * narrows every statistic to one group's jobs, or to the jobs without a group (`null`).
  */
 export const QueryStatsRequest = z.object({
   status: JobStatus.optional(),
   type: JobType.optional(),
+  groupId: GroupIdFilter.optional(),
 });
 export type QueryStatsRequest = z.infer<typeof QueryStatsRequest>;
 

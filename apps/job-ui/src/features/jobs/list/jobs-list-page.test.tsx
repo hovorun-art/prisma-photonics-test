@@ -433,6 +433,13 @@ describe('JobsListPage', () => {
      * statistics count it faceted by the filters, as the API does. The cards keep the fixture's
      * values. Returns the query strings each route received and a way to change the jobs.
      */
+    /** The `groupId` filter as job-service applies it: a group's id, or `null` for no group. */
+    function inGroup(params: URLSearchParams, job: Job): boolean {
+      const groupId = params.get('groupId');
+      if (groupId === null) return true;
+      return groupId === 'null' ? job.groupId === null : job.groupId === groupId;
+    }
+
     function serveJobs(initial: Job[]) {
       let jobs = initial;
       const jobQueries: URLSearchParams[] = [];
@@ -445,7 +452,9 @@ describe('JobsListPage', () => {
           const type = params.get('type');
           const matching = jobs.filter(
             (job) =>
-              (status === null || job.status === status) && (type === null || job.type === type),
+              inGroup(params, job) &&
+              (status === null || job.status === status) &&
+              (type === null || job.type === type),
           );
           const offset = Number(params.get('offset') ?? 0);
           return HttpResponse.json({
@@ -458,7 +467,8 @@ describe('JobsListPage', () => {
           statsQueries.push(params);
           const status = params.get('status');
           const type = params.get('type');
-          const count = (match: (job: Job) => boolean) => jobs.filter(match).length;
+          const count = (match: (job: Job) => boolean) =>
+            jobs.filter((job) => inGroup(params, job) && match(job)).length;
           const counts = {
             status: Object.fromEntries(
               JobStatus.options.map((s) => [
@@ -499,6 +509,23 @@ describe('JobsListPage', () => {
         .map((link) => link.textContent)
         .filter((text) => /^[0-9a-f]{8}$/.test(text));
     const shortIds = (jobs: Job[]) => jobs.map((job) => job.id.slice(0, 8));
+
+    it('shows and counts only the jobs submitted without a group', async () => {
+      const ungrouped = [stored('pending'), stored('failed')];
+      const { jobQueries, statsQueries } = serveJobs([
+        ...ungrouped,
+        { ...stored('pending'), groupId: randomUUID() },
+      ]);
+      renderList();
+
+      expect(await screen.findByText(en.list.showing(1, 2, 2))).toBeVisible();
+      expect(shownIds()).toEqual(shortIds(ungrouped));
+      expect(
+        await within(statusGroup()).findByRole('button', { name: /^Pending 1$/ }),
+      ).toBeVisible();
+      expect(jobQueries.every((params) => params.get('groupId') === 'null')).toBe(true);
+      expect(statsQueries.every((params) => params.get('groupId') === 'null')).toBe(true);
+    });
 
     it('Filter by status: clicking Failed shows only the failed jobs and presses Failed', async () => {
       const user = userEvent.setup();

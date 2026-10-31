@@ -152,14 +152,32 @@ A failed child SHALL NOT cancel or otherwise change the other children.
 - **WHEN** one child of a group fails while its other children are pending
 - **THEN** the group stays `running` and the other children still run to their own end in job-service
 
-### Requirement: A finished group no longer changes
-Once a group is `completed` or `failed`, job-group-service SHALL no longer poll it, and its stats,
-status and `finishedAt` SHALL stay as they were, even when jobs with its id are added, retried or
-deleted in job-service later.
+### Requirement: A completed group no longer changes
+Once a group is `completed`, job-group-service SHALL no longer poll it, and its stats, status and
+`finishedAt` SHALL stay as they were, even when jobs with its id are added, retried or deleted in
+job-service later.
 
 #### Scenario: Job added after the group finished
 - **WHEN** a group is `completed` and a client submits another job with its id to job-service, and a poll interval passes
 - **THEN** getting the group shows the same status, stats and `finishedAt` as before
+
+### Requirement: A failed group follows retried children
+job-group-service SHALL keep polling a `failed` group, so that retrying one of its failed or
+cancelled children makes the group `running` again with `finishedAt` `null`, and the group then
+finishes again as its children do. While a failed group stays failed, its `finishedAt` SHALL keep
+the time it first failed.
+
+#### Scenario: A failed group runs again when a failed child is retried
+- **WHEN** a group is `failed`, one of its failed children is retried in job-service, and a poll interval passes
+- **THEN** getting the group shows status `running`, the retried child no longer counted in `failed`, and `finishedAt` `null`
+
+#### Scenario: The retried group completes
+- **WHEN** the retried child of a group that ran again completes, so every child has completed, and a poll interval passes
+- **THEN** the group is `completed` with `finishedAt` set
+
+#### Scenario: A failed group that is not retried keeps its finish time
+- **WHEN** a group is `failed` and several poll intervals pass without any of its children changing
+- **THEN** the group stays `failed` with the same `finishedAt`
 
 ### Requirement: A failed poll keeps the last state
 When job-service cannot be reached or answers with an error during a poll, job-group-service SHALL

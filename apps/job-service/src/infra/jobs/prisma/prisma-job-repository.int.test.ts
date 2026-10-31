@@ -461,6 +461,21 @@ describe('PrismaJobRepository against Postgres', () => {
         expect(page.total).toBe(2);
       });
 
+      it('Only the jobs without a group are returned for groupId null', async () => {
+        const [, , none1, , none2] = await storeInGroups([
+          { groupId: GROUP_A, kind: { status: 'pending', type: 'email' } },
+          { groupId: GROUP_B, kind: { status: 'pending', type: 'email' } },
+          { groupId: null, kind: { status: 'pending', type: 'email' } },
+          { groupId: GROUP_A, kind: { status: 'completed', type: 'webhook' } },
+          { groupId: null, kind: { status: 'failed', type: 'webhook' } },
+        ]);
+
+        const page = await repository.query({ limit: 10, offset: 0, groupId: null });
+
+        expect(page.items).toEqual([none2, none1]);
+        expect(page.total).toBe(2);
+      });
+
       it('Group filter combines with status and type', async () => {
         const [, match] = await storeInGroups([
           { groupId: GROUP_A, kind: { status: 'pending', type: 'email' } },

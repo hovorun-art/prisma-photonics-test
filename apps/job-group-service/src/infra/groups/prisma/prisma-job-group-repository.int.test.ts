@@ -188,9 +188,9 @@ describe('PrismaJobGroupRepository against Postgres', () => {
     });
   });
 
-  describe('listRunning', () => {
-    it('returns only running groups, ordered by id', async () => {
-      const running = [await seed(CHECKED_AT), await seed(CHECKED_AT), await seed(CHECKED_AT)];
+  describe('listOpen', () => {
+    it('returns the running and failed groups, not the completed ones, ordered by id', async () => {
+      const running = [await seed(CHECKED_AT), await seed(CHECKED_AT)];
       const completed = await repository.create();
       const failed = await repository.create();
       await repository.recordCheck(
@@ -200,10 +200,10 @@ describe('PrismaJobGroupRepository against Postgres', () => {
         check(failed.group.id, { status: 'failed', finishedAt: FINISHED_AT }),
       );
 
-      const { groups } = await repository.listRunning({ limit: 10 });
+      const { groups } = await repository.listOpen({ limit: 10 });
 
       expect(groups.map((group) => group.id)).toEqual(
-        running.map((group) => group.id).sort(byIdAscending),
+        [...running.map((group) => group.id), failed.group.id].sort(byIdAscending),
       );
     });
 
@@ -212,9 +212,9 @@ describe('PrismaJobGroupRepository against Postgres', () => {
         .map((group) => group.id)
         .sort(byIdAscending);
 
-      const first = await repository.listRunning({ limit: 2 });
-      const second = await repository.listRunning({ limit: 2, afterId: ids[1] });
-      const last = await repository.listRunning({ limit: 2, afterId: ids[2] });
+      const first = await repository.listOpen({ limit: 2 });
+      const second = await repository.listOpen({ limit: 2, afterId: ids[1] });
+      const last = await repository.listOpen({ limit: 2, afterId: ids[2] });
 
       expect(first.groups.map((group) => group.id)).toEqual([ids[0], ids[1]]);
       expect(second.groups.map((group) => group.id)).toEqual([ids[2]]);
@@ -225,18 +225,18 @@ describe('PrismaJobGroupRepository against Postgres', () => {
       const ids = [await seed(CHECKED_AT), await seed(CHECKED_AT), await seed(CHECKED_AT)]
         .map((group) => group.id)
         .sort(byIdAscending);
-      const first = await repository.listRunning({ limit: 2 });
+      const first = await repository.listOpen({ limit: 2 });
       await repository.recordCheck(
         check(ids[0]!, { status: 'completed', finishedAt: FINISHED_AT }),
       );
 
-      const second = await repository.listRunning({ limit: 2, afterId: first.groups[1]?.id });
+      const second = await repository.listOpen({ limit: 2, afterId: first.groups[1]?.id });
 
       expect(second.groups.map((group) => group.id)).toEqual([ids[2]]);
     });
 
     it('returns nothing when there are no groups', async () => {
-      await expect(repository.listRunning({ limit: 10 })).resolves.toEqual({ groups: [] });
+      await expect(repository.listOpen({ limit: 10 })).resolves.toEqual({ groups: [] });
     });
   });
 
@@ -311,7 +311,33 @@ describe('PrismaJobGroupRepository against Postgres', () => {
       expect(await database.jobGroup.count()).toBe(0);
     });
 
-    it('changes nothing and reports false for a group that already finished', async () => {
+    it('runs a failed group again when a check finds unfinished children', async () => {
+      const { group } = await repository.create();
+      await repository.recordCheck(
+        check(group.id, {
+          status: 'failed',
+          total: 2,
+          completed: 1,
+          failed: 1,
+          finishedAt: FINISHED_AT,
+        }),
+      );
+
+      await expect(
+        repository.recordCheck(
+          check(group.id, { status: 'running', total: 2, completed: 1, failed: 0 }),
+        ),
+      ).resolves.toEqual({ recorded: true });
+
+      expect((await repository.get({ id: group.id })).group).toMatchObject({
+        status: 'running',
+        completed: 1,
+        failed: 0,
+        finishedAt: null,
+      });
+    });
+
+    it('changes nothing and reports false for a group that already completed', async () => {
       const { group } = await repository.create();
       await repository.recordCheck(
         check(group.id, { status: 'completed', total: 3, completed: 3, finishedAt: FINISHED_AT }),

@@ -133,7 +133,8 @@ export class JobsController {
       'Query jobs a page at a time, newest first, optionally filtered by status, type and group',
     description:
       'Repeat `status` or `type` for several values (`?status=failed&status=cancelled`); ' +
-      '`groupId` takes one value. The filters combine with AND, the values of one filter with OR; ' +
+      '`groupId` takes one value, or `null` for the jobs submitted without a group. The filters ' +
+      'combine with AND, the values of one filter with OR; ' +
       '`total` counts the matching jobs.',
   })
   @ApiOkResponse({ type: QueryJobsResponseDto })

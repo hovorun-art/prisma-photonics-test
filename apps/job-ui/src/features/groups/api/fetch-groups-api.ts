@@ -5,6 +5,9 @@ import {
   type FetchJsonApiClientParams,
 } from '../../jobs/api/fetch-json-api-client';
 import type {
+  CreateGroupsApiResponse,
+  DeleteGroupsApiRequest,
+  DeleteGroupsApiResponse,
   GetGroupsApiRequest,
   GetGroupsApiResponse,
   GroupsApi,
@@ -33,9 +36,26 @@ export class FetchGroupsApi implements GroupsApi {
 
   async get(req: GetGroupsApiRequest): Promise<GetGroupsApiResponse> {
     const { response } = await this.client.send({
-      path: `${JOB_GROUPS_ROUTE}/${encodeURIComponent(req.id)}`,
+      path: this.groupPath(req.id),
       init: { method: 'GET' },
     });
     return { group: (await this.client.read({ schema: JobGroup, response })).body };
+  }
+
+  async create(): Promise<CreateGroupsApiResponse> {
+    const { response } = await this.client.send({
+      path: JOB_GROUPS_ROUTE,
+      init: { method: 'POST' },
+    });
+    return { group: (await this.client.read({ schema: JobGroup, response })).body };
+  }
+
+  async delete(req: DeleteGroupsApiRequest): Promise<DeleteGroupsApiResponse> {
+    await this.client.send({ path: this.groupPath(req.id), init: { method: 'DELETE' } });
+    return { id: req.id };
+  }
+
+  private groupPath(id: string): string {
+    return `${JOB_GROUPS_ROUTE}/${encodeURIComponent(id)}`;
   }
 }

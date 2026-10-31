@@ -19,10 +19,13 @@ export class StatsController {
       'recent window; and the throughput, jobs completed within the throughput window per minute. ' +
       'Both window lengths are part of the answer. `counts` holds all jobs per status and per ' +
       'type, faceted: `type` narrows the counts per status, `status` the counts per type; neither ' +
-      'filter changes the other statistics. Each filter takes one value.',
+      'filter changes the other statistics. Each filter takes one value. `groupId` narrows every ' +
+      'statistic to one group, or with `groupId=null` to the jobs submitted without a group.',
   })
   @ApiOkResponse({ type: QueueStatsDto })
   async get(@Query() query: QueryStatsDto): Promise<QueueStats> {
-    return (await this.statistics.get({ status: query.status, type: query.type })).stats;
+    return (
+      await this.statistics.get({ status: query.status, type: query.type, groupId: query.groupId })
+    ).stats;
   }
 }

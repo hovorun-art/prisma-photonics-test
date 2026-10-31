@@ -1,5 +1,7 @@
 import {
+  CreateJobsBulkResponse,
   Job,
+  JOBS_BULK_ROUTE,
   JOBS_ROUTE,
   QueryJobLogResponse,
   QueryJobsResponse,
@@ -11,6 +13,8 @@ import type { z } from 'zod';
 
 import { FetchJsonApiClient, type FetchJsonApiClientParams } from './fetch-json-api-client';
 import type {
+  CreateBulkJobsApiRequest,
+  CreateBulkJobsApiResponse,
   ChangeStatusJobsApiRequest,
   ChangeStatusJobsApiResponse,
   CreateJobsApiRequest,
@@ -44,7 +48,7 @@ export class FetchJobsApi implements JobsApi {
       path: `${JOBS_ROUTE}?${this.search({
         offset: String(req.offset),
         ...this.filters(req),
-        ...(req.groupId === undefined ? {} : { groupId: req.groupId }),
+        ...this.group(req.groupId),
         ...(req.limit === undefined ? {} : { limit: String(req.limit) }),
       })}`,
       init: { method: 'GET' },
@@ -67,6 +71,18 @@ export class FetchJobsApi implements JobsApi {
       },
     });
     return { job: await this.parse({ schema: Job, response }) };
+  }
+
+  async createBulk(req: CreateBulkJobsApiRequest): Promise<CreateBulkJobsApiResponse> {
+    const response = await this.send({
+      path: JOBS_BULK_ROUTE,
+      init: {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobs: req.jobs }),
+      },
+    });
+    return { jobs: (await this.parse({ schema: CreateJobsBulkResponse, response })).items };
   }
 
   async changeStatus(req: ChangeStatusJobsApiRequest): Promise<ChangeStatusJobsApiResponse> {
@@ -101,7 +117,7 @@ export class FetchJobsApi implements JobsApi {
   }
 
   async stats(req: StatsJobsApiRequest): Promise<StatsJobsApiResponse> {
-    const search = this.search(this.filters(req));
+    const search = this.search({ ...this.filters(req), ...this.group(req.groupId) });
     const response = await this.send({
       path: search === '' ? STATS_ROUTE : `${STATS_ROUTE}?${search}`,
       init: { method: 'GET' },
@@ -115,6 +131,12 @@ export class FetchJobsApi implements JobsApi {
       ...(req.status === undefined ? {} : { status: req.status }),
       ...(req.type === undefined ? {} : { type: req.type }),
     };
+  }
+
+  /** The `groupId` filter: a group's id, or `null` (sent as the word) for the jobs without one. */
+  private group(groupId: string | null | undefined): Record<string, string> {
+    if (groupId === undefined) return {};
+    return { groupId: groupId ?? 'null' };
   }
 
   private search(params: Record<string, string>): string {

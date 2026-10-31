@@ -215,12 +215,13 @@ describe('GroupsListPage', () => {
     expect(screen.getByLabelText(en.groups.loading)).toHaveAttribute('aria-busy', 'true');
   });
 
-  it('No groups: shows "No groups yet" and no pager', async () => {
+  it('No groups: shows "No groups yet", a hint that mentions New group, and no pager', async () => {
     answerPages({ items: [], total: 0 });
 
     renderList();
 
     expect(await screen.findByText(en.groups.emptyTitle)).toBeVisible();
+    expect(screen.getByText(new RegExp(en.frame.newGroup))).toBeVisible();
     expect(screen.queryByRole('button', { name: en.list.next })).toBeNull();
   });
 

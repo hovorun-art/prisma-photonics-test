@@ -1,4 +1,4 @@
-import { Plus } from 'lucide-react';
+import { Layers, Plus } from 'lucide-react';
 import { Link, NavLink, Outlet } from 'react-router';
 
 import { Button } from '@/components/ui/button';
@@ -57,6 +57,12 @@ export function AppFrame() {
           </nav>
           <div className="ml-auto flex flex-wrap items-center gap-3">
             <ApiStatusPill />
+            <Button asChild variant="outline" size="lg" className="h-10 px-4 no-underline">
+              <Link to="/groups/new">
+                <Layers aria-hidden="true" />
+                {en.frame.newGroup}
+              </Link>
+            </Button>
             <Button asChild size="lg" className="h-10 px-4 text-primary-foreground no-underline">
               <Link to="/jobs/new">
                 <Plus aria-hidden="true" />

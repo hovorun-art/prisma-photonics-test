@@ -339,6 +339,13 @@ export type JobIdParams = z.infer<typeof JobIdParams>;
 export const RepeatedQueryParam = z.transform((value: unknown) => [...new Set([value].flat())]);
 
 /**
+ * The `groupId` filter of a query string: a group's id for that group's jobs, or `null` for the
+ * jobs submitted without a group.
+ */
+export const GroupIdFilter = z.union([z.uuid(), z.literal('null').transform(() => null)]);
+export type GroupIdFilter = z.infer<typeof GroupIdFilter>;
+
+/**
  * Query string of `GET /v1/jobs`. Without `limit` job-service uses its configured default page
  * size; the configured maximum is checked by job-service, since it is runtime config. `status` and
  * `type` filters and `groupId` combine with AND, the values of one filter with OR; without a filter
@@ -349,8 +356,8 @@ export const QueryJobsRequest = z.object({
   offset: z.coerce.number().int().min(0).default(0),
   status: RepeatedQueryParam.pipe(z.array(JobStatus).min(1)).optional(),
   type: RepeatedQueryParam.pipe(z.array(JobType).min(1)).optional(),
-  /** One group at a time. */
-  groupId: z.uuid().optional(),
+  /** One group at a time, or `null` for the jobs without a group. */
+  groupId: GroupIdFilter.optional(),
 });
 export type QueryJobsRequest = z.infer<typeof QueryJobsRequest>;
 

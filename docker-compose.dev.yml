@@ -1,0 +1,13 @@
+# Local development (`npm run dev`): the apps run on the host, so the databases publish their
+# ports there. Used together with docker-compose.yml:
+# `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --wait postgres redis clickhouse`.
+services:
+  postgres:
+    ports:
+      - '${POSTGRES_PORT:-5432}:5432'
+  redis:
+    ports:
+      - '${REDIS_PORT:-6379}:6379'
+  clickhouse:
+    ports:
+      - '${CLICKHOUSE_HTTP_PORT:-8123}:8123'

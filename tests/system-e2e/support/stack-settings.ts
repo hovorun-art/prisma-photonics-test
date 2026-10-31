@@ -19,9 +19,6 @@ export const STACK_ENV: Readonly<Record<string, string>> = {
   JOB_SERVICE_PORT: String(ports.jobService),
   JOB_UI_PORT: String(ports.jobUi),
   JOB_GROUP_SERVICE_PORT: String(ports.jobGroupService),
-  POSTGRES_PORT: String(ports.postgres),
-  REDIS_PORT: String(ports.redis),
-  CLICKHOUSE_HTTP_PORT: String(ports.clickhouse),
   INTERNAL_SERVICE_TOKEN: 'system-e2e-service-token',
   LOG_LEVEL: 'info',
   // Recovery in seconds, not the production half minute, so a killed worker's or a lost entry's

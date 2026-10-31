@@ -45,8 +45,9 @@ export class JobStatisticsImpl implements JobStatistics {
           nowMs: now,
           minutes: this.p.throughputWindowMinutes,
         }),
+        groupId: req.groupId,
       }),
-      this.d.counts.countByStatusAndType(),
+      this.d.counts.countByStatusAndType({ groupId: req.groupId }),
     ]);
     return {
       stats: {

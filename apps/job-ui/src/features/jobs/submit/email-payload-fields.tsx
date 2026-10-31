@@ -3,7 +3,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { en } from '@/locales';
 
 import type { EmailFormField } from '../model/email-form-values';
-import { FormField, type JobFormFields } from './job-form';
+import { FormField, type JobFormFields } from './job-form-sections';
 
 /** "2. Payload" of an email job (design "SubmitJob"): To, Subject, Body. */
 export function EmailPayloadFields({ fields }: { fields: JobFormFields<EmailFormField> }) {

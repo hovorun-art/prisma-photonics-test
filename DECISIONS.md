@@ -293,9 +293,9 @@ leaves an empty group running forever. A delete can also race the client's own s
 sees no jobs, removes the group, and a bulk landing a moment later carries the id of a deleted
 group. Both are accepted: the client deletes only after its own submit failed.
 
-**Polling job-service, three count queries per running group.** At a configured interval (2 s) the
-service reads its running groups a page at a time (keyset by id, so groups that finish during the
-pass do not shift the pages) and, per group, asks `GET /v1/jobs?groupId=…&limit=1` three times,
+**Polling job-service, three count queries per open group.** At a configured interval (2 s) the
+service reads its open groups (`running` and `failed`, see the status rule) a page at a time
+(keyset by id, so groups that finish during the pass do not shift the pages) and, per group, asks `GET /v1/jobs?groupId=…&limit=1` three times,
 reading only `total`: all jobs, `status=completed`, and `status=failed&status=cancelled`. The cost
 does not grow with the group's size. The three answers are not one snapshot (they run in parallel),
 so `total` is raised to at least `completed + failed` and a child counted in neither only delays
@@ -312,17 +312,22 @@ polling load and the up-to-one-interval delay, at the price of a second channel 
 services, delivery guarantees and replay after downtime; polling needs none of that.
 
 **One instance.** job-group-service runs as a single instance; nothing shares the poll between
-instances. Two instances would still be correct (the stats write is one conditional `UPDATE ...
-WHERE status = 'running'` with `total = GREATEST(total, $new)`, so a slower writer cannot lower the
-total or reopen a finished group) but would double the load on job-service. The step to more
+instances. Two instances would double the load on job-service and are not fully safe: the stats
+write is one conditional `UPDATE ... WHERE status <> 'completed'` with
+`total = GREATEST(total, $new)`, so a slower writer cannot lower the total or reopen a completed
+group, but it could write an older `running` over a newer `failed` (fixed by the next tick). The step to more
 instances is claiming groups per tick with `FOR UPDATE SKIP LOCKED` (and a lease), not built.
 
 **The status rule.** A group is `running` while it has no jobs or while `completed + failed <
 total`; once it has jobs and every one is finished it is `completed` if all completed, otherwise
 `failed`. `total` is the highest count job-service ever reported for the group; `failed` counts
 failed and cancelled jobs plus jobs missing from that highest count (deleted through job-service
-before the group finished), so a deleted job can never leave a group running forever. A finished
+before the group finished), so a deleted job can never leave a group running forever. A completed
 group is final: it is no longer polled, and jobs added, retried or deleted later do not change it.
+A failed group is still polled, so retrying its failed job makes it `running` again (`finishedAt`
+cleared) and it finishes again like any group; while it stays failed it keeps the time it first
+failed. *The cost:* a failed group nobody retries is polled forever, three count queries per tick.
+Stopping after a while, or the event topic above, would end that; neither is built.
 A failed job does not cancel its siblings. *Said plainly:* a group finishes as soon as the jobs
 seen so far are done, so a client that submits a campaign in several requests must send the next
 one before the first finishes; a job deleted before any poll saw it is never counted; and a group
@@ -418,6 +423,23 @@ change); showing cells only for the first page (no full picture). *Trade-off:* a
 costs N/100 requests per poll, fine for groups of hundreds; for much larger groups that summary
 route is the fix. The cells and the counts can differ for up to one poll, since the counts are as
 of the group's last check.
+
+**job-ui: creating a group is two calls to two services, undone on failure.** The new group page
+(`/groups/new`, one tab per job, each the submit page's form) creates an empty group in
+job-group-service, then sends every job in one bulk submit to job-service with the group's id. There
+is no transaction across the two services, so when the bulk is rejected the page deletes the group
+it just made (it has no jobs, so the delete is allowed) and shows the bulk's error. If that delete
+fails too (job-group-service or job-service down at that moment), the page still shows only the
+bulk's error and an empty `running` group with no jobs is left behind; trying again creates a new
+group. *Alternatives:* a single "create group with jobs" route in job-group-service that calls the
+bulk itself (one call for the browser, but the same two-service gap moves into the backend and the
+service would need to submit jobs, which it deliberately does not); retrying the delete or a cleanup
+sweep for old empty groups (more moving parts for a rare double failure). *Trade-off:* a rare stray
+empty group, visible in the groups list. The page allows at most `maxGroupJobs` jobs (100), kept
+equal to job-service's default bulk maximum (`JOB_SERVICE_BULK_MAX_JOBS`); if job-service is
+configured lower, its `VALIDATION_FAILED` on `jobs` reaches the page's alert. Each tab keeps its own
+form mounted (hidden when not open), so values and errors survive switching tabs; field ids carry a
+per-tab prefix so labels point at their own form.
 
 **Internal API protected by a shared service token.** Routes under `/internal` require
 `Authorization: Bearer <token>` (compared in constant time) and are left out of the public Swagger
@@ -896,4 +918,24 @@ is as reliable as the scheduled-job timing of section 3.
 
 ## 5. One Thing I Would Do Differently With More Time
 
-TBD
+**Events between services instead of polling.** job-group-service learns about its groups by asking
+job-service every 2 s: three count queries per open group per tick, and since a retry can reopen a
+failed group, a failed group nobody retries is polled forever. With many groups the services spend
+their time querying each other; we are, in effect, DDoSing ourselves. I would have job-service
+publish job status changes (a Redis Stream, as job log entries already travel, or a real broker)
+and let job-group-service update a group when one of its jobs changes. That removes the polling
+load and the delay of up to one interval. The price is what polling gets for free: at-least-once
+delivery with idempotent updates, and replaying missed events after downtime. See "Polling
+job-service" and "The status rule" above.
+
+Two smaller ones, said plainly:
+
+- **Own services for what now lives inside job-service.** The job log (writer, store and API) and
+  the queue statistics run inside job-service to save scaffolding more services. I would give them
+  their own services with their own APIs and storage; the producers would not change, since they
+  already only append to a stream. See "Job log: owned by job-service, for now".
+- **A lighter, step-by-step verification flow.** The spec-driven flow (decisions, specs, a test
+  review per task group, a verifier at the end of a change) caught real gaps, but one heavy
+  verification pass at the end cost a lot of time, and gaps it found late were fixed after
+  everything else was built. I would check and save progress per task group, so each step is
+  verified and committed on its own, and scale the ceremony to the size of the change.
