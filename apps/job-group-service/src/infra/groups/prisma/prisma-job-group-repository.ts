@@ -7,8 +7,8 @@ import type {
   GetJobGroupRepositoryRequest,
   GetJobGroupRepositoryResponse,
   JobGroupRepository,
-  ListRunningJobGroupRepositoryRequest,
-  ListRunningJobGroupRepositoryResponse,
+  ListOpenJobGroupRepositoryRequest,
+  ListOpenJobGroupRepositoryResponse,
   QueryJobGroupRepositoryRequest,
   QueryJobGroupRepositoryResponse,
   RecordCheckJobGroupRepositoryRequest,
@@ -70,12 +70,12 @@ export class PrismaJobGroupRepository implements JobGroupRepository {
     return { deleted: count > 0 };
   }
 
-  async listRunning(
-    req: ListRunningJobGroupRepositoryRequest,
-  ): Promise<ListRunningJobGroupRepositoryResponse> {
+  async listOpen(
+    req: ListOpenJobGroupRepositoryRequest,
+  ): Promise<ListOpenJobGroupRepositoryResponse> {
     const rows = await this.d.prisma.jobGroup.findMany({
       where: {
-        status: 'running',
+        status: { in: ['running', 'failed'] },
         ...(req.afterId === undefined ? {} : { id: { gt: req.afterId } }),
       },
       orderBy: { id: 'asc' },
@@ -99,7 +99,7 @@ export class PrismaJobGroupRepository implements JobGroupRepository {
           "checked_at" = ${new Date(req.checkedAt)},
           "finished_at" = ${req.finishedAt === null ? null : new Date(req.finishedAt)},
           "updated_at" = now()
-      WHERE "id" = ${req.id}::uuid AND "status" = 'running'`;
+      WHERE "id" = ${req.id}::uuid AND "status" <> 'completed'`;
     return { recorded: updated > 0 };
   }
 

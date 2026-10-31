@@ -51,7 +51,7 @@ export class JobGroupPoll implements OnApplicationBootstrap, OnModuleDestroy {
   private tick(): void {
     if (this.inFlight !== undefined) return;
     this.inFlight = this.tracker
-      .checkRunning()
+      .checkOpen()
       .then(
         () => undefined,
         (err: unknown) => {

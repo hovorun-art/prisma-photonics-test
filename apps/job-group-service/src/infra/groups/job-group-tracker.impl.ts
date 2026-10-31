@@ -5,7 +5,7 @@ import type { LoggerService } from '@nestjs/common';
 import type { GroupChildJobs } from '../../domain/groups/group-child-jobs.js';
 import type { JobGroupRepository } from '../../domain/groups/job-group-repository.js';
 import type {
-  CheckRunningJobGroupTrackerResponse,
+  CheckOpenJobGroupTrackerResponse,
   JobGroupTracker,
 } from '../../domain/groups/job-group-tracker.js';
 
@@ -17,12 +17,12 @@ export interface JobGroupTrackerImplDeps {
 }
 
 export interface JobGroupTrackerImplParams {
-  /** Running groups read from the store at a time. */
+  /** Open groups read from the store at a time. */
   batchSize: number;
 }
 
 /**
- * Brings running groups up to date from job-service's child counts. Per group: `total` is the
+ * Brings open groups (`running` and `failed`) up to date from job-service's child counts. Per group: `total` is the
  * highest count seen, children missing from it count as failed, and the group finishes once
  * `completed + failed` reaches a non-zero `total`. One group's failure is logged and does not
  * hold back the others.
@@ -33,12 +33,12 @@ export class JobGroupTrackerImpl implements JobGroupTracker {
     private readonly p: JobGroupTrackerImplParams,
   ) {}
 
-  async checkRunning(): Promise<CheckRunningJobGroupTrackerResponse> {
+  async checkOpen(): Promise<CheckOpenJobGroupTrackerResponse> {
     let checked = 0;
     let failedChecks = 0;
     let afterId: string | undefined;
     for (;;) {
-      const { groups } = await this.d.repository.listRunning({
+      const { groups } = await this.d.repository.listOpen({
         limit: this.p.batchSize,
         ...(afterId === undefined ? {} : { afterId }),
       });
@@ -55,7 +55,7 @@ export class JobGroupTrackerImpl implements JobGroupTracker {
   }
 
   /**
-   * `skipped` when the store no longer runs the group (finished or deleted meanwhile); a failure is
+   * `skipped` when the group completed or was deleted meanwhile; a failure is
    * logged and gives `failed`.
    */
   private async checkGroup(req: { group: JobGroup }): Promise<'recorded' | 'skipped' | 'failed'> {
@@ -67,14 +67,21 @@ export class JobGroupTrackerImpl implements JobGroupTracker {
       const failed = reported.failed + (total - reported.total);
       const finished = total > 0 && completed + failed === total;
       const now = this.d.clock.now().now.toISOString();
+      const status = finished ? (completed === total ? 'completed' : 'failed') : 'running';
+      // A failed group that is still failed keeps the time it finished.
+      const finishedAt = !finished
+        ? null
+        : status === group.status
+          ? (group.finishedAt ?? now)
+          : now;
       const { recorded } = await this.d.repository.recordCheck({
         id: group.id,
-        status: finished ? (completed === total ? 'completed' : 'failed') : 'running',
+        status,
         total,
         completed,
         failed,
         checkedAt: now,
-        finishedAt: finished ? now : null,
+        finishedAt,
       });
       return recorded ? 'recorded' : 'skipped';
     } catch (err) {
