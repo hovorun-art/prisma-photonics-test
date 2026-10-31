@@ -50,8 +50,8 @@ A failed job that will be retried is not counted as failed.
 - **THEN** neither is counted in the completed or failed counts
 
 #### Scenario: Failed attempt that will be retried
-- **WHEN** a job's attempt failed and the job is pending again for its next attempt and a client calls `GET /v1/stats`
-- **THEN** the job is counted as pending, not as failed
+- **WHEN** a job's attempt failed and the job is scheduled for its next attempt and a client calls `GET /v1/stats`
+- **THEN** the job is counted as scheduled, not as failed
 
 ### Requirement: Throughput of completed jobs
 The statistics SHALL report the throughput as the number of jobs completed within the configured

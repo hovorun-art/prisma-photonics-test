@@ -1,0 +1,2 @@
+PARTIAL
+- tests/system-e2e: the `emailItem(subject, index)` builder is copied verbatim in tests/system-e2e/jobs.spec.ts:313 and tests/system-e2e/recovery.spec.ts:19 (and the same numbered email-bulk item is built inline in job-execution-service.spec.ts:38-41 and StackJobs.waiting() in support/stack-jobs.ts:176-179); move it into one StackJobs method (e.g. `emailItems({ subject, count })`) in tests/system-e2e/support/stack-jobs.ts and use it in all four places
