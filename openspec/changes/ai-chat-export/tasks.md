@@ -76,9 +76,9 @@ Parallel with: 2, 4
 
 Owns: `src/infra/export/**`, `src/app/**` · Depends on: 1 · Parallel with: 2, 3
 
-- [ ] 4.1 Implement `ChatExportImpl` (list, read, drop empty, sort by start time then id, render,
+- [x] 4.1 Implement `ChatExportImpl` (list, read, drop empty, sort by start time then id, render,
   mask, write `<main root>/AI_CHAT.md`, return the counts); verify by the real run in 5.3.
-- [ ] 4.2 Implement `ExportChatsCommand` (`--transcripts <dir>`, default
+- [x] 4.2 Implement `ExportChatsCommand` (`--transcripts <dir>`, default
   `<home>/.claude/projects`, usage message on an unknown option, summary line); verify by the real
   run in 5.3 and by one run with `--transcripts` pointing at a folder with no sessions.
 
