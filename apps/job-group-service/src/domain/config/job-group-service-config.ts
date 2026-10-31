@@ -12,8 +12,8 @@ export interface JobGroupServiceConfig extends CoreConfig, PagingConfig {
   readonly jobServiceUrl: string;
   /** How long one call to job-service may take before it counts as unavailable. */
   readonly jobServiceTimeoutMs: number;
-  /** Time between two polls of the running groups. */
+  /** Time between two polls of the open groups (running and failed). */
   readonly pollIntervalMs: number;
-  /** Running groups read from the database at a time during a poll. */
+  /** Open groups read from the database at a time during a poll. */
   readonly pollBatchSize: number;
 }

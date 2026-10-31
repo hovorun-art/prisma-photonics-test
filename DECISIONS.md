@@ -292,9 +292,9 @@ leaves an empty group running forever. A delete can also race the client's own s
 sees no jobs, removes the group, and a bulk landing a moment later carries the id of a deleted
 group. Both are accepted: the client deletes only after its own submit failed.
 
-**Polling job-service, three count queries per running group.** At a configured interval (2 s) the
-service reads its running groups a page at a time (keyset by id, so groups that finish during the
-pass do not shift the pages) and, per group, asks `GET /v1/jobs?groupId=…&limit=1` three times,
+**Polling job-service, three count queries per open group.** At a configured interval (2 s) the
+service reads its open groups (`running` and `failed`, see the status rule) a page at a time
+(keyset by id, so groups that finish during the pass do not shift the pages) and, per group, asks `GET /v1/jobs?groupId=…&limit=1` three times,
 reading only `total`: all jobs, `status=completed`, and `status=failed&status=cancelled`. The cost
 does not grow with the group's size. The three answers are not one snapshot (they run in parallel),
 so `total` is raised to at least `completed + failed` and a child counted in neither only delays
@@ -311,17 +311,22 @@ polling load and the up-to-one-interval delay, at the price of a second channel 
 services, delivery guarantees and replay after downtime; polling needs none of that.
 
 **One instance.** job-group-service runs as a single instance; nothing shares the poll between
-instances. Two instances would still be correct (the stats write is one conditional `UPDATE ...
-WHERE status = 'running'` with `total = GREATEST(total, $new)`, so a slower writer cannot lower the
-total or reopen a finished group) but would double the load on job-service. The step to more
+instances. Two instances would double the load on job-service and are not fully safe: the stats
+write is one conditional `UPDATE ... WHERE status <> 'completed'` with
+`total = GREATEST(total, $new)`, so a slower writer cannot lower the total or reopen a completed
+group, but it could write an older `running` over a newer `failed` (fixed by the next tick). The step to more
 instances is claiming groups per tick with `FOR UPDATE SKIP LOCKED` (and a lease), not built.
 
 **The status rule.** A group is `running` while it has no jobs or while `completed + failed <
 total`; once it has jobs and every one is finished it is `completed` if all completed, otherwise
 `failed`. `total` is the highest count job-service ever reported for the group; `failed` counts
 failed and cancelled jobs plus jobs missing from that highest count (deleted through job-service
-before the group finished), so a deleted job can never leave a group running forever. A finished
+before the group finished), so a deleted job can never leave a group running forever. A completed
 group is final: it is no longer polled, and jobs added, retried or deleted later do not change it.
+A failed group is still polled, so retrying its failed job makes it `running` again (`finishedAt`
+cleared) and it finishes again like any group; while it stays failed it keeps the time it first
+failed. *The cost:* a failed group nobody retries is polled forever, three count queries per tick.
+Stopping after a while, or the event topic above, would end that; neither is built.
 A failed job does not cancel its siblings. *Said plainly:* a group finishes as soon as the jobs
 seen so far are done, so a client that submits a campaign in several requests must send the next
 one before the first finishes; a job deleted before any poll saw it is never counted; and a group

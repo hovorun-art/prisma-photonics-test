@@ -39,7 +39,8 @@ export class ChatExportImpl implements ChatExport {
       if (session !== undefined) sessions.push(session);
     }
     sessions.sort(
-      (a, b) => a.startedAt.getTime() - b.startedAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
+      (a, b) =>
+        a.startedAt.getTime() - b.startedAt.getTime() || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0),
     );
     const { markdown } = this.d.renderer.render({ sessions });
     const file = join(root, EXPORT_FILE);

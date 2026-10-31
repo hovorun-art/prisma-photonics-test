@@ -4,13 +4,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { mockDeep, mockReset } from 'vitest-mock-extended';
 
 import type {
-  CheckRunningJobGroupTrackerResponse,
+  CheckOpenJobGroupTrackerResponse,
   JobGroupTracker,
 } from '../../domain/groups/job-group-tracker.js';
 import { JOB_GROUP_POLL_INTERVAL_NAME, JobGroupPoll } from './job-group-poll.js';
 
 const INTERVAL_MS = 1_000;
-const CHECKED: CheckRunningJobGroupTrackerResponse = { checked: 1, failedChecks: 0 };
+const CHECKED: CheckOpenJobGroupTrackerResponse = { checked: 1, failedChecks: 0 };
 
 describe('JobGroupPoll', () => {
   const tracker = mockDeep<JobGroupTracker>();
@@ -31,23 +31,23 @@ describe('JobGroupPoll', () => {
 
   it('checks the running groups once per configured interval after bootstrap', async () => {
     const logged = vi.spyOn(Logger.prototype, 'error');
-    tracker.checkRunning.mockResolvedValueOnce(CHECKED).mockResolvedValueOnce(CHECKED);
+    tracker.checkOpen.mockResolvedValueOnce(CHECKED).mockResolvedValueOnce(CHECKED);
 
     poll.onApplicationBootstrap();
     await vi.advanceTimersByTimeAsync(INTERVAL_MS - 1);
-    expect(tracker.checkRunning).not.toHaveBeenCalled();
+    expect(tracker.checkOpen).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
-    expect(tracker.checkRunning).toHaveBeenCalledOnce();
+    expect(tracker.checkOpen).toHaveBeenCalledOnce();
     await vi.advanceTimersByTimeAsync(INTERVAL_MS);
 
-    expect(tracker.checkRunning).toHaveBeenCalledTimes(2);
+    expect(tracker.checkOpen).toHaveBeenCalledTimes(2);
     expect(registry.getIntervals()).toEqual([JOB_GROUP_POLL_INTERVAL_NAME]);
     expect(logged).not.toHaveBeenCalled();
   });
 
   it('skips a tick while the previous check is still running', async () => {
-    let finish: (value: CheckRunningJobGroupTrackerResponse) => void = () => undefined;
-    tracker.checkRunning
+    let finish: (value: CheckOpenJobGroupTrackerResponse) => void = () => undefined;
+    tracker.checkOpen
       .mockImplementationOnce(
         () =>
           new Promise((resolve) => {
@@ -58,18 +58,18 @@ describe('JobGroupPoll', () => {
 
     poll.onApplicationBootstrap();
     await vi.advanceTimersByTimeAsync(INTERVAL_MS * 3);
-    expect(tracker.checkRunning).toHaveBeenCalledOnce();
+    expect(tracker.checkOpen).toHaveBeenCalledOnce();
 
     finish(CHECKED);
     await vi.advanceTimersByTimeAsync(INTERVAL_MS);
 
-    expect(tracker.checkRunning).toHaveBeenCalledTimes(2);
+    expect(tracker.checkOpen).toHaveBeenCalledTimes(2);
   });
 
   it('logs a failed check and still runs the next tick', async () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementationOnce(() => undefined);
     const failure = new Error('database gone');
-    tracker.checkRunning.mockRejectedValueOnce(failure).mockResolvedValueOnce(CHECKED);
+    tracker.checkOpen.mockRejectedValueOnce(failure).mockResolvedValueOnce(CHECKED);
 
     poll.onApplicationBootstrap();
     await vi.advanceTimersByTimeAsync(INTERVAL_MS);
@@ -79,12 +79,12 @@ describe('JobGroupPoll', () => {
       expect.objectContaining({ err: failure }),
       expect.any(String),
     );
-    expect(tracker.checkRunning).toHaveBeenCalledTimes(2);
+    expect(tracker.checkOpen).toHaveBeenCalledTimes(2);
   });
 
   it('stops the interval on shutdown and waits for the check in flight', async () => {
-    let finish: (value: CheckRunningJobGroupTrackerResponse) => void = () => undefined;
-    tracker.checkRunning.mockImplementationOnce(
+    let finish: (value: CheckOpenJobGroupTrackerResponse) => void = () => undefined;
+    tracker.checkOpen.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
           finish = resolve;
@@ -105,7 +105,7 @@ describe('JobGroupPoll', () => {
     await stopping;
     await vi.advanceTimersByTimeAsync(INTERVAL_MS * 3);
 
-    expect(tracker.checkRunning).toHaveBeenCalledOnce();
+    expect(tracker.checkOpen).toHaveBeenCalledOnce();
   });
 
   it('stops at once when no check is running, and checks nothing afterwards', async () => {
@@ -115,14 +115,14 @@ describe('JobGroupPoll', () => {
     await vi.advanceTimersByTimeAsync(INTERVAL_MS * 2);
 
     expect(registry.getIntervals()).toEqual([]);
-    expect(tracker.checkRunning).not.toHaveBeenCalled();
+    expect(tracker.checkOpen).not.toHaveBeenCalled();
   });
 
   it('stops cleanly when the check in flight fails during shutdown, and logs it', async () => {
     const logged = vi.spyOn(Logger.prototype, 'error').mockImplementationOnce(() => undefined);
     const failure = new Error('database closed');
     let fail: (error: Error) => void = () => undefined;
-    tracker.checkRunning.mockImplementationOnce(
+    tracker.checkOpen.mockImplementationOnce(
       () =>
         new Promise((_resolve, reject) => {
           fail = reject;

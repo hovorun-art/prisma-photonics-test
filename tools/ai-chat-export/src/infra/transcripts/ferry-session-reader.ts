@@ -17,7 +17,10 @@ type Message = Thread['messages'][number];
 const INJECTED_BLOCKS =
   /<(system-reminder|ide_opened_file|ide_selection|local-command-caveat|local-command-stdout|local-command-stderr|command-message)>[\s\S]*?<\/\1>/g;
 /** Whole user turns that Claude Code writes itself. */
-const SYSTEM_TURNS = [/^<task-notification>[\s\S]*<\/task-notification>$/, /^\[Request interrupted by user[^\]]*\]$/];
+const SYSTEM_TURNS = [
+  /^<task-notification>[\s\S]*<\/task-notification>$/,
+  /^\[Request interrupted by user[^\]]*\]$/,
+];
 const COMMAND_NAME = /<command-name>([\s\S]*?)<\/command-name>/;
 const COMMAND_ARGS = /<command-args>([\s\S]*?)<\/command-args>/;
 /** The sentence Claude Code appends after the answers of `AskUserQuestion`. */
@@ -56,7 +59,9 @@ export class FerrySessionReader implements SessionReader {
    * a main chain instead. A file without a single user or assistant record gives no thread.
    */
   private async thread(req: { file: string; sidechain: boolean }): Promise<Thread | undefined> {
-    const lines = (await readFile(req.file, 'utf8')).split('\n').filter((line) => line.trim() !== '');
+    const lines = (await readFile(req.file, 'utf8'))
+      .split('\n')
+      .filter((line) => line.trim() !== '');
     const records = lines.map((line) => JSON.parse(line) as Record<string, unknown>);
     if (!records.some((r) => r.type === 'user' || r.type === 'assistant')) return undefined;
     const content = req.sidechain
@@ -65,7 +70,10 @@ export class FerrySessionReader implements SessionReader {
     return importThreads(content, 'claude-code')[0];
   }
 
-  private async turns(req: { thread: Thread; subagents: SubagentTranscript[] }): Promise<ChatTurn[]> {
+  private async turns(req: {
+    thread: Thread;
+    subagents: SubagentTranscript[];
+  }): Promise<ChatTurn[]> {
     const results = this.toolResults(req.thread.messages);
     const placed = new Set<SubagentTranscript>();
     const turns: ChatTurn[] = [];
@@ -109,7 +117,12 @@ export class FerrySessionReader implements SessionReader {
     if (thread === undefined) return undefined;
     const turns = await this.turns({ thread, subagents: [] });
     if (!turns.some((turn) => turn.kind === 'prompt')) return undefined;
-    return { kind: 'subagent', agentType: subagent.agentType, description: subagent.description, turns };
+    return {
+      kind: 'subagent',
+      agentType: subagent.agentType,
+      description: subagent.description,
+      turns,
+    };
   }
 
   /** Consecutive replies (split by tool calls Claude made in between) read as one. */

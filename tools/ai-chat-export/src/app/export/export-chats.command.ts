@@ -20,15 +20,18 @@ export class ExportChatsCommand implements Command {
   async run(req: RunCommandRequest): Promise<RunCommandResponse> {
     let transcripts: string | undefined;
     try {
-      transcripts = parseArgs({ args: req.args, options: { transcripts: { type: 'string' } } }).values
-        .transcripts;
+      transcripts = parseArgs({ args: req.args, options: { transcripts: { type: 'string' } } })
+        .values.transcripts;
     } catch {
       this.d.out.error(USAGE);
       return { exitCode: 2 };
     }
-    const transcriptsDir = transcripts ?? join(this.d.repository.homeDir().path, '.claude', 'projects');
+    const transcriptsDir =
+      transcripts ?? join(this.d.repository.homeDir().path, '.claude', 'projects');
     const result = await this.d.export.run({ transcriptsDir });
-    this.d.out.log(`Wrote ${result.file}: ${result.sessions} sessions, ${result.subagents} subagents.`);
+    this.d.out.log(
+      `Wrote ${result.file}: ${result.sessions} sessions, ${result.subagents} subagents.`,
+    );
     return { exitCode: 0 };
   }
 }

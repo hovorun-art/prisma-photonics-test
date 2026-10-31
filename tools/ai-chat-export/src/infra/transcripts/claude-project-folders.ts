@@ -29,7 +29,9 @@ export class ClaudeProjectFolders implements TranscriptFolders {
       if (!folder.isDirectory()) continue;
       const worktree = this.worktreeOf({ folder: folder.name, mainFolder });
       if (worktree === undefined) continue;
-      sessions.push(...(await this.sessionsIn({ dir: join(req.transcriptsDir, folder.name), worktree })));
+      sessions.push(
+        ...(await this.sessionsIn({ dir: join(req.transcriptsDir, folder.name), worktree })),
+      );
     }
     sessions.sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
     return { sessions };

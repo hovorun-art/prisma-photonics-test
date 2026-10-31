@@ -1,6 +1,8 @@
 /** Finds the Claude Code transcripts of the repository's main checkout and its worktrees. */
 export interface TranscriptFolders {
-  listSessions(req: ListSessionsTranscriptFoldersRequest): Promise<ListSessionsTranscriptFoldersResponse>;
+  listSessions(
+    req: ListSessionsTranscriptFoldersRequest,
+  ): Promise<ListSessionsTranscriptFoldersResponse>;
 }
 
 export interface ListSessionsTranscriptFoldersRequest {

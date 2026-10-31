@@ -96,7 +96,11 @@ describe('ClaudeProjectFolders', () => {
     await writeFile(join(subagentDir, 'agent-a1.jsonl'), '{}\n');
     await writeFile(
       join(subagentDir, 'agent-a1.meta.json'),
-      JSON.stringify({ agentType: 'test-case-reviewer', description: 'Review the tests', toolUseId }),
+      JSON.stringify({
+        agentType: 'test-case-reviewer',
+        description: 'Review the tests',
+        toolUseId,
+      }),
     );
 
     const { sessions } = await list();

@@ -268,6 +268,30 @@ describe('job group routes', () => {
       expect(service.childJobs.count).toHaveBeenCalledOnce();
     });
 
+    it('A failed group runs again when a failed child is retried', async () => {
+      const group = await service.created();
+      service.childJobs.count.mockResolvedValueOnce({ total: 2, completed: 1, failed: 1 });
+      await service.poll();
+      const failed = await service.group(group.id);
+      service.childJobs.count.mockResolvedValueOnce({ total: 2, completed: 1, failed: 1 });
+      await service.poll();
+      expect((await service.group(group.id)).finishedAt).toBe(failed.finishedAt);
+
+      service.childJobs.count.mockResolvedValueOnce({ total: 2, completed: 1, failed: 0 });
+      await service.poll();
+      const retried = await service.group(group.id);
+      service.childJobs.count.mockResolvedValueOnce({ total: 2, completed: 2, failed: 0 });
+      await service.poll();
+
+      expect(failed.status).toBe('failed');
+      expect(retried).toMatchObject({ status: 'running', failed: 0, finishedAt: null });
+      expect(await service.group(group.id)).toMatchObject({
+        status: 'completed',
+        completed: 2,
+        failed: 0,
+      });
+    });
+
     it('job-service down during a poll', async () => {
       const group = await service.seed({ status: 'running', total: 4, completed: 1, failed: 1 });
       service.childJobs.count.mockRejectedValueOnce(UNAVAILABLE);

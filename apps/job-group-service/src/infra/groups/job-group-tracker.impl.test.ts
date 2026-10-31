@@ -39,7 +39,7 @@ describe('JobGroupTrackerImpl', () => {
   };
 
   const oneRunning = (stored: JobGroup): void => {
-    repository.listRunning.mockResolvedValueOnce({ groups: [stored] });
+    repository.listOpen.mockResolvedValueOnce({ groups: [stored] });
     clockOnce();
   };
 
@@ -66,7 +66,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 3, completed: 0, failed: 0 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await expect(tracker.checkRunning()).resolves.toEqual({ checked: 1, failedChecks: 0 });
+      await expect(tracker.checkOpen()).resolves.toEqual({ checked: 1, failedChecks: 0 });
 
       expect(childJobs.count).toHaveBeenCalledExactlyOnceWith({ groupId: id });
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith({
@@ -85,7 +85,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 4, completed: 1, failed: 2 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith({
         id,
@@ -103,7 +103,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 2, completed: 2, failed: 0 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith({
         id,
@@ -121,7 +121,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 4, completed: 1, failed: 0 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ total: 4, completed: 1, failed: 0, status: 'running' }),
@@ -135,7 +135,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 0, completed: 0, failed: 0 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith({
         id,
@@ -153,7 +153,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 2, completed: 1, failed: 0 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ status: 'running', finishedAt: null }),
@@ -165,7 +165,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 3, completed: 3, failed: 0 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith({
         id,
@@ -183,7 +183,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 3, completed: 2, failed: 1 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ status: 'failed', failed: 1, finishedAt: NOW }),
@@ -196,7 +196,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 2, completed: 1, failed: 1 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith({
         id,
@@ -209,12 +209,60 @@ describe('JobGroupTrackerImpl', () => {
       });
     });
 
+    describe('a failed group', () => {
+      const FAILED_AT = '2026-10-30T11:00:00.000Z';
+      const failed = (): JobGroup => ({
+        ...running(id, 2),
+        status: 'failed',
+        completed: 1,
+        failed: 1,
+        checkedAt: FAILED_AT,
+        finishedAt: FAILED_AT,
+      });
+
+      it('runs again when a failed child was retried', async () => {
+        oneRunning(failed());
+        childJobs.count.mockResolvedValueOnce({ total: 2, completed: 1, failed: 0 });
+        repository.recordCheck.mockResolvedValueOnce({ recorded: true });
+
+        await tracker.checkOpen();
+
+        expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ status: 'running', failed: 0, finishedAt: null }),
+        );
+      });
+
+      it('completes when the retried child completed', async () => {
+        oneRunning(failed());
+        childJobs.count.mockResolvedValueOnce({ total: 2, completed: 2, failed: 0 });
+        repository.recordCheck.mockResolvedValueOnce({ recorded: true });
+
+        await tracker.checkOpen();
+
+        expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ status: 'completed', completed: 2, finishedAt: NOW }),
+        );
+      });
+
+      it('keeps the time it finished while it stays failed', async () => {
+        oneRunning(failed());
+        childJobs.count.mockResolvedValueOnce({ total: 2, completed: 1, failed: 1 });
+        repository.recordCheck.mockResolvedValueOnce({ recorded: true });
+
+        await tracker.checkOpen();
+
+        expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ status: 'failed', checkedAt: NOW, finishedAt: FAILED_AT }),
+        );
+      });
+    });
+
     it('A failed child does not stop the others: only count is called, never anything that changes jobs', async () => {
       oneRunning(running(id));
       childJobs.count.mockResolvedValueOnce({ total: 3, completed: 0, failed: 1 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       expect(childJobs.count).toHaveBeenCalledOnce();
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith(
@@ -227,7 +275,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 1, completed: 1, failed: 0 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: false });
 
-      await expect(tracker.checkRunning()).resolves.toEqual({ checked: 0, failedChecks: 0 });
+      await expect(tracker.checkOpen()).resolves.toEqual({ checked: 0, failedChecks: 0 });
     });
   });
 
@@ -237,7 +285,7 @@ describe('JobGroupTrackerImpl', () => {
       const error = new JobServiceUnavailableError({ reason: 'down' });
       childJobs.count.mockRejectedValueOnce(error);
 
-      await expect(tracker.checkRunning()).resolves.toEqual({ checked: 0, failedChecks: 1 });
+      await expect(tracker.checkOpen()).resolves.toEqual({ checked: 0, failedChecks: 1 });
 
       expect(repository.recordCheck).not.toHaveBeenCalled();
       expect(logger.error).toHaveBeenCalledExactlyOnceWith(
@@ -251,7 +299,7 @@ describe('JobGroupTrackerImpl', () => {
       const error = new Error('unparseable body');
       childJobs.count.mockRejectedValueOnce(error);
 
-      await expect(tracker.checkRunning()).resolves.toEqual({ checked: 0, failedChecks: 1 });
+      await expect(tracker.checkOpen()).resolves.toEqual({ checked: 0, failedChecks: 1 });
 
       expect(repository.recordCheck).not.toHaveBeenCalled();
       expect(logger.error).toHaveBeenCalledExactlyOnceWith(
@@ -266,7 +314,7 @@ describe('JobGroupTrackerImpl', () => {
       childJobs.count.mockResolvedValueOnce({ total: 1, completed: 0, failed: 0 });
       repository.recordCheck.mockRejectedValueOnce(error);
 
-      await expect(tracker.checkRunning()).resolves.toEqual({ checked: 0, failedChecks: 1 });
+      await expect(tracker.checkOpen()).resolves.toEqual({ checked: 0, failedChecks: 1 });
 
       expect(logger.error).toHaveBeenCalledExactlyOnceWith(
         { err: error, groupId: id },
@@ -277,14 +325,14 @@ describe('JobGroupTrackerImpl', () => {
     it('job-service back: the next poll records the current counts', async () => {
       oneRunning(running(id));
       childJobs.count.mockRejectedValueOnce(new JobServiceUnavailableError({ reason: 'down' }));
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
       vi.setSystemTime(new Date('2026-10-30T12:00:02.000Z'));
       oneRunning(running(id));
       childJobs.count.mockResolvedValueOnce({ total: 2, completed: 1, failed: 0 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await expect(tracker.checkRunning()).resolves.toEqual({ checked: 1, failedChecks: 0 });
+      await expect(tracker.checkOpen()).resolves.toEqual({ checked: 1, failedChecks: 0 });
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ total: 2, completed: 1, checkedAt: '2026-10-30T12:00:02.000Z' }),
@@ -293,16 +341,16 @@ describe('JobGroupTrackerImpl', () => {
 
     it('one group failing does not stop the next group', async () => {
       const otherId = randomUUID();
-      repository.listRunning.mockResolvedValueOnce({
+      repository.listOpen.mockResolvedValueOnce({
         groups: [running(id), running(otherId)],
       });
-      repository.listRunning.mockResolvedValueOnce({ groups: [] });
+      repository.listOpen.mockResolvedValueOnce({ groups: [] });
       clockOnce();
       childJobs.count.mockRejectedValueOnce(new JobServiceUnavailableError({ reason: 'down' }));
       childJobs.count.mockResolvedValueOnce({ total: 1, completed: 0, failed: 0 });
       repository.recordCheck.mockResolvedValueOnce({ recorded: true });
 
-      await expect(tracker.checkRunning()).resolves.toEqual({ checked: 1, failedChecks: 1 });
+      await expect(tracker.checkOpen()).resolves.toEqual({ checked: 1, failedChecks: 1 });
 
       expect(repository.recordCheck).toHaveBeenCalledExactlyOnceWith(
         expect.objectContaining({ id: otherId, total: 1 }),
@@ -313,45 +361,45 @@ describe('JobGroupTrackerImpl', () => {
   describe('paging', () => {
     it('reads running groups page by page after the last id until a short page', async () => {
       const [a, b, c] = [randomUUID(), randomUUID(), randomUUID()];
-      repository.listRunning.mockResolvedValueOnce({ groups: [running(a), running(b)] });
-      repository.listRunning.mockResolvedValueOnce({ groups: [running(c)] });
+      repository.listOpen.mockResolvedValueOnce({ groups: [running(a), running(b)] });
+      repository.listOpen.mockResolvedValueOnce({ groups: [running(c)] });
       for (let i = 0; i < 3; i++) {
         childJobs.count.mockResolvedValueOnce({ total: 0, completed: 0, failed: 0 });
         repository.recordCheck.mockResolvedValueOnce({ recorded: true });
         clockOnce();
       }
 
-      await expect(tracker.checkRunning()).resolves.toEqual({ checked: 3, failedChecks: 0 });
+      await expect(tracker.checkOpen()).resolves.toEqual({ checked: 3, failedChecks: 0 });
 
-      expect(repository.listRunning).toHaveBeenNthCalledWith(1, { limit: BATCH_SIZE });
-      expect(repository.listRunning).toHaveBeenNthCalledWith(2, {
+      expect(repository.listOpen).toHaveBeenNthCalledWith(1, { limit: BATCH_SIZE });
+      expect(repository.listOpen).toHaveBeenNthCalledWith(2, {
         limit: BATCH_SIZE,
         afterId: b,
       });
-      expect(repository.listRunning).toHaveBeenCalledTimes(2);
+      expect(repository.listOpen).toHaveBeenCalledTimes(2);
     });
 
     it('asks for one more page after a full page and stops on an empty one', async () => {
       const [a, b] = [randomUUID(), randomUUID()];
-      repository.listRunning.mockResolvedValueOnce({ groups: [running(a), running(b)] });
-      repository.listRunning.mockResolvedValueOnce({ groups: [] });
+      repository.listOpen.mockResolvedValueOnce({ groups: [running(a), running(b)] });
+      repository.listOpen.mockResolvedValueOnce({ groups: [] });
       for (let i = 0; i < 2; i++) {
         childJobs.count.mockResolvedValueOnce({ total: 0, completed: 0, failed: 0 });
         repository.recordCheck.mockResolvedValueOnce({ recorded: true });
         clockOnce();
       }
 
-      await tracker.checkRunning();
+      await tracker.checkOpen();
 
-      expect(repository.listRunning).toHaveBeenCalledTimes(2);
-      expect(repository.listRunning).toHaveBeenLastCalledWith({ limit: BATCH_SIZE, afterId: b });
+      expect(repository.listOpen).toHaveBeenCalledTimes(2);
+      expect(repository.listOpen).toHaveBeenLastCalledWith({ limit: BATCH_SIZE, afterId: b });
     });
 
     it('lets a failing group read reject the poll without checking anything', async () => {
       const error = new Error('database down');
-      repository.listRunning.mockRejectedValueOnce(error);
+      repository.listOpen.mockRejectedValueOnce(error);
 
-      await expect(tracker.checkRunning()).rejects.toBe(error);
+      await expect(tracker.checkOpen()).rejects.toBe(error);
 
       expect(childJobs.count).not.toHaveBeenCalled();
       expect(repository.recordCheck).not.toHaveBeenCalled();
@@ -360,23 +408,23 @@ describe('JobGroupTrackerImpl', () => {
     it('keeps the first page recorded when the second page read fails', async () => {
       const [a, b] = [randomUUID(), randomUUID()];
       const error = new Error('database down');
-      repository.listRunning.mockResolvedValueOnce({ groups: [running(a), running(b)] });
-      repository.listRunning.mockRejectedValueOnce(error);
+      repository.listOpen.mockResolvedValueOnce({ groups: [running(a), running(b)] });
+      repository.listOpen.mockRejectedValueOnce(error);
       for (let i = 0; i < 2; i++) {
         childJobs.count.mockResolvedValueOnce({ total: 0, completed: 0, failed: 0 });
         repository.recordCheck.mockResolvedValueOnce({ recorded: true });
         clockOnce();
       }
 
-      await expect(tracker.checkRunning()).rejects.toBe(error);
+      await expect(tracker.checkOpen()).rejects.toBe(error);
 
       expect(repository.recordCheck).toHaveBeenCalledTimes(2);
     });
 
     it('does nothing when no group is running', async () => {
-      repository.listRunning.mockResolvedValueOnce({ groups: [] });
+      repository.listOpen.mockResolvedValueOnce({ groups: [] });
 
-      await expect(tracker.checkRunning()).resolves.toEqual({ checked: 0, failedChecks: 0 });
+      await expect(tracker.checkOpen()).resolves.toEqual({ checked: 0, failedChecks: 0 });
 
       expect(childJobs.count).not.toHaveBeenCalled();
     });
