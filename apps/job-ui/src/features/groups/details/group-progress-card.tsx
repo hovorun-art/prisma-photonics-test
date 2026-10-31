@@ -7,6 +7,7 @@ import type { CellKind } from '../model/group-progress';
 import { GroupProgressImpl } from '../model/group-progress.impl';
 import { CELL_COLOUR } from './cell-style';
 import { GroupJobCells } from './group-job-cells';
+import { GroupProgressBar } from './group-progress-bar';
 
 const progress = new GroupProgressImpl();
 
@@ -43,16 +44,13 @@ export function GroupProgressCard({
         </span>
         <span className="text-muted-foreground">{en.group.finishedOf(finished, group.total)}</span>
       </div>
-      <div
-        role="progressbar"
-        aria-label={en.group.progressBar}
-        aria-valuemin={0}
-        aria-valuemax={100}
-        aria-valuenow={percent}
-        className="h-2 overflow-hidden rounded-[4px] bg-status-processing-bg"
-      >
-        <div className="h-2 rounded-[4px] bg-status-processing" style={{ width: `${percent}%` }} />
-      </div>
+      <GroupProgressBar
+        completed={group.completed}
+        failed={group.failed}
+        total={group.total}
+        label={en.group.progressBar}
+        className="h-2 rounded-[4px]"
+      />
       <dl className="m-0 grid grid-cols-3 gap-3">
         {tiles.map(([kind, label, value]) => (
           <div
