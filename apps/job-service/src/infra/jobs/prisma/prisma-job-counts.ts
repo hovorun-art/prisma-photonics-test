@@ -27,6 +27,7 @@ export class PrismaJobCounts implements JobCounts {
   async count(req: CountJobCountsRequest): Promise<CountJobCountsResponse> {
     const recentSince = new Date(req.recentSince);
     const throughputSince = new Date(req.throughputSince);
+    const group = this.groupFilter({ groupId: req.groupId, joiner: Prisma.sql`AND` });
     const rows = await this.d.prisma.$queryRaw<CountJobCountsResponse[]>`
       SELECT
         count(*) FILTER (WHERE status = 'pending')::int AS "pending",
@@ -42,11 +43,14 @@ export class PrismaJobCounts implements JobCounts {
           WHERE status = 'completed' AND completed_at >= ${throughputSince}::timestamptz
         )::int AS "throughputCompleted"
       FROM jobs
-      WHERE status IN ('pending', 'processing', 'scheduled')
+      WHERE (
+        status IN ('pending', 'processing', 'scheduled')
         OR (
           status IN ('completed', 'failed')
           AND completed_at >= LEAST(${recentSince}::timestamptz, ${throughputSince}::timestamptz)
-        )`;
+        )
+      )
+      ${group}`;
     const [counts] = rows;
     if (counts === undefined) throw new Error('A count query returned no row');
     return counts;
@@ -55,12 +59,7 @@ export class PrismaJobCounts implements JobCounts {
   async countByStatusAndType(
     req: CountByStatusAndTypeJobCountsRequest,
   ): Promise<CountByStatusAndTypeJobCountsResponse> {
-    const group =
-      req.groupId === undefined
-        ? Prisma.empty
-        : req.groupId === null
-          ? Prisma.sql`WHERE group_id IS NULL`
-          : Prisma.sql`WHERE group_id = ${req.groupId}::uuid`;
+    const group = this.groupFilter({ groupId: req.groupId, joiner: Prisma.sql`WHERE` });
     const cells = await this.d.prisma.$queryRaw<
       { status: JobStatus; type: JobType; count: number }[]
     >`
@@ -69,5 +68,13 @@ export class PrismaJobCounts implements JobCounts {
       ${group}
       GROUP BY status, type`;
     return { cells };
+  }
+
+  /** The condition on `group_id` after `joiner`, or nothing when every job counts. */
+  private groupFilter(req: { groupId: string | null | undefined; joiner: Prisma.Sql }): Prisma.Sql {
+    if (req.groupId === undefined) return Prisma.empty;
+    return req.groupId === null
+      ? Prisma.sql`${req.joiner} group_id IS NULL`
+      : Prisma.sql`${req.joiner} group_id = ${req.groupId}::uuid`;
   }
 }

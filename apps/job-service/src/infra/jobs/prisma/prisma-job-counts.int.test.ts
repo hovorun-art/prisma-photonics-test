@@ -161,6 +161,34 @@ describe('PrismaJobCounts against Postgres', () => {
     expect(await counts.count(WINDOWS)).toEqual(ZERO);
   });
 
+  it('counts only the jobs without a group for groupId null, and one group for its id', async () => {
+    const group = randomUUID();
+    await store({ status: 'pending' });
+    await store({ status: 'completed', completedAt: INSIDE_THROUGHPUT });
+    await store({ status: 'pending', groupId: group });
+    await store({ status: 'processing', groupId: group });
+    await store({ status: 'completed', completedAt: INSIDE_THROUGHPUT, groupId: group });
+    await store({ status: 'failed', completedAt: INSIDE_RECENT_ONLY, groupId: group });
+    const otherGroup = randomUUID();
+    await store({ status: 'scheduled', groupId: otherGroup });
+    await store({ status: 'completed', completedAt: INSIDE_THROUGHPUT, groupId: otherGroup });
+
+    expect(await counts.count({ ...WINDOWS, groupId: null })).toEqual({
+      ...ZERO,
+      pending: 1,
+      recentCompleted: 1,
+      throughputCompleted: 1,
+    });
+    expect(await counts.count({ ...WINDOWS, groupId: group })).toEqual({
+      ...ZERO,
+      pending: 1,
+      processing: 1,
+      recentCompleted: 1,
+      recentFailed: 1,
+      throughputCompleted: 1,
+    });
+  });
+
   describe('countByStatusAndType', () => {
     /** Cells in a stable order, since `GROUP BY` returns rows in no defined order. */
     const sortedCells = async () =>
@@ -173,6 +201,7 @@ describe('PrismaJobCounts against Postgres', () => {
       await store({ status: 'pending' });
       await store({ status: 'pending', groupId: group });
       await store({ status: 'failed', type: 'webhook', groupId: group });
+      await store({ status: 'cancelled', groupId: randomUUID() });
 
       expect((await counts.countByStatusAndType({ groupId: null })).cells).toEqual([
         { status: 'pending', type: 'email', count: 1 },

@@ -14,6 +14,8 @@ export interface CountJobCountsRequest {
   recentSince: string;
   /** Start of the throughput window (ISO 8601): jobs that completed at or after it count. */
   throughputSince: string;
+  /** Only jobs of this group, or (`null`) only jobs without one; every job when omitted. */
+  groupId?: string | null | undefined;
 }
 
 export interface CountJobCountsResponse {

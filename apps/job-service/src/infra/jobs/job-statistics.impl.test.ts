@@ -138,12 +138,17 @@ describe('JobStatisticsImpl', () => {
     });
   });
 
-  it('counts the status and type pairs of the requested group only', async () => {
+  it('counts the jobs of the requested group only, in every statistic', async () => {
     counts.count.mockResolvedValueOnce(ZERO_COUNTS);
     counts.countByStatusAndType.mockResolvedValueOnce(CELLS);
 
     await statistics.get({ groupId: null });
 
+    expect(counts.count).toHaveBeenCalledExactlyOnceWith({
+      recentSince: '2026-10-29T12:00:00.000Z',
+      throughputSince: '2026-10-30T11:55:00.000Z',
+      groupId: null,
+    });
     expect(counts.countByStatusAndType).toHaveBeenCalledExactlyOnceWith({ groupId: null });
   });
 
