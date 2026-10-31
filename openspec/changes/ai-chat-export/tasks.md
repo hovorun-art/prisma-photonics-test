@@ -88,19 +88,19 @@ Owns: `src/main.ts`, `/package.json` (scripts), `/.claude/flow.conf`, `/CLAUDE.m
 `/docs/concept.md`, `/docs/roadmap/07-final-polish.md`, `/README.md`, `/AI_CHAT.md` ·
 Depends on: 2, 3, 4 · Parallel with: none
 
-- [ ] 5.1 Write `src/main.ts` wiring the classes and add the root script `export:chats` (build the
+- [x] 5.1 Write `src/main.ts` wiring the classes and add the root script `export:chats` (build the
   workspace, run `node tools/ai-chat-export/dist/main.js`, pass extra arguments through); verify
   `npm run export:chats` runs.
-- [ ] 5.2 Set `LANGUAGE_IGNORE` in `/.claude/flow.conf` to `AI_CHAT.md`; replace `docs/ai-chats/`
+- [x] 5.2 Set `LANGUAGE_IGNORE` in `/.claude/flow.conf` to `AI_CHAT.md`; replace `docs/ai-chats/`
   with `AI_CHAT.md` in `/CLAUDE.md`, `/docs/concept.md` and the roadmap item; add a short "AI chat
   export" note with the command to `/README.md`; verify `grep -rn "docs/ai-chats"` finds nothing
   outside `openspec/` and the archive.
-- [ ] 5.3 Run `npm run export:chats` on the real transcripts and check `AI_CHAT.md`: every
+- [x] 5.3 Run `npm run export:chats` on the real transcripts and check `AI_CHAT.md`: every
   session of the main checkout and the worktrees is listed, no tool output or system text shows,
   `grep` finds neither the home path nor the git email, questions show their answers, subagents
   sit in collapsed blocks, the contents links jump to their sessions, and a second run leaves the
   file byte for byte the same.
-- [ ] 5.4 Run the full checks (`CHECK_CMDS` in `.claude/flow.conf`: typecheck, lint, test) and
+- [x] 5.4 Run the full checks (`CHECK_CMDS` in `.claude/flow.conf`: typecheck, lint, test) and
   verify they pass.
 
 ## Workflow follow-up

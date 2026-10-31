@@ -118,8 +118,8 @@ A Git repository with:
 - Map: Leaflet + react-leaflet with OpenStreetMap tiles.
 - UI styling: Tailwind + shadcn/ui.
 - Tests: Vitest for every workspace.
-- AI chat transcripts: exported at the end into `docs/ai-chats/` as Markdown by a conversion script
-  we write.
+- AI chat transcripts: exported at the end into one Markdown file, `AI_CHAT.md`, by a conversion
+  script we write (`npm run export:chats`).
 - Workers: a scalable `job-execution-service` (`docker compose up --scale job-execution-service=N`) plus configurable
   in-process concurrency per worker, to show duplicate-pickup safety across processes.
 - Queue integration details (job ids, sync with Postgres, cancel/retry races): decided inside the
