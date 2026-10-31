@@ -33,9 +33,6 @@ export class CheckoutStackIdentity implements StackIdentity {
         jobService: firstPort,
         jobGroupService: firstPort + 1,
         jobUi: firstPort + 2,
-        postgres: firstPort + 3,
-        redis: firstPort + 4,
-        clickhouse: firstPort + 5,
       },
     };
   }

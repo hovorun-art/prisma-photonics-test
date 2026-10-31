@@ -4,8 +4,7 @@ export interface StackIdentity {
 }
 
 /** The services of the stack that publish a port on the host. */
-export type StackPublishedService =
-  'jobService' | 'jobGroupService' | 'jobUi' | 'postgres' | 'redis' | 'clickhouse';
+export type StackPublishedService = 'jobService' | 'jobGroupService' | 'jobUi';
 
 export type StackHostPorts = Record<StackPublishedService, number>;
 
