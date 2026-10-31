@@ -119,7 +119,7 @@ Keep in sync with `CHECK_CMDS` in `.claude/flow.conf`. Root scripts run across a
   green run); `npm test` runs
   unit, integration and backend per-app e2e (Testcontainers, needs Docker); `npm run test:unit`,
   `npm run test:integration` for one level
-- `npm run test:e2e`: job-ui Playwright and the system e2e on a compose stack (CI and the main agent; never from a subagent)
+- `npm run test:e2e`: job-ui Playwright and the system e2e on a compose stack (the main agent only; never from a subagent)
 - `npm run format` / `npm run format:check`
 
 ## Purpose and decisions

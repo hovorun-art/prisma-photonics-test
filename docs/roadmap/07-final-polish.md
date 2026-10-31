@@ -25,7 +25,7 @@ reviewer can follow, honest `DECISIONS.md` and `AI_USAGE.md`, and the AI chat tr
 | `job-list-cursor-paging` | Optional: cursor-based paging of the job list, stable while jobs change, in API and UI | `job-list-sort-order` |
 | `live-updates-sse` | Optional: push job updates to the UI with Server-Sent Events instead of polling | `job-ui-crud` |
 | `flight-transit-real-data` | Optional, last: take aircraft transit data from a real external API next to the generated data; the generator stays the default and the fallback, and the API key is optional | `flight-transit-job-execution` |
-| `submission-docs` | Final README, DECISIONS.md and AI_USAGE.md: Swagger examples for every job type, a green CI run on the final commit, and the `.claude/` spec-driven flow (hooks, verifier, TDD gate) presented in `AI_USAGE.md` | `requirements-check`, `concurrency-proof` |
+| `submission-docs` | Final README, DECISIONS.md and AI_USAGE.md: Swagger examples for every job type, and the `.claude/` spec-driven flow (hooks, verifier, TDD gate) presented in `AI_USAGE.md` | `requirements-check`, `concurrency-proof` |
 | `fresh-clone-check` | Clone the repository into an empty folder and follow only the README: no `.env`, no cached images, default ports. Fix anything that needs knowledge the README does not give | `submission-docs` |
 
 ## Open questions
