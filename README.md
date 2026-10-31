@@ -52,13 +52,15 @@ The other job types and options:
 curl -s -X POST http://localhost:3000/v1/jobs -H 'content-type: application/json' \
   -d '{"type":"webhook","payload":{"method":"POST","url":"https://example.com/hook","body":{"event":"signup"}}}'
 
-# An aircraft transit report between two airports; the UI shows its route on a map
+# An aircraft transit report between two airports a week from now; the UI shows its route on a map
+DAY=$(date -u -d '+7 days' +%F 2>/dev/null || date -u -v+7d +%F)   # GNU date, or BSD date on macOS
 curl -s -X POST http://localhost:3000/v1/jobs -H 'content-type: application/json' \
-  -d '{"type":"flight-transit","payload":{"origin":"LHR","destination":"FRA","departureDate":"2026-12-01"}}'
+  -d "{\"type\":\"flight-transit\",\"payload\":{\"origin\":\"LHR\",\"destination\":\"FRA\",\"departureDate\":\"$DAY\"}}"
 
-# A scheduled job: "scheduled" until its time, then it runs like any other
+# A job scheduled an hour from now (at most 30 days ahead): "scheduled" until then, then it runs
+AT=$(date -u -d '+1 hour' +%FT%TZ 2>/dev/null || date -u -v+1H +%FT%TZ)
 curl -s -X POST http://localhost:3000/v1/jobs -H 'content-type: application/json' \
-  -d '{"type":"email","payload":{"to":"ada@example.com","subject":"Later","body":"Hi"},"scheduledAt":"2026-12-01T09:00:00Z"}'
+  -d "{\"type\":\"email\",\"payload\":{\"to\":\"ada@example.com\",\"subject\":\"Later\",\"body\":\"Hi\"},\"scheduledAt\":\"$AT\"}"
 
 # List with filters (repeat a filter for several values)
 curl -s 'http://localhost:3000/v1/jobs?status=failed&type=webhook&limit=20'
